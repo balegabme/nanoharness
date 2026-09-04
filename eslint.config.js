@@ -1,7 +1,7 @@
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['node_modules/', 'dist/', 'out/', 'coverage/'] },
+  { ignores: ['node_modules/', 'dist/', 'out/', 'coverage/', '.claude/'] },
   ...tseslint.configs.recommended,
   {
     rules: {

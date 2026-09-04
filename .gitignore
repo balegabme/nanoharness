@@ -149,3 +149,6 @@ release/
 .nanoharness/
 AGENTS.md
 skills/
+CLAUDE.md
+.claude/
+devlog/
