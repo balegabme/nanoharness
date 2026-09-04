@@ -2,10 +2,17 @@
   "name": "nanoharness",
   "version": "0.0.1",
   "description": "Minimal, token-efficient, self-documenting coding harness.",
+  "main": "out/main/index.js",
+  "bin": {
+    "nh": "out/cli/index.js"
+  },
   "scripts": {
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "doc-check": "pnpm build && node out/cli/index.js doc-check",
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
+    "start": "pnpm build && electron ."
   },
   "license": "Apache-2.0",
   "devEngines": {

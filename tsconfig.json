@@ -5,6 +5,7 @@
     "module": "nodenext",
     "moduleResolution": "nodenext",
     "target": "esnext",
+    "lib": ["esnext", "dom", "dom.iterable"],
     "types": ["node"],
 
     // Typecheck only; compilation arrives with the build step
