@@ -1,6 +1,7 @@
 // doc: docs/harness/tools.md
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { isHarnessRepo } from '../core/roots.js'
 import { defineTool } from '../core/session.js'
 import type { ArgsParse } from '../core/session.js'
 import type { ToolResult } from '../core/types.js'
@@ -30,17 +31,7 @@ function parseArgs(args: Record<string, unknown>): ArgsParse<ImprovementArgs> {
 // checked-in one. Any other workspace gets its own under .nanoharness/ — the
 // installed package dir is never written to (plan §4 rule 5).
 export async function ledgerPath(cwd: string): Promise<string> {
-  const manifest = await readFile(join(cwd, 'package.json'), 'utf8').catch(() => null)
-  if (manifest !== null) {
-    try {
-      const parsed: unknown = JSON.parse(manifest)
-      if (typeof parsed === 'object' && parsed !== null && (parsed as { name?: unknown }).name === 'nanoharness') {
-        return join(cwd, 'docs', 'harness', 'improvements.md')
-      }
-    } catch {
-      // an unreadable manifest just means "not the nanoharness repo"
-    }
-  }
+  if (await isHarnessRepo(cwd)) return join(cwd, 'docs', 'harness', 'improvements.md')
   return join(cwd, '.nanoharness', 'improvements.md')
 }
 

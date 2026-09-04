@@ -9,11 +9,28 @@ Files:
 - src/core/event-bus.ts — EventBus: emit + subscribe
 - src/core/session.ts — one session loop: provider stream, tool rounds, usage
 - src/core/usage-log.ts — append-only usage record in the OS user-data dir
+- src/core/roots.ts — workspace root vs harness root, and the harness-editor cwd
 - src/main/index.ts — Electron entry, typed IPC wiring
 - src/ipc/contract.ts — IPC channel names and payloads
 
 The provider contract (`src/core/provider.ts`) is documented in
-`providers.md`.
+`providers.md`; how a provider is configured is documented there too.
+
+## Two roots
+
+A session has a **workspace** — the project it is working on, which is its
+`cwd` — and the harness has a **root**, the nanoharness install itself. They
+are different directories and `src/core/roots.ts` is the only place that knows
+how to find either.
+
+The distinction matters most for the harness-editor agent (plan §5). It edits
+the harness, not the user's project, so it runs with `harnessEditorCwd()` as
+its cwd no matter which workspace it was summoned from. That call also refuses
+to hand back a packaged install: an app bundle has no `src/` to edit and is
+never written to (plan §4 rule 5), so a harness-editor job asks for a source
+checkout rather than silently editing files inside the bundle. The improvement
+ledger uses the same test — `isHarnessRepo(cwd)` decides between the repo's
+`docs/harness/improvements.md` and a workspace's `.nanoharness/`.
 
 ## Session loop
 
@@ -37,8 +54,11 @@ never the repo. `nh usage` reads it back — see `cli.md`.
 ## IPC
 
 Renderer talks to the main process over typed channels (`src/ipc/contract.ts`).
-`session:send` runs a turn; every event the session emits during the run is
+`config:get` and `config:set` drive the setup screen — the first reports
+whether a session can start at all, the second saves settings and retires the
+live sessions so the next turn picks up the new endpoint. `session:send` runs a
+turn; every event the session emits during the run is
 streamed live to the caller over `session:event` (typed `AppEvent` payloads,
 each with an `at` timestamp), and the invoke reply carries the session id and
-final usage. There is no HTTP listener in v1. The IPC layer is dormant until
-step 5 brings the renderer; until then sessions can be driven headlessly.
+final usage. There is no HTTP listener in v1, and a session can still be driven
+headlessly without a window.

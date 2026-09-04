@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'" />
+    <title>NanoHarness</title>
+    <link rel="stylesheet" href="./renderer.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <img class="logo" src="./logo.svg" alt="" width="22" height="22" />
+      <span class="brand">nanoharness</span>
+      <span class="chip" id="model">—</span>
+      <span class="chip" id="status">idle</span>
+      <button class="chip action" id="settings" type="button" title="Provider settings" aria-label="Provider settings">settings</button>
+    </header>
+
+    <main class="stream" id="stream"></main>
+
+    <section class="setup" id="setup" hidden>
+      <h1 id="setup-title">Set up a provider</h1>
+      <p class="hint" id="setup-hint">
+        NanoHarness ships with no endpoint and no model built in. Point it at any
+        OpenAI-compatible API. The key is encrypted by your OS and stored outside
+        this repo; the rest lands in a plain settings file.
+      </p>
+
+      <label for="setup-base">Base URL</label>
+      <input id="setup-base" type="url" spellcheck="false" placeholder="https://your-provider.example" />
+
+      <label for="setup-key">API key</label>
+      <input id="setup-key" type="password" spellcheck="false" placeholder="stored encrypted, never written in plain text" />
+
+      <div class="setup-actions">
+        <button id="setup-test" class="ghost" type="button">Test connection</button>
+        <button id="setup-fetch" class="ghost" type="button">Fetch models</button>
+        <span class="setup-note" id="setup-probe-note"></span>
+      </div>
+
+      <fieldset class="models" id="setup-models" hidden>
+        <legend>Models the harness may use</legend>
+        <label class="model-row all">
+          <input type="checkbox" id="setup-all" />
+          <span id="setup-all-label">Select all</span>
+        </label>
+        <div class="model-list" id="setup-model-list"></div>
+      </fieldset>
+
+      <label for="setup-model">Active model</label>
+      <select id="setup-model-select" hidden></select>
+      <input id="setup-model" type="text" spellcheck="false" placeholder="the model id your provider expects" />
+
+      <div class="setup-actions">
+        <button id="setup-save" type="button">Save and start</button>
+        <button id="setup-cancel" class="ghost" type="button" hidden>Cancel</button>
+        <span class="setup-note" id="setup-note"></span>
+      </div>
+    </section>
+
+    <footer class="composer" id="composer">
+      <textarea id="input" rows="3" placeholder="Ask something. Enter sends, Shift+Enter makes a newline."></textarea>
+      <button id="send" type="button">Send</button>
+    </footer>
+
+    <script type="module" src="./index.js"></script>
+  </body>
+</html>

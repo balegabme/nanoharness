@@ -23,7 +23,7 @@ NanoHarness is a small, token-efficient, self-documenting coding harness, and th
 
 - The agent edits its own source to fix bugs and improve how the harness works. You review and test each change before it applies.
 - Every source file starts with a `// doc: docs/harness/<area>.md` header, and every doc lists its files. The codebase explains itself.
-- Works with OpenAI-compatible APIs and Anthropic from day one.
+- Works with any OpenAI-compatible API. Anthropic support is planned, not built.
 
 ## Status
 

@@ -32,7 +32,7 @@ pnpm doc-check
 ## Index
 
 - `overview.md` — architecture, session loop, usage accounting, IPC
-- `providers.md` — provider layer, wire format, auth, env vars
+- `providers.md` — provider layer, wire format, auth, provider settings
 - `tools.md` — tool specs, the arg-validation boundary, caps
 - `cli.md` — the `nh` command: `doc-check`, `usage`
 - `ui.md` — the desktop window, the context bridge, the renderer

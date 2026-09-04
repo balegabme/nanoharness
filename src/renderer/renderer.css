@@ -1,0 +1,353 @@
+/* Provisional tokens. The full set lands with the design pass (plan §13). */
+:root {
+  --bg: #16130f;
+  --bg-raised: #1e1a15;
+  --bg-sunken: #110e0b;
+  --border: #2e2822;
+  --text: #ece5da;
+  --muted: #9b9086;
+  --subtle: #6d6459;
+  --accent: #d97742;
+  --success: #7fa86b;
+  --error: #d4635a;
+
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s6: 24px;
+  --radius: 6px;
+  --radius-chip: 4px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+  font: 400 14px/1.5 var(--font-mono);
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s2) var(--s4);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-raised);
+  font-family: var(--font-sans);
+}
+
+.logo {
+  display: block;
+  border-radius: 4px;
+}
+
+.brand {
+  font-weight: 600;
+  color: var(--accent);
+  margin-right: auto;
+}
+
+.chip.action {
+  align-self: center;
+  padding: 2px var(--s2);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-chip);
+  color: var(--muted);
+  font: 400 12px var(--font-sans);
+  cursor: pointer;
+}
+
+.chip.action:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.chip {
+  padding: 2px var(--s2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-chip);
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.chip.busy {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.stream {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--s6) var(--s4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+.block {
+  max-width: 900px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.label {
+  color: var(--subtle);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: var(--s1);
+}
+
+.body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.block.user .body {
+  background: var(--bg-raised);
+  border-left: 2px solid var(--accent);
+  padding: var(--s2) var(--s3);
+  border-radius: var(--radius-chip);
+}
+
+.block.error .body {
+  color: var(--error);
+}
+
+details {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--s2) var(--s3);
+}
+
+summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+summary::marker {
+  color: var(--subtle);
+}
+
+details pre {
+  margin: var(--s2) 0 0;
+  padding: var(--s2);
+  background: var(--bg-sunken);
+  border-radius: var(--radius-chip);
+  overflow-x: auto;
+  font: inherit;
+  color: var(--muted);
+}
+
+.tool summary::after {
+  content: attr(data-state);
+  float: right;
+  color: var(--subtle);
+  font-size: 12px;
+}
+
+.tool.ok summary::after {
+  color: var(--success);
+}
+
+.tool.failed summary::after {
+  color: var(--error);
+}
+
+.usage {
+  color: var(--subtle);
+  font-size: 12px;
+}
+
+.composer {
+  display: flex;
+  gap: var(--s2);
+  padding: var(--s3) var(--s4);
+  border-top: 1px solid var(--border);
+  background: var(--bg-raised);
+}
+
+textarea {
+  flex: 1;
+  resize: none;
+  padding: var(--s2) var(--s3);
+  background: var(--bg-sunken);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font: inherit;
+}
+
+textarea:focus,
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+button {
+  align-self: flex-end;
+  padding: var(--s2) var(--s4);
+  background: var(--accent);
+  color: var(--bg);
+  border: 0;
+  border-radius: var(--radius);
+  font: 500 14px var(--font-sans);
+  cursor: pointer;
+}
+
+button:disabled,
+textarea:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+/* First run: no endpoint, no model, nothing assumed. */
+.setup {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s4);
+  border-top: 1px solid var(--border);
+  background: var(--bg-raised);
+}
+
+.setup h1 {
+  margin: 0;
+  font: 600 15px/1.4 var(--font-sans);
+  color: var(--text);
+}
+
+.setup .hint {
+  margin: 0 0 var(--s2);
+  max-width: 62ch;
+  color: var(--muted);
+  font-family: var(--font-sans);
+}
+
+.setup label {
+  color: var(--muted);
+  font-family: var(--font-sans);
+  font-size: 12px;
+}
+
+.setup input {
+  padding: var(--s2) var(--s3);
+  background: var(--bg-sunken);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font: inherit;
+}
+
+.setup input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.setup-actions button {
+  white-space: nowrap;
+}
+
+.setup-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  margin-top: var(--s2);
+}
+
+.setup-note {
+  color: var(--muted);
+  font-family: var(--font-sans);
+  font-size: 12px;
+}
+
+.models {
+  margin: var(--s2) 0 0;
+  padding: var(--s3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-sunken);
+}
+
+.models legend {
+  padding: 0 var(--s2);
+  color: var(--muted);
+  font-family: var(--font-sans);
+  font-size: 12px;
+}
+
+.model-list {
+  max-height: 220px;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--s1) var(--s3);
+}
+
+.model-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: 2px 0;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.model-row.all {
+  margin-bottom: var(--s2);
+  padding-bottom: var(--s2);
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-family: var(--font-sans);
+}
+
+.model-row input {
+  accent-color: var(--accent);
+}
+
+.setup select {
+  padding: var(--s2) var(--s3);
+  background: var(--bg-sunken);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font: inherit;
+}
+
+button.ghost {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+button.ghost:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}

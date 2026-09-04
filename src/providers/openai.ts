@@ -176,3 +176,30 @@ function usageFromWire(u: WireUsage): TurnUsage {
     reasoning: u.completion_tokens_details?.reasoning_tokens ?? 0,
   }
 }
+/**
+ * `GET {baseURL}/v1/models` — the setup screen's test call. It doubles as a
+ * connection check, because reaching it proves the endpoint answers and the key
+ * is accepted. Not every OpenAI-compatible proxy implements it, so a 404 has to
+ * read as "this server has no model list", not "your settings are wrong".
+ */
+export async function listModels(opts: OpenAIOptions, timeoutMs = 15_000): Promise<string[]> {
+  const res = await fetch(`${opts.baseURL}/v1/models`, {
+    headers: { authorization: `Bearer ${opts.apiKey}` },
+    signal: AbortSignal.timeout(timeoutMs),
+  })
+  if (!res.ok) {
+    const detail = (await res.text().catch(() => '')).slice(0, 200)
+    if (res.status === 404) throw new Error(`this server has no /v1/models endpoint (404). Type the model id instead.`)
+    throw new Error(`provider ${res.status}${detail === '' ? '' : `: ${detail}`}`)
+  }
+
+  const payload: unknown = await res.json()
+  if (typeof payload !== 'object' || payload === null) throw new Error('model list was not an object')
+  const data = (payload as { data?: unknown }).data
+  if (!Array.isArray(data)) throw new Error('model list had no `data` array')
+
+  const ids = data
+    .map(entry => (typeof entry === 'object' && entry !== null ? (entry as { id?: unknown }).id : undefined))
+    .filter((id): id is string => typeof id === 'string' && id.trim() !== '')
+  return [...new Set(ids)].sort((a, b) => a.localeCompare(b))
+}
