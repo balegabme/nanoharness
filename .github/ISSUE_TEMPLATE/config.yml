@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions & discussions
+    url: https://github.com/balegabme/nanoharness/discussions
+    about: Ask questions and discuss design ideas before opening an issue

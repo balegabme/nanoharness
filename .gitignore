@@ -144,5 +144,8 @@ vite.config.ts.timestamp-*
 
 # NanoHarness
 out/
+dist/
 release/
 .nanoharness/
+AGENTS.md
+skills/
