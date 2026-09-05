@@ -220,6 +220,13 @@ export function toTranscriptView(messages: ChatMessage[]): TranscriptMessage[] {
     }
     if (message.role === 'system') continue
     const view: TranscriptMessage = { role: message.role, text: message.content }
+    // Only signed thinking survives a round trip, so only that is stored, and
+    // a re-opened session shows exactly what the next request would send.
+    const thought = (message.thinking ?? [])
+      .map(block => (block.kind === 'thinking' ? block.text : ''))
+      .filter(text => text !== '')
+      .join('\n')
+    if (thought !== '') view.thinking = thought
     const calls = message.toolCalls
     if (calls !== undefined && calls.length > 0) {
       view.tools = calls.map(call => ({ id: call.id, name: call.name, args: call.args }))

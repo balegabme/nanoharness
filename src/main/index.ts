@@ -7,6 +7,7 @@ import { READ_TOOL } from '../tools/read.js'
 import { WRITE_TOOL } from '../tools/write.js'
 import { LOG_IMPROVEMENT_TOOL } from '../tools/log-improvement.js'
 import { EventBus } from '../core/event-bus.js'
+import { buildSystemPrompt } from '../core/prompt.js'
 import { Session } from '../core/session.js'
 import { appendUsage } from '../core/usage-log.js'
 import { IPC_CHANNELS } from '../ipc/contract.js'
@@ -51,11 +52,19 @@ const EVENT_TYPES: AppEvent['type'][] = [
   'usage',
   'session.error',
   'session.finished',
+  'session.stopped',
   'permission.request',
 ]
 
-const SYSTEM_PROMPT = 'You are NanoHarness. Be minimal and precise.'
 const MAX_TOOL_ROUNDS = 8
+
+// Windows shows a toast under an application id. Without one set, a
+// notification from a dev-run Electron app is silently dropped.
+const APP_ID = 'com.nanoharness.app'
+
+function shellName(): string {
+  return process.platform === 'win32' ? 'Git Bash (MSYS), through `bash -lc`' : 'bash, through `bash -lc`'
+}
 
 // Live sessions, keyed the way the renderer addresses them. A session that was
 // never opened this launch is rebuilt from its stored transcript on first use.
@@ -109,7 +118,12 @@ async function sessionFor(sender: WebContents, sessionId: string): Promise<Sessi
       cwd: root,
       model: config.model,
       effort: config.effort,
-      systemPrompt: SYSTEM_PROMPT,
+      systemPrompt: buildSystemPrompt({
+        root,
+        platform: process.platform,
+        shell: shellName(),
+        today: new Date().toISOString().slice(0, 10),
+      }),
       maxToolRounds: MAX_TOOL_ROUNDS,
       access: promptingGate({ root, sessionId, broker: brokerFor(sender) }),
       history: await loadTranscript(sessionId),
@@ -123,6 +137,7 @@ async function sessionFor(sender: WebContents, sessionId: string): Promise<Sessi
 }
 
 app.whenReady().then(() => {
+  app.setAppUserModelId(APP_ID)
   serveRenderer()
 
   ipcMain.handle(IPC_CHANNELS.ping, () => ({ ok: true, version: pkg.version }))
@@ -190,6 +205,12 @@ app.whenReady().then(() => {
 
   ipcMain.handle(IPC_CHANNELS.permissionRespond, (event: IpcMainInvokeEvent, req: { id: string; decision: PermissionDecision }) => {
     brokerFor(event.sender).resolve(req.id, req.decision)
+  })
+
+  // Stop is a message to a turn already in flight, so it never builds a
+  // session: a session that is not running has nothing to stop.
+  ipcMain.handle(IPC_CHANNELS.sessionStop, (_event: IpcMainInvokeEvent, sessionId: string) => {
+    sessions.get(sessionId)?.stop()
   })
 
   ipcMain.handle(IPC_CHANNELS.sessionSend, async (event: IpcMainInvokeEvent, req: SessionSendRequest) => {

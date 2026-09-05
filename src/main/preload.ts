@@ -22,6 +22,7 @@ const bridge: NanoBridge = {
   ping: () => ipcRenderer.invoke(IPC_CHANNELS.ping) as Promise<PingResponse>,
   send: (sessionId: string, text: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.sessionSend, { sessionId, text }) as Promise<SessionSendResponse>,
+  stop: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.sessionStop, sessionId) as Promise<void>,
   workspaces: () => ipcRenderer.invoke(IPC_CHANNELS.workspaceList) as Promise<WorkspaceStatus>,
   addWorkspace: () => ipcRenderer.invoke(IPC_CHANNELS.workspaceAdd) as Promise<WorkspaceStatus | null>,
   removeWorkspace: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.workspaceRemove, id) as Promise<WorkspaceStatus>,

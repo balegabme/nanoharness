@@ -1,6 +1,7 @@
 // doc: docs/harness/ui.md
 import { clearChat, errorBlock, handleEvent, renderTranscript, startTurn, userBlock } from './chat.js'
 import { message, must } from './dom.js'
+import { announce, initNotify } from './notify.js'
 import { enqueue, initPermission } from './permission.js'
 import { applyConfig, initSettings, latestConfig, openSettings, refreshConfig } from './settings.js'
 import {
@@ -101,8 +102,11 @@ function renderShell(): void {
     scopeChip.title = `Scoped to ${workspace.root}`
     accessChip.title = `Tools are limited to ${workspace.root}`
   }
-  input.disabled = busy
-  sendButton.disabled = busy
+  // The composer stays live during a turn: the next message can be written
+  // while this one runs, and Send is the stop button until the turn ends.
+  sendButton.textContent = busy ? 'Stop' : 'Send'
+  sendButton.classList.toggle('stop', busy)
+  sendButton.title = busy ? 'End this turn' : 'Send (Enter)'
 }
 
 function setBusy(next: boolean): void {
@@ -111,6 +115,18 @@ function setBusy(next: boolean): void {
   statusChip.classList.toggle('busy', next)
   renderShell()
   if (!next) input.focus()
+}
+
+/** End the running turn. The request is aborted; the transcript is kept. */
+function stop(): void {
+  const sessionId = activeSessionId
+  if (!busy || sessionId === null) return
+  sendButton.disabled = true
+  nh.stop(sessionId)
+    .catch((err: unknown) => errorBlock(message(err)))
+    .finally(() => {
+      sendButton.disabled = false
+    })
 }
 
 async function openSession(id: string): Promise<void> {
@@ -179,14 +195,20 @@ input.addEventListener('keydown', event => {
     event.preventDefault()
     void send()
   }
+  // Esc from the composer is the keyboard way to stop, the way it is in a shell.
+  if (event.key === 'Escape' && busy) {
+    event.preventDefault()
+    stop()
+  }
 })
-sendButton.addEventListener('click', () => void send())
+sendButton.addEventListener('click', () => (busy ? stop() : void send()))
 modelSelect.addEventListener('change', () => void switchActive())
 effortSelect.addEventListener('change', () => void switchActive())
 settingsButton.addEventListener('click', () => openSettings('providers'))
 heroSettings.addEventListener('click', () => openSettings('providers'))
 heroAdd.addEventListener('click', () => void startSession())
 
+initNotify()
 initPermission({ bridge: nh, report: errorBlock })
 initSidebar({
   bridge: nh,
@@ -203,6 +225,10 @@ initSidebar({
 })
 
 nh.onEvent(event => {
+  if (event.type === 'session.finished' || event.type === 'session.stopped' || event.type === 'session.error') {
+    const outcome = event.type === 'session.finished' ? 'finished' : event.type === 'session.stopped' ? 'stopped' : 'error'
+    announce(outcome, sessionById(event.sessionId)?.title ?? 'Session')
+  }
   if (event.type === 'permission.request') {
     if (event.sessionId === activeSessionId) enqueue(event)
     // A prompt for a session nobody is looking at cannot be answered

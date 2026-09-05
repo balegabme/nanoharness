@@ -6,6 +6,7 @@ import type { AppEvent, TurnUsage } from '../core/types.js'
 export const IPC_CHANNELS = {
   ping: 'ipc:ping',
   sessionSend: 'session:send',
+  sessionStop: 'session:stop',
   sessionEvent: 'session:event',
   configGet: 'config:get',
   configSaveProvider: 'config:save-provider',
@@ -58,6 +59,8 @@ export interface TranscriptMessage {
   callId?: string
   /** The call this message answers came back an error. */
   failed?: boolean
+  /** What the model thought before this message, where the provider signs and returns it. */
+  thinking?: string
 }
 
 export interface SessionOpenResponse {
@@ -66,13 +69,17 @@ export interface SessionOpenResponse {
   messages: TranscriptMessage[]
 }
 
-/** A tool wants a path outside the session root, and is waiting on an answer. */
+/** A tool wants paths outside the session root, and is waiting on an answer. */
 export interface PermissionAsk {
   id: string
   sessionId: string
   intent: AccessIntent
-  /** The resolved path it asked for — symlinks and `..` already followed. */
-  path: string
+  /**
+   * Every resolved path this one tool call reaches for — symlinks and `..`
+   * already followed. A shell command routinely names several, and they are
+   * asked about together so one command costs one answer.
+   */
+  paths: string[]
   root: string
 }
 
@@ -148,6 +155,8 @@ export type ConfigProbeResult = { ok: true; models: string[] } | { ok: false; er
 export interface NanoBridge {
   ping(): Promise<PingResponse>
   send(sessionId: string, text: string): Promise<SessionSendResponse>
+  /** End the running turn. Safe to call when nothing is running. */
+  stop(sessionId: string): Promise<void>
   workspaces(): Promise<WorkspaceStatus>
   /** Opens a directory picker. Resolves to null when the user cancels it. */
   addWorkspace(): Promise<WorkspaceStatus | null>

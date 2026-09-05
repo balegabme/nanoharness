@@ -41,6 +41,18 @@ export function errorBlock(text: string): void {
   block('error', 'error').textContent = text
 }
 
+/** A line about the run itself rather than about the conversation. */
+export function noteBlock(text: string): void {
+  block('note', 'note').textContent = text
+}
+
+/** A finished thinking block, folded away. Live thinking is drawn by deltas. */
+function thinkingBlock(text: string): void {
+  const card = el('details', 'block thinking')
+  card.append(el('summary', undefined, 'thinking'), el('pre', undefined, text))
+  append(card)
+}
+
 export function clearChat(): void {
   stream.replaceChildren()
   toolCards.clear()
@@ -100,7 +112,10 @@ function usageText(usage: TurnUsage): string {
   return `in ${usage.input} · out ${usage.output} · cached ${usage.cacheRead} · hit ${hit}${usage.reasoning > 0 ? ` · reasoning ${usage.reasoning}` : ''}`
 }
 
-/** Replay a stored conversation. Thinking is not stored, so none is drawn. */
+/**
+ * Replay a stored conversation. Only signed thinking survives a round trip, so
+ * a replayed turn shows exactly the thinking the next request would send back.
+ */
 export function renderTranscript(messages: TranscriptMessage[]): void {
   clearChat()
   const results = new Map<string, { text: string; failed: boolean }>()
@@ -116,6 +131,7 @@ export function renderTranscript(messages: TranscriptMessage[]): void {
       userBlock(message.text)
       continue
     }
+    if (message.thinking !== undefined && message.thinking !== '') thinkingBlock(message.thinking)
     if (message.text.trim() !== '') block('assistant', 'assistant').textContent = message.text
     for (const call of message.tools ?? []) {
       const card = toolCard(call.name, call.args)
@@ -170,6 +186,10 @@ export function handleEvent(event: AppEvent, activeSessionId: string | null): vo
       break
     case 'session.error':
       errorBlock(event.message)
+      break
+    case 'session.stopped':
+      if (thinkingCard !== null) thinkingCard.open = false
+      noteBlock('Stopped.')
       break
     case 'session.started':
     case 'session.finished':

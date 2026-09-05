@@ -15,11 +15,20 @@ export type AccessCheck =
   | { ok: true; path: string }
   | { ok: false; path: string; reason: string }
 
+/** The answer for a whole set of paths, which is one question to a person. */
+export type AccessBatch = { ok: true } | { ok: false; reason: string }
+
 /** What a tool asks before it touches a path. */
 export interface AccessGate {
   /** The session root, for messages and for tools that need a cwd. */
   readonly root: string
   check(target: string, intent: AccessIntent): Promise<AccessCheck>
+  /**
+   * Every path one command reaches for, in a single question. A command line
+   * routinely names three or four paths, and asking about each in turn is how a
+   * person ends up clicking through a stack of modals for one command.
+   */
+  checkAll(targets: readonly string[], intent: AccessIntent): Promise<AccessBatch>
 }
 
 export type AccessIntent = 'read' | 'write' | 'run'
@@ -79,16 +88,33 @@ export function outsideMessage(root: string, path: string, intent: AccessIntent)
  * the whole disk is the worse default.
  */
 export function workspaceGate(root: string): AccessGate {
-  return {
+  const gate: AccessGate = {
     root,
     async check(target, intent) {
       const { path, inside } = await resolveUnder(root, expandHome(target))
       return inside ? { ok: true, path } : { ok: false, path, reason: outsideMessage(root, path, intent) }
     },
+    async checkAll(targets, intent) {
+      for (const target of targets) {
+        const result = await gate.check(target, intent)
+        if (!result.ok) return { ok: false, reason: result.reason }
+      }
+      return { ok: true }
+    },
   }
+  return gate
 }
 
 const WINDOWS_ABSOLUTE = /^[a-zA-Z]:[\\/]/
+
+/**
+ * Shell plumbing that looks like an absolute path and is not one. `2>/dev/null`
+ * is on half the commands a model writes, and asking a person whether the agent
+ * may access /dev/null is how a permission prompt stops being read.
+ */
+function isDeviceNode(token: string): boolean {
+  return token === '/dev' || token.startsWith('/dev/') || token.toUpperCase() === 'NUL'
+}
 
 /**
  * Paths a shell command appears to reach for. A command line is not a path
@@ -102,7 +128,7 @@ export function suspectPaths(command: string): string[] {
   const out = new Set<string>()
   for (const raw of command.split(/[\s;|&()<>]+/)) {
     const token = raw.replace(/^['"]+|['"]+$/g, '')
-    if (token === '') continue
+    if (token === '' || isDeviceNode(token)) continue
     if (token.startsWith('~')) {
       out.add(token)
       continue

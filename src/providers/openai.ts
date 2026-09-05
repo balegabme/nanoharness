@@ -2,6 +2,7 @@
 import type { ChatProvider, ChatInput } from '../core/provider.js'
 import type { ChatChunk, ChatMessage, JsonSchema, ToolInput, TurnUsage } from '../core/types.js'
 import { emptyUsage } from '../core/types.js'
+import { endpointURL } from '../core/config.js'
 
 interface OpenAIOptions {
   apiKey: string
@@ -77,13 +78,14 @@ export function createOpenAIProvider(opts: OpenAIOptions): ChatProvider {
       // or a silent drop, so "none" simply leaves the field out rather than
       // asserting a level the model may not have (plan §11).
       if (input.effort !== undefined && input.effort !== 'none') body.reasoning_effort = input.effort
-      const res = await fetch(`${opts.baseURL}/v1/chat/completions`, {
+      const res = await fetch(endpointURL(opts.baseURL, 'v1', 'chat/completions'), {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
           authorization: `Bearer ${opts.apiKey}`,
         },
         body: JSON.stringify(body),
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
       })
       if (!res.ok) {
         const text = await res.text()
@@ -194,7 +196,7 @@ function usageFromWire(u: WireUsage): TurnUsage {
  * read as "this server has no model list", not "your settings are wrong".
  */
 export async function listModels(opts: OpenAIOptions, timeoutMs = 15_000): Promise<string[]> {
-  const res = await fetch(`${opts.baseURL}/v1/models`, {
+  const res = await fetch(endpointURL(opts.baseURL, 'v1', 'models'), {
     headers: { authorization: `Bearer ${opts.apiKey}` },
     signal: AbortSignal.timeout(timeoutMs),
   })

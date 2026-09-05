@@ -5,7 +5,7 @@ import type { Effort } from './config.js'
 import { workspaceGate } from './scope.js'
 import type { AccessGate } from './scope.js'
 import { emptyUsage } from './types.js'
-import type { ChatMessage, ToolCall, ToolInput, ToolResult, TurnUsage } from './types.js'
+import type { ChatMessage, ThinkingBlock, ToolCall, ToolInput, ToolResult, TurnUsage } from './types.js'
 
 /**
  * What a tool is handed instead of a bare cwd. `access` is the scope guard: a
@@ -69,6 +69,11 @@ export class Session {
   private turn = 0
   private totalUsage = emptyUsage()
   private turnUsage = emptyUsage()
+  // Stop is cooperative: the in-flight request is aborted and the loop ends at
+  // the next boundary, leaving the transcript in a shape the model can be
+  // asked to continue from.
+  private controller: AbortController | null = null
+  private stopped = false
 
   constructor(
     readonly options: SessionOptions,
@@ -94,6 +99,18 @@ export class Session {
     return this.messages.filter(m => m.role !== 'system')
   }
 
+  /** True while a turn is running, which is the only time `stop()` does anything. */
+  get running(): boolean {
+    return this.controller !== null
+  }
+
+  /** End the turn now: abort the request in flight and stop the tool loop. */
+  stop(): void {
+    if (this.controller === null) return
+    this.stopped = true
+    this.controller.abort()
+  }
+
   /** Number of the turn that ran most recently. */
   get turnNumber(): number {
     return this.turn
@@ -107,6 +124,8 @@ export class Session {
   async run(userText: string): Promise<TurnUsage> {
     this.turn += 1
     this.turnUsage = emptyUsage()
+    this.stopped = false
+    this.controller = new AbortController()
     const sessionId = this.options.sessionId
     this.bus.emit({ type: 'session.started', sessionId, cwd: this.options.cwd, at: Date.now() })
     this.messages.push({ role: 'user', content: userText })
@@ -116,18 +135,31 @@ export class Session {
     } catch (err) {
       this.bus.emit({ type: 'session.error', sessionId, turn: this.turn, message: err instanceof Error ? err.message : String(err), at: Date.now() })
       throw err
+    } finally {
+      this.controller = null
     }
   }
 
   private async runRounds(sessionId: string): Promise<TurnUsage> {
     for (let round = 0; round <= this.options.maxToolRounds; round += 1) {
-      const { text, toolCalls, usage } = await this.drainRound()
+      const { text, toolCalls, usage, thinking } = await this.drainRound()
       this.addUsage(usage)
       this.bus.emit({ type: 'usage', sessionId, turn: this.turn, usage: { ...this.totalUsage }, at: Date.now() })
 
-      const assistant: ChatMessage =
-        toolCalls.length > 0 ? { role: 'assistant', content: text, toolCalls } : { role: 'assistant', content: text }
-      this.messages.push(assistant)
+      this.messages.push({
+        role: 'assistant',
+        content: text,
+        ...(toolCalls.length > 0 ? { toolCalls } : {}),
+        ...(thinking.length > 0 ? { thinking } : {}),
+      })
+
+      if (this.stopped) {
+        // Whatever the model had already asked for still needs an answer, or the
+        // next request carries tool calls nothing ever replied to.
+        for (const call of toolCalls) this.noteSkipped(call)
+        this.bus.emit({ type: 'session.stopped', sessionId, turn: this.turn, at: Date.now() })
+        return this.totalUsage
+      }
 
       if (toolCalls.length === 0) {
         this.bus.emit({ type: 'session.finished', sessionId, turn: this.turn, at: Date.now() })
@@ -135,7 +167,13 @@ export class Session {
       }
 
       for (const call of toolCalls) {
-        await this.executeTool(call)
+        if (this.stopped) this.noteSkipped(call)
+        else await this.executeTool(call)
+      }
+
+      if (this.stopped) {
+        this.bus.emit({ type: 'session.stopped', sessionId, turn: this.turn, at: Date.now() })
+        return this.totalUsage
       }
     }
 
@@ -143,9 +181,10 @@ export class Session {
     return this.totalUsage
   }
 
-  private async drainRound(): Promise<{ text: string; toolCalls: ToolCall[]; usage: TurnUsage }> {
+  private async drainRound(): Promise<{ text: string; toolCalls: ToolCall[]; usage: TurnUsage; thinking: ThinkingBlock[] }> {
     let text = ''
     const toolCalls: ToolCall[] = []
+    const thinking: ThinkingBlock[] = []
     let usage = emptyUsage()
 
     const chunks = this.provider.stream({
@@ -153,29 +192,52 @@ export class Session {
       messages: this.messages,
       tools: this.tools.map(t => t.input),
       ...(this.options.effort === undefined ? {} : { effort: this.options.effort }),
+      ...(this.controller === null ? {} : { signal: this.controller.signal }),
     })
 
-    for await (const chunk of chunks) {
-      switch (chunk.kind) {
-        case 'text':
-          text += chunk.text
-          this.bus.emit({ type: 'text_delta', sessionId: this.options.sessionId, text: chunk.text, at: Date.now() })
-          break
-        case 'thinking':
-          this.bus.emit({ type: 'thinking_delta', sessionId: this.options.sessionId, text: chunk.text, at: Date.now() })
-          break
-        case 'tool':
-          toolCalls.push(chunk.tool)
-          this.bus.emit({ type: 'tool_call', sessionId: this.options.sessionId, call: chunk.tool, at: Date.now() })
-          break
-        case 'done':
-          usage = chunk.usage
-          break
-        case 'error':
-          throw new Error(chunk.message)
+    try {
+      for await (const chunk of chunks) {
+        switch (chunk.kind) {
+          case 'text':
+            text += chunk.text
+            this.bus.emit({ type: 'text_delta', sessionId: this.options.sessionId, text: chunk.text, at: Date.now() })
+            break
+          case 'thinking':
+            this.bus.emit({ type: 'thinking_delta', sessionId: this.options.sessionId, text: chunk.text, at: Date.now() })
+            break
+          case 'thinking_block':
+            thinking.push(chunk.block)
+            break
+          case 'tool':
+            toolCalls.push(chunk.tool)
+            this.bus.emit({ type: 'tool_call', sessionId: this.options.sessionId, call: chunk.tool, at: Date.now() })
+            break
+          case 'done':
+            usage = chunk.usage
+            break
+          case 'error':
+            throw new Error(chunk.message)
+        }
       }
+    } catch (err) {
+      // Stop aborts the request mid-stream, so the abort is the expected end of
+      // this round, not a failure: keep what arrived and let the loop wind down.
+      if (!this.stopped) throw err
     }
-    return { text, toolCalls, usage }
+    return { text, toolCalls, usage, thinking }
+  }
+
+  /** A tool call the stop landed on top of. The model gets told, not ignored. */
+  private noteSkipped(call: ToolCall): void {
+    const note = 'stopped by the user before this ran'
+    this.bus.emit({
+      type: 'tool_result',
+      sessionId: this.options.sessionId,
+      callId: call.id,
+      result: { ok: false, summary: note, content: note, isError: true },
+      at: Date.now(),
+    })
+    this.messages.push({ role: 'tool', content: note, toolCallId: call.id, failed: true })
   }
 
   private async executeTool(call: ToolCall): Promise<void> {

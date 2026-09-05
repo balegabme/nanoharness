@@ -8,6 +8,33 @@ Files:
 - src/core/scope.ts — path containment: `..`, absolute paths, symlinks, `~`
 - src/main/workspace-store.ts — folders, sessions and transcripts on disk
 - src/main/permission.ts — the prompt a tool waits on when it reaches outside
+- src/core/prompt.ts — the system prompt: where the session stands, and the rules
+
+## What the agent is told
+
+A session's system prompt is built per session (`buildSystemPrompt`), not
+hard-coded, and it names the four things the model cannot see and will otherwise
+invent: the workspace root, the platform, the shell, and today's date. On
+Windows it says outright that `bash` is Git Bash and not WSL — there is no
+`/mnt/c` and no `/proc` — because a model without that line reasons from its
+training set, decides it is on Linux, and spends a turn probing a filesystem
+that does not exist.
+
+The rules that follow are short on purpose: every token is paid for on every
+request of every turn. Stay in the workspace and say why when you cannot. Prefer
+relative paths. Do the task that was asked, and do not explore the machine.
+Read before editing. Do not retry a failed call unchanged.
+
+## Stopping a turn
+
+Stop is cooperative. `Session.stop()` aborts the in-flight request through an
+`AbortController` that is handed to the provider as `fetch`'s `signal`; the
+abort ends the stream, and the loop winds down at the next boundary rather than
+being killed mid-write. Whatever arrived before the abort is kept, and any tool
+call the stop landed on top of gets a tool message saying it never ran —
+otherwise the next request would carry a `tool_use` block nothing ever answered,
+which both APIs reject. The turn ends with `session.stopped`, and the session
+can be asked to continue.
 
 ## The sidebar model
 

@@ -45,10 +45,8 @@ export const BASH_TOOL = defineTool<BashArgs>({
     // proof: every path the command names is checked, and the command runs with
     // the session root as its cwd. A command that builds a path at runtime
     // slips through, which is why the ledger wants a real sandbox here.
-    for (const target of suspectPaths(command)) {
-      const allowed = await access.check(target, 'run')
-      if (!allowed.ok) return { ok: false, summary: allowed.reason, content: allowed.reason, isError: true }
-    }
+    const allowed = await access.checkAll(suspectPaths(command), 'run')
+    if (!allowed.ok) return { ok: false, summary: allowed.reason, content: allowed.reason, isError: true }
     if (!bashBin) {
       return {
         ok: false,

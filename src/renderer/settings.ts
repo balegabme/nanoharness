@@ -23,6 +23,7 @@ const providerAdd = must<HTMLButtonElement>('provider-add')
 const setupName = must<HTMLInputElement>('setup-name')
 const setupKind = must<HTMLSelectElement>('setup-kind')
 const setupBase = must<HTMLInputElement>('setup-base')
+const setupBaseHint = must<HTMLElement>('setup-base-hint')
 const setupModelInput = must<HTMLInputElement>('setup-model')
 const setupKey = must<HTMLInputElement>('setup-key')
 const setupSave = must<HTMLButtonElement>('setup-save')
@@ -76,6 +77,30 @@ function activeModel(): string {
 
 function currentKind(): ProviderKind {
   return setupKind.value === 'anthropic' ? 'anthropic' : 'openai'
+}
+
+/**
+ * Which half of the URL to paste. The two ecosystems disagree about who owns
+ * the version segment, and nobody can tell from an empty field whether the
+ * endpoint path belongs in it, so the field says so.
+ *
+ * The text lives here rather than in `core/config.ts` because the renderer is
+ * served over `app://` and may only load modules from its own directory: a
+ * runtime import from `../core/` fails to fetch and takes the whole page down.
+ */
+const BASE_HINT: Record<ProviderKind, string> = {
+  anthropic:
+    'Everything before /messages — with or without the version segment. ' +
+    'Examples: https://api.z.ai/api/anthropic, https://api.commandcode.ai/provider, https://api.anthropic.com/v1',
+  openai:
+    'Everything before /chat/completions — with or without the version segment. ' +
+    'Examples: https://api.deepseek.com/v1, https://api.z.ai/api/paas/v4, http://localhost:11434/v1',
+}
+
+function renderBaseHint(): void {
+  const kind = currentKind()
+  setupBaseHint.textContent = BASE_HINT[kind]
+  setupBase.placeholder = kind === 'anthropic' ? 'https://api.example.com/provider' : 'https://api.example.com/v1'
 }
 
 function renderModels(): void {
@@ -154,6 +179,7 @@ function loadForm(provider: ProviderView | null): void {
   const active = lastStatus?.active
   setupModelInput.value = provider !== null && active?.providerId === provider.id ? active.model : (available[0] ?? '')
   setupProbeNote.textContent = ''
+  renderBaseHint()
   renderModels()
 }
 
@@ -307,6 +333,7 @@ export function initSettings(handlers: SettingsHandlers): void {
       setupNote.textContent = ''
     })
   }
+  setupKind.addEventListener('change', renderBaseHint)
   setupTest.addEventListener('click', () => void probe('test'))
   setupFetch.addEventListener('click', () => void probe('fetch'))
   setupAll.addEventListener('change', () => {
@@ -319,5 +346,6 @@ export function initSettings(handlers: SettingsHandlers): void {
       void saveSetup()
     }
   })
+  renderBaseHint()
   showPane('providers')
 }

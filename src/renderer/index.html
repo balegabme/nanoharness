@@ -10,7 +10,7 @@
     <div class="app" id="app">
       <aside class="sidebar" id="sidebar">
         <div class="side-top">
-          <img class="mark" src="./mark.svg" alt="" width="18" height="18" />
+          <img class="mark" src="./mark.svg" alt="" width="24" height="24" />
           <span class="wordmark">nanoharness</span>
           <button class="icon" id="sidebar-toggle" type="button" title="Collapse sidebar" aria-label="Collapse sidebar">«</button>
         </div>
@@ -41,7 +41,7 @@
         <section class="stream" id="stream" hidden></section>
 
         <section class="hero" id="hero">
-          <img class="hero-mark" src="./logo.svg" alt="" width="72" height="72" />
+          <img class="hero-mark" src="./logo.svg" alt="" width="112" height="112" />
           <h1 id="hero-title">NanoHarness</h1>
           <p class="hero-note" id="hero-note">Add a folder to work in. A session can only touch the folder it was started in.</p>
           <div class="hero-actions">
@@ -54,13 +54,19 @@
           <textarea id="input" rows="3" placeholder="Message the agent. Enter sends, Shift+Enter makes a newline."></textarea>
           <div class="controls">
             <select class="chip select" id="model-select" title="Active model" aria-label="Active model"></select>
-            <select class="chip select" id="effort-select" title="Thinking effort" aria-label="Thinking effort">
+            <select
+              class="chip select"
+              id="effort-select"
+              title="How hard the model thinks. OpenAI-compatible: reasoning_effort. Anthropic-compatible: a thinking token budget."
+              aria-label="Thinking effort"
+            >
               <option value="none">no thinking</option>
               <option value="low">low effort</option>
               <option value="medium">medium effort</option>
               <option value="high">high effort</option>
             </select>
             <span class="chip" id="access-chip" title="Tools are limited to this session's folder">workspace only</span>
+            <button class="chip toggle" id="alerts" type="button">alerts on</button>
             <span class="spacer"></span>
             <span class="usage-line" id="usage-line"></span>
             <button class="primary" id="send" type="button">Send</button>
@@ -92,12 +98,13 @@
 
         <label for="setup-kind">API</label>
         <select id="setup-kind">
-          <option value="openai">OpenAI-compatible</option>
-          <option value="anthropic">Anthropic</option>
+          <option value="openai">OpenAI-compatible (/chat/completions)</option>
+          <option value="anthropic">Anthropic-compatible (/messages)</option>
         </select>
 
         <label for="setup-base">Base URL</label>
         <input id="setup-base" type="url" spellcheck="false" placeholder="https://your-provider.example" />
+        <p class="hint field-hint" id="setup-base-hint"></p>
 
         <label for="setup-key">API key</label>
         <input id="setup-key" type="password" spellcheck="false" placeholder="stored encrypted, never written in plain text" />

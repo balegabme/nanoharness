@@ -107,9 +107,22 @@ export function newProviderId(): string {
   return randomUUID()
 }
 
-/** The default endpoint for a kind, so adding a provider is not a URL quiz. */
-export function suggestedBaseURL(kind: ProviderKind): string {
-  return kind === 'anthropic' ? 'https://api.anthropic.com' : ''
+// A base URL that already names an API version: `.../v1`, `.../v1beta`,
+// `.../api/paas/v4`. The two ecosystems disagree about who owns that segment -
+// OpenAI clients take a base that ends in `/v1`, Anthropic clients take one
+// without it and add `/v1` themselves - and people paste whichever their
+// provider's page showed them.
+const VERSIONED = /\/v\d+[a-z0-9]*$/i
+
+/**
+ * Join a base URL to an endpoint path, adding the version segment only when the
+ * base does not already carry one. `https://api.z.ai/api/paas/v4` and
+ * `https://api.deepseek.com` therefore both reach `/chat/completions`, and no
+ * URL ends up with `/v1/v1/`.
+ */
+export function endpointURL(baseURL: string, version: string, path: string): string {
+  const base = normalizeBaseURL(baseURL)
+  return VERSIONED.test(base) ? `${base}/${path}` : `${base}/${version}/${path}`
 }
 
 export function findProvider(stored: StoredConfig, id: string | undefined): ProviderRecord | undefined {

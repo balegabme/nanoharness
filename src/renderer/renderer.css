@@ -1,15 +1,19 @@
-/* Provisional tokens. The full set lands with the design pass (plan §13). */
+/* The warm dark set the logo is drawn in: one hue family, four surfaces. */
 :root {
   --bg: #16130f;
   --bg-raised: #1e1a15;
   --bg-sunken: #110e0b;
+  --bg-hover: #262019;
   --border: #2e2822;
+  --border-strong: #3d3529;
   --text: #ece5da;
   --muted: #9b9086;
   --subtle: #6d6459;
   --accent: #d97742;
+  --accent-soft: rgb(217 119 66 / 14%);
   --success: #7fa86b;
   --error: #d4635a;
+  --shadow: 0 8px 24px rgb(0 0 0 / 35%);
 
   --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
   --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -19,7 +23,9 @@
   --s3: 12px;
   --s4: 16px;
   --s6: 24px;
+  --s8: 32px;
   --radius: 6px;
+  --radius-lg: 10px;
   --radius-chip: 4px;
   --sidebar: 260px;
   --column: 860px;
@@ -72,18 +78,20 @@ body {
   display: flex;
   align-items: center;
   gap: var(--s2);
+  padding: var(--s1) 0 var(--s2);
 }
 
 .mark {
   display: block;
-  border-radius: 3px;
+  border-radius: 4px;
 }
 
 .wordmark {
   flex: 1;
-  color: var(--accent);
+  color: var(--text);
+  font-size: 15px;
   font-weight: 600;
-  letter-spacing: 0.01em;
+  letter-spacing: -0.01em;
 }
 
 .side-head {
@@ -185,11 +193,11 @@ body {
 
 .session-row:hover,
 .group-head:hover {
-  background: var(--bg-raised);
+  background: var(--bg-hover);
 }
 
 .session-row.selected {
-  background: var(--bg-raised);
+  background: var(--accent-soft);
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
@@ -300,9 +308,16 @@ body {
   font-family: var(--font-sans);
 }
 
+.hero-mark {
+  /* The full mark, at the one size in the app where it has room to be read. */
+  margin-bottom: var(--s2);
+  filter: drop-shadow(0 6px 18px rgb(0 0 0 / 45%));
+}
+
 .hero h1 {
   margin: 0;
-  font: 600 20px var(--font-sans);
+  font: 600 24px var(--font-sans);
+  letter-spacing: -0.02em;
 }
 
 .hero-note {
@@ -348,11 +363,49 @@ body {
   color: var(--error);
 }
 
+/* A line about the run rather than about the conversation: a stop, a resume. */
+.block.note {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  color: var(--subtle);
+  font-family: var(--font-sans);
+  font-size: 12px;
+}
+
+.block.note::before,
+.block.note::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
 details {
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: var(--s2) var(--s3);
+}
+
+details:hover {
+  border-color: var(--border-strong);
+}
+
+/* Thinking is context, not the answer: present, quieter than everything else. */
+.block.thinking {
+  background: transparent;
+  border-style: dashed;
+}
+
+.block.thinking > summary {
+  color: var(--subtle);
+}
+
+.block.thinking pre {
+  background: transparent;
+  padding: var(--s2) 0 0;
+  color: var(--subtle);
 }
 
 summary {
@@ -446,12 +499,16 @@ details pre {
 
 textarea {
   resize: none;
-  padding: var(--s2) var(--s3);
+  padding: var(--s3);
   background: var(--bg-sunken);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   font: inherit;
+}
+
+textarea::placeholder {
+  color: var(--subtle);
 }
 
 textarea:focus,
@@ -481,6 +538,17 @@ button.primary {
   background: var(--accent);
   color: var(--bg);
   border-color: var(--accent);
+  font-weight: 600;
+}
+
+button.primary:hover:enabled {
+  filter: brightness(1.08);
+}
+
+/* Send becomes Stop for the length of a turn - same place, opposite meaning. */
+button.primary.stop {
+  background: var(--error);
+  border-color: var(--error);
 }
 
 button.block-button {
@@ -542,6 +610,23 @@ textarea:disabled {
   border-color: var(--accent);
 }
 
+/* A chip that is also a button: the chip look, without the button padding. */
+.chip.toggle {
+  padding: 2px var(--s2);
+  background: transparent;
+  font-weight: 400;
+  cursor: pointer;
+}
+
+.chip.toggle:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.chip.toggle.off {
+  color: var(--subtle);
+}
+
 .chip.select {
   max-width: 220px;
   background: transparent;
@@ -559,10 +644,11 @@ textarea:disabled {
   width: min(860px, 92vw);
   max-height: 86vh;
   padding: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
   background: var(--bg-raised);
   color: var(--text);
+  box-shadow: var(--shadow);
 }
 
 .sheet.small {
@@ -623,15 +709,27 @@ textarea:disabled {
   font-family: var(--font-sans);
 }
 
+/* Sits under the field it explains, so it reads as part of that field. */
+.field-hint {
+  margin: 0;
+  color: var(--subtle);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .perm-path {
   margin: 0;
   padding: var(--s2) var(--s3);
   background: var(--bg-sunken);
   border: 1px solid var(--border);
   border-radius: var(--radius-chip);
-  overflow-x: auto;
+  /* One line per path: a call that reaches four places asks about four here. */
+  max-height: 180px;
+  overflow: auto;
   font: inherit;
   color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .sheet label {

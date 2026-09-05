@@ -1,7 +1,8 @@
 // doc: docs/harness/providers.md
 import type { ChatProvider, ChatInput } from '../core/provider.js'
-import type { ChatChunk, ChatMessage, JsonSchema, ToolCall, ToolInput, TurnUsage } from '../core/types.js'
+import type { ChatChunk, ChatMessage, JsonSchema, ThinkingBlock, ToolCall, ToolInput, TurnUsage } from '../core/types.js'
 import { emptyUsage } from '../core/types.js'
+import { endpointURL } from '../core/config.js'
 import type { Effort } from '../core/config.js'
 
 interface AnthropicOptions {
@@ -9,7 +10,23 @@ interface AnthropicOptions {
   baseURL: string
 }
 
+/**
+ * The `anthropic-version` header every request must carry. It is not a "latest"
+ * marker that drifts: it names the request/response format, and 2023-06-01 is
+ * the one the Messages API documents today. Changing it changes the wire
+ * contract, so it is pinned rather than derived.
+ */
 const VERSION = '2023-06-01'
+
+/**
+ * Anthropic's own API authenticates with `x-api-key`; several
+ * Anthropic-compatible gateways (z.ai, and anything driven by Claude Code's
+ * `ANTHROPIC_AUTH_TOKEN`) read a bearer token instead. Both headers carry the
+ * same key, so one endpoint's convention does not have to be guessed at.
+ */
+function authHeaders(apiKey: string): Record<string, string> {
+  return { 'x-api-key': apiKey, authorization: `Bearer ${apiKey}` }
+}
 
 /**
  * Thinking budgets per effort level. The API demands at least 1,024 tokens and
@@ -32,6 +49,7 @@ export function maxTokensFor(effort: Effort, requested?: number): number {
 type ContentBlock =
   | { type: 'text'; text: string }
   | { type: 'thinking'; thinking: string; signature?: string }
+  | { type: 'redacted_thinking'; data: string }
   | { type: 'tool_use'; id: string; name: string; input: unknown }
   | { type: 'tool_result'; tool_use_id: string; content: string }
 
@@ -69,8 +87,8 @@ interface StreamEvent {
   message?: { usage?: WireUsage }
   usage?: WireUsage
   error?: { message?: string }
-  content_block?: { type?: string; id?: string; name?: string }
-  delta?: { type?: string; text?: string; thinking?: string; partial_json?: string }
+  content_block?: { type?: string; id?: string; name?: string; data?: string }
+  delta?: { type?: string; text?: string; thinking?: string; signature?: string; partial_json?: string }
 }
 
 interface PendingTool {
@@ -98,14 +116,15 @@ export function createAnthropicProvider(opts: AnthropicOptions): ChatProvider {
       if (input.tools.length > 0) body.tools = input.tools.map(toWireTool)
       if (budget > 0) body.thinking = { type: 'enabled', budget_tokens: budget }
 
-      const res = await fetch(`${opts.baseURL}/v1/messages`, {
+      const res = await fetch(endpointURL(opts.baseURL, 'v1', 'messages'), {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          'x-api-key': opts.apiKey,
           'anthropic-version': VERSION,
+          ...authHeaders(opts.apiKey),
         },
         body: JSON.stringify(body),
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
       })
       if (!res.ok) {
         const text = await res.text()
@@ -121,6 +140,10 @@ export function createAnthropicProvider(opts: AnthropicOptions): ChatProvider {
       // so the index is what ties a fragment to its call.
       const pending = new Map<number, PendingTool>()
       const finished: ToolCall[] = []
+      // Thinking blocks are collected whole. The API signs each one and refuses
+      // a modified block on the next request of a tool-using turn, so the text
+      // and its signature are kept together and handed straight back.
+      const thinking = new Map<number, ThinkingBlock>()
 
       try {
         for (;;) {
@@ -143,16 +166,29 @@ export function createAnthropicProvider(opts: AnthropicOptions): ChatProvider {
                 break
               case 'content_block_start': {
                 const block = event.content_block
-                if (block?.type === 'tool_use' && event.index !== undefined) {
+                if (event.index === undefined) break
+                if (block?.type === 'tool_use') {
                   pending.set(event.index, { id: block.id ?? '', name: block.name ?? '', args: '' })
+                } else if (block?.type === 'thinking') {
+                  thinking.set(event.index, { kind: 'thinking', text: '' })
+                } else if (block?.type === 'redacted_thinking') {
+                  // Encrypted by the API, unreadable here, and still required
+                  // back verbatim - so it is carried, not shown.
+                  thinking.set(event.index, { kind: 'redacted', data: block.data ?? '' })
                 }
                 break
               }
               case 'content_block_delta': {
                 const delta = event.delta
                 if (delta?.type === 'text_delta' && delta.text) yield { kind: 'text', text: delta.text }
-                else if (delta?.type === 'thinking_delta' && delta.thinking) yield { kind: 'thinking', text: delta.thinking }
-                else if (delta?.type === 'input_json_delta' && delta.partial_json !== undefined && event.index !== undefined) {
+                else if (delta?.type === 'thinking_delta' && delta.thinking) {
+                  const block = event.index === undefined ? undefined : thinking.get(event.index)
+                  if (block?.kind === 'thinking') block.text += delta.thinking
+                  yield { kind: 'thinking', text: delta.thinking }
+                } else if (delta?.type === 'signature_delta' && delta.signature !== undefined && event.index !== undefined) {
+                  const block = thinking.get(event.index)
+                  if (block?.kind === 'thinking') block.signature = (block.signature ?? '') + delta.signature
+                } else if (delta?.type === 'input_json_delta' && delta.partial_json !== undefined && event.index !== undefined) {
                   const entry = pending.get(event.index)
                   if (entry) entry.args += delta.partial_json
                 }
@@ -163,6 +199,11 @@ export function createAnthropicProvider(opts: AnthropicOptions): ChatProvider {
                 const entry = pending.get(event.index)
                 if (entry && entry.name !== '') finished.push({ id: entry.id, name: entry.name, args: entry.args })
                 pending.delete(event.index)
+                const block = thinking.get(event.index)
+                if (block !== undefined) {
+                  thinking.delete(event.index)
+                  yield { kind: 'thinking_block', block }
+                }
                 break
               }
               case 'message_delta':
@@ -206,6 +247,12 @@ function toWireMessages(messages: readonly ChatMessage[]): WireMessage[] {
     }
 
     const content: ContentBlock[] = []
+    // Signed thinking comes first, in the order it was produced: the API
+    // verifies the signature and rejects a reordered or edited block outright.
+    for (const block of m.thinking ?? []) {
+      if (block.kind === 'redacted') content.push({ type: 'redacted_thinking', data: block.data })
+      else if (block.signature !== undefined) content.push({ type: 'thinking', thinking: block.text, signature: block.signature })
+    }
     if (m.content !== '') content.push({ type: 'text', text: m.content })
     for (const call of m.toolCalls ?? []) {
       content.push({ type: 'tool_use', id: call.id, name: call.name, input: parseArgs(call.args) })
@@ -262,8 +309,8 @@ function applyUsage(usage: TurnUsage, wire: WireUsage | undefined): void {
  * accepted, and the ids fill the model picker.
  */
 export async function listModels(opts: AnthropicOptions, timeoutMs = 15_000): Promise<string[]> {
-  const res = await fetch(`${opts.baseURL}/v1/models`, {
-    headers: { 'x-api-key': opts.apiKey, 'anthropic-version': VERSION },
+  const res = await fetch(endpointURL(opts.baseURL, 'v1', 'models'), {
+    headers: { 'anthropic-version': VERSION, ...authHeaders(opts.apiKey) },
     signal: AbortSignal.timeout(timeoutMs),
   })
   if (!res.ok) {

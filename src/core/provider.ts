@@ -13,4 +13,6 @@ export interface ChatInput {
   effort?: Effort
   /** Anthropic requires a ceiling; OpenAI-compatible endpoints ignore it. */
   maxTokens?: number
+  /** Aborted when the person hits Stop. The provider passes it to `fetch`. */
+  signal?: AbortSignal
 }

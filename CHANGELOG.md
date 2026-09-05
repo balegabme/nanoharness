@@ -49,6 +49,17 @@ Format based on Keep a Changelog; versioning follows SemVer.
   scope and running usage on the composer's control row.
 - Settings is a sheet over the app with its own left nav, not a screen the app
   falls back to.
+- A stop button. Send becomes Stop while a turn runs, and Esc in the composer
+  does the same: the request in flight is aborted and the loop ends at the next
+  boundary. Whatever arrived is kept, a tool call the stop landed on is told it
+  never ran, and the session can be continued.
+- The app announces the end of a turn: a short blip, and a desktop notification
+  when the window is not the one in front. The `alerts` chip silences both.
+- A system prompt built per session, naming the workspace root, the platform,
+  the shell and the date — and saying outright that `bash` on Windows is Git
+  Bash, not WSL, so there is no `/mnt/c` to go looking for.
+- Thinking is stored and replayed where the provider signed it, so a re-opened
+  Anthropic session shows the reasoning it actually sent back.
 
 ### Changed
 - The window has no File/Edit/View menu bar any more.
@@ -69,3 +80,28 @@ Format based on Keep a Changelog; versioning follows SemVer.
   state and the window icon get the full mark.
 - A refused tool call is stored as refused, so a re-opened session shows it in
   red instead of dressing it up as a successful call.
+- One tool call now costs one permission prompt. Every path a call reaches for
+  is resolved together and asked about in a single modal, device nodes
+  (`/dev/null`, `NUL`) are not treated as paths at all, and a denial is
+  remembered, so a command with four paths and a redirect no longer produces
+  five prompts and a repeat of each.
+- The base URL is joined to an endpoint by rule rather than by assumption: the
+  `/v1` is added only when the base does not already end in a version segment,
+  so `https://api.z.ai/api/paas/v4` and `https://api.z.ai/api/anthropic` both
+  reach the right path. The settings field says which part of the address to
+  paste, with examples per API kind, and the kinds are labelled by wire format
+  (`/chat/completions`, `/messages`) rather than by vendor name.
+- The Anthropic wire sends the assistant's signed thinking blocks back on
+  tool-using turns. They were being dropped, which that API rejects.
+- The API key goes out as both `x-api-key` and `Authorization: Bearer`, because
+  Anthropic-compatible gateways differ on which they read.
+- The full mark on the empty state is 112px and the sidebar mark 24px; the
+  design tokens grew a hover surface, a second border weight and a soft accent
+  wash, and the composer, sheets and thinking blocks were restyled on them.
+- `suggestedBaseURL()` is gone. It answered `https://api.anthropic.com` for the
+  Anthropic kind, which is a vendor address in a harness that talks to
+  Anthropic-*compatible* endpoints; nothing called it.
+- An eslint rule stops the renderer importing runtime code from `src/core`,
+  `src/ipc` or `src/main`. The `app://` handler refuses anything outside
+  `out/renderer`, so such an import 404s at load time and the window opens blank
+  with nothing on screen saying why. Type imports stay allowed.
