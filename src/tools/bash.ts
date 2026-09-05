@@ -2,6 +2,7 @@
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { defineTool } from '../core/session.js'
+import { suspectPaths } from '../core/scope.js'
 import type { ArgsParse } from '../core/session.js'
 import type { ToolResult } from '../core/types.js'
 
@@ -39,7 +40,15 @@ export const BASH_TOOL = defineTool<BashArgs>({
     },
   },
   parse: parseArgs,
-  async run({ command }, cwd): Promise<ToolResult> {
+  async run({ command }, { cwd, access }): Promise<ToolResult> {
+    // A shell command is not a path list, so the scope check is a screen, not a
+    // proof: every path the command names is checked, and the command runs with
+    // the session root as its cwd. A command that builds a path at runtime
+    // slips through, which is why the ledger wants a real sandbox here.
+    for (const target of suspectPaths(command)) {
+      const allowed = await access.check(target, 'run')
+      if (!allowed.ok) return { ok: false, summary: allowed.reason, content: allowed.reason, isError: true }
+    }
     if (!bashBin) {
       return {
         ok: false,

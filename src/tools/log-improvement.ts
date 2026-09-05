@@ -73,7 +73,7 @@ export const LOG_IMPROVEMENT_TOOL = defineTool<ImprovementArgs>({
     },
   },
   parse: parseArgs,
-  async run({ title, detail }, cwd): Promise<ToolResult> {
+  async run({ title, detail }, { cwd }): Promise<ToolResult> {
     const path = await ledgerPath(cwd)
     const existing = await readFile(path, 'utf8').catch(() => LEDGER_HEADER)
     const oneLine = (s: string) => s.replace(/\s+/g, ' ')

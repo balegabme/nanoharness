@@ -50,10 +50,11 @@ export type AppEvent =
   | { type: 'usage'; sessionId: string; turn: number; usage: TurnUsage; at: number }
   | { type: 'session.error'; sessionId: string; turn: number; message: string; at: number }
   | { type: 'session.finished'; sessionId: string; turn: number; at: number }
+  | { type: 'permission.request'; sessionId: string; id: string; intent: 'read' | 'write' | 'run'; path: string; root: string; at: number }
 
 export type ChatMessage =
   | { role: 'system' | 'user' | 'assistant'; content: string; toolCalls?: ToolCall[] }
-  | { role: 'tool'; content: string; toolCallId: string }
+  | { role: 'tool'; content: string; toolCallId: string; failed?: boolean }
 
 export type ChatChunk =
   | { kind: 'text'; text: string }

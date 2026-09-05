@@ -1,12 +1,25 @@
 // doc: docs/harness/overview.md
 import { EventBus } from './event-bus.js'
 import type { ChatProvider } from './provider.js'
+import type { Effort } from './config.js'
+import { workspaceGate } from './scope.js'
+import type { AccessGate } from './scope.js'
 import { emptyUsage } from './types.js'
 import type { ChatMessage, ToolCall, ToolInput, ToolResult, TurnUsage } from './types.js'
 
+/**
+ * What a tool is handed instead of a bare cwd. `access` is the scope guard: a
+ * tool asks it before touching a path, so no tool has to remember the rule and
+ * none can forget it (see `scope.ts`).
+ */
+export interface ToolContext {
+  cwd: string
+  access: AccessGate
+}
+
 export interface Tool {
   input: ToolInput
-  run(args: Record<string, unknown>, cwd: string): Promise<ToolResult>
+  run(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult>
 }
 
 export type ArgsParse<A> = { ok: true; args: A } | { ok: false; error: string }
@@ -14,7 +27,7 @@ export type ArgsParse<A> = { ok: true; args: A } | { ok: false; error: string }
 export interface ToolSpec<A> {
   input: ToolInput
   parse(args: Record<string, unknown>): ArgsParse<A>
-  run(args: A, cwd: string): Promise<ToolResult>
+  run(args: A, ctx: ToolContext): Promise<ToolResult>
 }
 
 // Tool args arrive as untrusted wire JSON, so the stored Tool keeps an erased
@@ -23,9 +36,9 @@ export interface ToolSpec<A> {
 export function defineTool<A>(spec: ToolSpec<A>): Tool {
   return {
     input: spec.input,
-    async run(raw, cwd) {
+    async run(raw, ctx) {
       const parsed = spec.parse(raw)
-      if (parsed.ok) return spec.run(parsed.args, cwd)
+      if (parsed.ok) return spec.run(parsed.args, ctx)
       const error = `${spec.input.name}: ${parsed.error}`
       return { ok: false, summary: error, content: error, isError: true }
     },
@@ -42,10 +55,16 @@ export interface SessionOptions {
   model: string
   systemPrompt: string
   maxToolRounds: number
+  effort?: Effort
+  /** Defaults to a hard block outside `cwd`; the app passes one that can ask. */
+  access?: AccessGate
+  /** Messages from an earlier run of this session, replayed as history. */
+  history?: ChatMessage[]
 }
 
 export class Session {
   readonly bus: EventBus
+  readonly access: AccessGate
   private readonly messages: ChatMessage[] = []
   private turn = 0
   private totalUsage = emptyUsage()
@@ -58,7 +77,21 @@ export class Session {
     bus?: EventBus,
   ) {
     this.bus = bus ?? new EventBus()
+    this.access = options.access ?? workspaceGate(options.cwd)
     this.messages.push({ role: 'system', content: options.systemPrompt })
+    // A resumed session keeps its own system prompt, not the stored one: the
+    // prompt is built fresh each launch and may have changed since.
+    for (const message of options.history ?? []) {
+      if (message.role !== 'system') this.messages.push(message)
+    }
+    // Turn numbers continue where the stored conversation left off, so the
+    // usage log of a resumed session does not restart at 1.
+    this.turn = this.messages.filter(m => m.role === 'user').length
+  }
+
+  /** The conversation so far, for persisting and re-opening this session. */
+  get transcript(): ChatMessage[] {
+    return this.messages.filter(m => m.role !== 'system')
   }
 
   /** Number of the turn that ran most recently. */
@@ -119,6 +152,7 @@ export class Session {
       model: this.options.model,
       messages: this.messages,
       tools: this.tools.map(t => t.input),
+      ...(this.options.effort === undefined ? {} : { effort: this.options.effort }),
     })
 
     for await (const chunk of chunks) {
@@ -149,10 +183,13 @@ export class Session {
     const result = tool ? await this.runWithArgs(tool, call.args) : { ok: false, summary: `unknown tool: ${call.name}` }
 
     this.bus.emit({ type: 'tool_result', sessionId: this.options.sessionId, callId: call.id, result, at: Date.now() })
+    // The failure is stored, not only emitted: a re-opened session has to show
+    // a refused tool as refused rather than as a successful call.
     this.messages.push({
       role: 'tool',
       content: result.content ?? result.summary ?? '',
       toolCallId: call.id,
+      ...(result.ok ? {} : { failed: true }),
     })
   }
 
@@ -166,7 +203,7 @@ export class Session {
     if (!isJsonObject(parsed)) {
       return { ok: false, summary: `args must be a JSON object for ${tool.input.name}`, isError: true }
     }
-    return tool.run(parsed, this.options.cwd)
+    return tool.run(parsed, { cwd: this.options.cwd, access: this.access })
   }
 
   private addUsage(u: TurnUsage): void {

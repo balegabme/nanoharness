@@ -54,11 +54,23 @@ never the repo. `nh usage` reads it back — see `cli.md`.
 ## IPC
 
 Renderer talks to the main process over typed channels (`src/ipc/contract.ts`).
-`config:get` and `config:set` drive the setup screen — the first reports
-whether a session can start at all, the second saves settings and retires the
-live sessions so the next turn picks up the new endpoint. `session:send` runs a
-turn; every event the session emits during the run is
-streamed live to the caller over `session:event` (typed `AppEvent` payloads,
-each with an `at` timestamp), and the invoke reply carries the session id and
-final usage. There is no HTTP listener in v1, and a session can still be driven
+`config:get` reports whether a session can start at all and lists the configured
+providers. `config:save-provider`, `config:delete-provider` and
+`config:set-active` change them — the first two edit the registry, the third
+switches provider, model or effort from the header — and each retires the live
+sessions so the next turn picks up the change. `config:probe` asks an endpoint
+what it offers, which doubles as the connection test.
+
+`workspace:list`, `workspace:add` and `workspace:remove` are the folders in the
+sidebar; `session:create`, `session:open` and `session:delete` are the
+conversations inside them, and `session:open` returns the stored transcript
+(see `sessions.md`). `session:send` runs a turn for one session id; every event
+the session emits during the run is streamed live to the caller over
+`session:event` (typed `AppEvent` payloads, each with an `at` timestamp), and
+the invoke reply carries the usage and the session as it now stands, since the
+first message names it.
+
+One of those events flows the other way in spirit: `permission.request` is
+emitted when a tool reaches outside the session folder, and the turn stays
+parked until the renderer answers it over `permission:respond`. There is no HTTP listener in v1, and a session can still be driven
 headlessly without a window.

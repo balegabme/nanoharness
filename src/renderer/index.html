@@ -7,60 +7,152 @@
     <link rel="stylesheet" href="./renderer.css" />
   </head>
   <body>
-    <header class="bar">
-      <img class="logo" src="./logo.svg" alt="" width="22" height="22" />
-      <span class="brand">nanoharness</span>
-      <span class="chip" id="model">—</span>
-      <span class="chip" id="status">idle</span>
-      <button class="chip action" id="settings" type="button" title="Provider settings" aria-label="Provider settings">settings</button>
-    </header>
+    <div class="app" id="app">
+      <aside class="sidebar" id="sidebar">
+        <div class="side-top">
+          <img class="mark" src="./mark.svg" alt="" width="18" height="18" />
+          <span class="wordmark">nanoharness</span>
+          <button class="icon" id="sidebar-toggle" type="button" title="Collapse sidebar" aria-label="Collapse sidebar">«</button>
+        </div>
 
-    <main class="stream" id="stream"></main>
+        <button class="primary block-button" id="new-session" type="button">New session</button>
 
-    <section class="setup" id="setup" hidden>
-      <h1 id="setup-title">Set up a provider</h1>
-      <p class="hint" id="setup-hint">
-        NanoHarness ships with no endpoint and no model built in. Point it at any
-        OpenAI-compatible API. The key is encrypted by your OS and stored outside
-        this repo; the rest lands in a plain settings file.
-      </p>
+        <div class="side-head">
+          <span class="side-label">Folders</span>
+          <button class="icon" id="workspace-add" type="button" title="Add folder" aria-label="Add folder">+</button>
+        </div>
 
-      <label for="setup-base">Base URL</label>
-      <input id="setup-base" type="url" spellcheck="false" placeholder="https://your-provider.example" />
+        <input class="search" id="session-search" type="search" spellcheck="false" placeholder="Search sessions" aria-label="Search sessions" />
 
-      <label for="setup-key">API key</label>
-      <input id="setup-key" type="password" spellcheck="false" placeholder="stored encrypted, never written in plain text" />
+        <nav class="tree" id="tree" aria-label="Sessions"></nav>
 
+        <button class="side-foot" id="settings" type="button">Settings</button>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <button class="icon" id="sidebar-show" type="button" title="Show sidebar" aria-label="Show sidebar" hidden>»</button>
+          <span class="title" id="session-title">No session</span>
+          <span class="chip scope" id="scope-chip" hidden></span>
+          <span class="spacer"></span>
+          <span class="chip" id="status">idle</span>
+        </header>
+
+        <section class="stream" id="stream" hidden></section>
+
+        <section class="hero" id="hero">
+          <img class="hero-mark" src="./logo.svg" alt="" width="72" height="72" />
+          <h1 id="hero-title">NanoHarness</h1>
+          <p class="hero-note" id="hero-note">Add a folder to work in. A session can only touch the folder it was started in.</p>
+          <div class="hero-actions">
+            <button class="primary" id="hero-add" type="button">Add folder</button>
+            <button class="ghost" id="hero-settings" type="button">Provider settings</button>
+          </div>
+        </section>
+
+        <footer class="composer" id="composer" hidden>
+          <textarea id="input" rows="3" placeholder="Message the agent. Enter sends, Shift+Enter makes a newline."></textarea>
+          <div class="controls">
+            <select class="chip select" id="model-select" title="Active model" aria-label="Active model"></select>
+            <select class="chip select" id="effort-select" title="Thinking effort" aria-label="Thinking effort">
+              <option value="none">no thinking</option>
+              <option value="low">low effort</option>
+              <option value="medium">medium effort</option>
+              <option value="high">high effort</option>
+            </select>
+            <span class="chip" id="access-chip" title="Tools are limited to this session's folder">workspace only</span>
+            <span class="spacer"></span>
+            <span class="usage-line" id="usage-line"></span>
+            <button class="primary" id="send" type="button">Send</button>
+          </div>
+        </footer>
+      </main>
+    </div>
+
+    <dialog class="sheet" id="settings-dialog" aria-label="Settings">
+      <nav class="sheet-nav">
+        <span class="sheet-title">Settings</span>
+        <button class="nav-item" id="pane-providers" type="button">Providers</button>
+        <button class="nav-item" id="pane-about" type="button">About</button>
+        <span class="spacer"></span>
+        <button class="ghost" id="settings-close" type="button">Close</button>
+      </nav>
+
+      <section class="sheet-pane" id="providers-pane">
+        <h2 id="setup-title">Providers</h2>
+        <p class="hint" id="setup-hint"></p>
+
+        <div class="providers" id="providers" hidden>
+          <div class="provider-list" id="provider-list"></div>
+          <button id="provider-add" class="ghost" type="button">Add another provider</button>
+        </div>
+
+        <label for="setup-name">Name</label>
+        <input id="setup-name" type="text" spellcheck="false" placeholder="what you want to call it" />
+
+        <label for="setup-kind">API</label>
+        <select id="setup-kind">
+          <option value="openai">OpenAI-compatible</option>
+          <option value="anthropic">Anthropic</option>
+        </select>
+
+        <label for="setup-base">Base URL</label>
+        <input id="setup-base" type="url" spellcheck="false" placeholder="https://your-provider.example" />
+
+        <label for="setup-key">API key</label>
+        <input id="setup-key" type="password" spellcheck="false" placeholder="stored encrypted, never written in plain text" />
+
+        <div class="setup-actions">
+          <button id="setup-test" class="ghost" type="button">Test connection</button>
+          <button id="setup-fetch" class="ghost" type="button">Fetch models</button>
+          <span class="setup-note" id="setup-probe-note"></span>
+        </div>
+
+        <fieldset class="models" id="setup-models" hidden>
+          <legend>Models the harness may use</legend>
+          <label class="model-row all">
+            <input type="checkbox" id="setup-all" />
+            <span id="setup-all-label">Select all</span>
+          </label>
+          <div class="model-list" id="setup-model-list"></div>
+        </fieldset>
+
+        <label for="setup-model">Active model</label>
+        <select id="setup-model-select" hidden></select>
+        <input id="setup-model" type="text" spellcheck="false" placeholder="the model id your provider expects" />
+
+        <div class="setup-actions">
+          <button class="primary" id="setup-save" type="button">Save</button>
+          <button id="setup-delete" class="ghost danger" type="button" hidden>Remove provider</button>
+          <span class="setup-note" id="setup-note"></span>
+        </div>
+      </section>
+
+      <section class="sheet-pane" id="about-pane" hidden>
+        <h2>About</h2>
+        <p class="hint" id="about-version">nanoharness</p>
+        <p class="hint">
+          Settings and API keys live in your OS user-data directory, never in a project. Keys are encrypted by the
+          OS; everything else is a plain JSON file you can read.
+        </p>
+        <p class="hint">
+          Every session is scoped to the folder it was started in. Reaching outside it stops the turn and asks
+          you first.
+        </p>
+      </section>
+    </dialog>
+
+    <dialog class="sheet small" id="permission-dialog" aria-label="Permission request">
+      <h2 id="perm-title">Allow access outside the folder?</h2>
+      <p class="hint" id="perm-detail"></p>
+      <pre class="perm-path" id="perm-path"></pre>
+      <p class="hint" id="perm-root"></p>
       <div class="setup-actions">
-        <button id="setup-test" class="ghost" type="button">Test connection</button>
-        <button id="setup-fetch" class="ghost" type="button">Fetch models</button>
-        <span class="setup-note" id="setup-probe-note"></span>
+        <button class="primary" id="perm-once" type="button">Allow once</button>
+        <button class="ghost" id="perm-session" type="button">Allow for this session</button>
+        <button class="ghost danger" id="perm-deny" type="button">Deny</button>
       </div>
-
-      <fieldset class="models" id="setup-models" hidden>
-        <legend>Models the harness may use</legend>
-        <label class="model-row all">
-          <input type="checkbox" id="setup-all" />
-          <span id="setup-all-label">Select all</span>
-        </label>
-        <div class="model-list" id="setup-model-list"></div>
-      </fieldset>
-
-      <label for="setup-model">Active model</label>
-      <select id="setup-model-select" hidden></select>
-      <input id="setup-model" type="text" spellcheck="false" placeholder="the model id your provider expects" />
-
-      <div class="setup-actions">
-        <button id="setup-save" type="button">Save and start</button>
-        <button id="setup-cancel" class="ghost" type="button" hidden>Cancel</button>
-        <span class="setup-note" id="setup-note"></span>
-      </div>
-    </section>
-
-    <footer class="composer" id="composer">
-      <textarea id="input" rows="3" placeholder="Ask something. Enter sends, Shift+Enter makes a newline."></textarea>
-      <button id="send" type="button">Send</button>
-    </footer>
+    </dialog>
 
     <script type="module" src="./index.js"></script>
   </body>

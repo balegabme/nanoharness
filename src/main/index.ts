@@ -1,8 +1,7 @@
 // doc: docs/harness/overview.md
-import { app, BrowserWindow, ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron'
 import { createRequire } from 'node:module'
-import { randomUUID } from 'node:crypto'
-import { createOpenAIProvider } from '../providers/openai.js'
+import { createProvider } from '../providers/factory.js'
 import { BASH_TOOL } from '../tools/bash.js'
 import { READ_TOOL } from '../tools/read.js'
 import { WRITE_TOOL } from '../tools/write.js'
@@ -11,10 +10,34 @@ import { EventBus } from '../core/event-bus.js'
 import { Session } from '../core/session.js'
 import { appendUsage } from '../core/usage-log.js'
 import { IPC_CHANNELS } from '../ipc/contract.js'
-import { configStatus, loadProviderConfig, probeProvider, writeSettings } from './config-store.js'
+import { configStatus, deleteProvider, loadProviderConfig, probeProvider, saveProvider, setActive } from './config-store.js'
+import { PermissionBroker, promptingGate } from './permission.js'
+import {
+  addWorkspace,
+  createSession,
+  deleteSession,
+  loadTranscript,
+  noteTurn,
+  removeWorkspace,
+  saveTranscript,
+  sessionRoot,
+  toTranscriptView,
+  workspaceStatus,
+} from './workspace-store.js'
 import { createWindow, serveRenderer } from './window.js'
 import type { AppEvent } from '../core/types.js'
-import type { ConfigProbeRequest, ConfigProbeResult, ConfigSetRequest, ConfigStatus } from '../ipc/contract.js'
+import type {
+  ActiveSetRequest,
+  ConfigProbeRequest,
+  ConfigProbeResult,
+  ConfigStatus,
+  PermissionDecision,
+  ProviderSaveRequest,
+  SessionOpenResponse,
+  SessionSendRequest,
+  SessionView,
+  WorkspaceStatus,
+} from '../ipc/contract.js'
 
 const require = createRequire(import.meta.url)
 const pkg = require('../../package.json') as { version: string }
@@ -28,23 +51,48 @@ const EVENT_TYPES: AppEvent['type'][] = [
   'usage',
   'session.error',
   'session.finished',
+  'permission.request',
 ]
 
 const SYSTEM_PROMPT = 'You are NanoHarness. Be minimal and precise.'
 const MAX_TOOL_ROUNDS = 8
 
-// One session per window, so a conversation keeps its history across messages.
-const sessions = new Map<number, Session>()
+// Live sessions, keyed the way the renderer addresses them. A session that was
+// never opened this launch is rebuilt from its stored transcript on first use.
+const sessions = new Map<string, Session>()
+// One broker per window: it is the thing that can put a modal in front of a
+// person, so it belongs to the window that has one.
+const brokers = new Map<number, PermissionBroker>()
+
+function brokerFor(sender: WebContents): PermissionBroker {
+  const existing = brokers.get(sender.id)
+  if (existing) return existing
+  const broker = new PermissionBroker(ask => {
+    if (!sender.isDestroyed()) {
+      sender.send(IPC_CHANNELS.sessionEvent, { type: 'permission.request', ...ask, at: Date.now() } satisfies AppEvent)
+    }
+  })
+  brokers.set(sender.id, broker)
+  sender.once('destroyed', () => {
+    // Nobody left to answer a prompt, and the tools waiting on one would hang.
+    broker.cancelAll()
+    brokers.delete(sender.id)
+  })
+  return broker
+}
 
 // No endpoint and no model are baked in: both come from the settings the user
 // saved, and an incomplete configuration is an error the setup screen handles,
 // never a silent default (plan §11).
-async function sessionFor(sender: WebContents): Promise<Session> {
-  const existing = sessions.get(sender.id)
+async function sessionFor(sender: WebContents, sessionId: string): Promise<Session> {
+  const existing = sessions.get(sessionId)
   if (existing) return existing
 
+  const root = await sessionRoot(sessionId)
+  if (root === null) throw new Error('that session is gone; start a new one from the sidebar')
+
   const config = await loadProviderConfig()
-  const provider = createOpenAIProvider({ apiKey: config.apiKey, baseURL: config.baseURL })
+  const provider = createProvider({ kind: config.provider.kind, baseURL: config.provider.baseURL, apiKey: config.apiKey })
   const bus = new EventBus()
   for (const type of EVENT_TYPES) {
     bus.on(type, event => {
@@ -53,13 +101,24 @@ async function sessionFor(sender: WebContents): Promise<Session> {
   }
 
   const session = new Session(
-    { sessionId: randomUUID(), cwd: process.cwd(), model: config.model, systemPrompt: SYSTEM_PROMPT, maxToolRounds: MAX_TOOL_ROUNDS },
+    {
+      sessionId,
+      // The folder the session was started in is its cwd *and* the boundary
+      // every tool is held to, so a session can never wander into a sibling
+      // project without someone saying yes.
+      cwd: root,
+      model: config.model,
+      effort: config.effort,
+      systemPrompt: SYSTEM_PROMPT,
+      maxToolRounds: MAX_TOOL_ROUNDS,
+      access: promptingGate({ root, sessionId, broker: brokerFor(sender) }),
+      history: await loadTranscript(sessionId),
+    },
     provider,
     [BASH_TOOL, READ_TOOL, WRITE_TOOL, LOG_IMPROVEMENT_TOOL],
     bus,
   )
-  sessions.set(sender.id, session)
-  sender.once('destroyed', () => sessions.delete(sender.id))
+  sessions.set(sessionId, session)
   return session
 }
 
@@ -72,17 +131,77 @@ app.whenReady().then(() => {
 
   ipcMain.handle(IPC_CHANNELS.configProbe, (_event: IpcMainInvokeEvent, req: ConfigProbeRequest): Promise<ConfigProbeResult> => probeProvider(req))
 
-  ipcMain.handle(IPC_CHANNELS.configSet, async (_event: IpcMainInvokeEvent, req: ConfigSetRequest): Promise<ConfigStatus> => {
-    await writeSettings(req)
-    // Live sessions hold a provider built from the old settings, so retire
-    // them; the next turn builds a session against the new ones.
+  // Every settings write retires the live sessions: they hold a provider built
+  // from the old configuration, so the next turn rebuilds against the new one.
+  // The stored transcript is what makes that lossless.
+  ipcMain.handle(IPC_CHANNELS.configSaveProvider, async (_event: IpcMainInvokeEvent, req: ProviderSaveRequest): Promise<ConfigStatus> => {
+    await saveProvider(req)
     sessions.clear()
     return configStatus()
   })
 
-  ipcMain.handle(IPC_CHANNELS.sessionSend, async (event: IpcMainInvokeEvent, req: { text: string }) => {
-    const session = await sessionFor(event.sender)
+  ipcMain.handle(IPC_CHANNELS.configDeleteProvider, async (_event: IpcMainInvokeEvent, id: string): Promise<ConfigStatus> => {
+    await deleteProvider(id)
+    sessions.clear()
+    return configStatus()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.configSetActive, async (_event: IpcMainInvokeEvent, req: ActiveSetRequest): Promise<ConfigStatus> => {
+    await setActive(req)
+    sessions.clear()
+    return configStatus()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.workspaceList, (): Promise<WorkspaceStatus> => workspaceStatus())
+
+  ipcMain.handle(IPC_CHANNELS.workspaceAdd, async (event: IpcMainInvokeEvent): Promise<WorkspaceStatus | null> => {
+    const window = BrowserWindow.fromWebContents(event.sender)
+    const picked = window
+      ? await dialog.showOpenDialog(window, { title: 'Add a folder', properties: ['openDirectory', 'createDirectory'] })
+      : await dialog.showOpenDialog({ title: 'Add a folder', properties: ['openDirectory', 'createDirectory'] })
+    const dir = picked.filePaths[0]
+    if (picked.canceled || dir === undefined) return null
+    await addWorkspace(dir)
+    return workspaceStatus()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.workspaceRemove, async (_event: IpcMainInvokeEvent, id: string): Promise<WorkspaceStatus> => {
+    const status = await workspaceStatus()
+    for (const session of status.sessions.filter(s => s.workspaceId === id)) sessions.delete(session.id)
+    await removeWorkspace(id)
+    return workspaceStatus()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.sessionCreate, (_event: IpcMainInvokeEvent, workspaceId: string): Promise<SessionView> => createSession(workspaceId))
+
+  ipcMain.handle(IPC_CHANNELS.sessionOpen, async (_event: IpcMainInvokeEvent, id: string): Promise<SessionOpenResponse> => {
+    const status = await workspaceStatus()
+    const session = status.sessions.find(s => s.id === id)
+    const workspace = status.workspaces.find(w => w.id === session?.workspaceId)
+    if (session === undefined || workspace === undefined) throw new Error('that session is gone; start a new one from the sidebar')
+    return { session, workspace, messages: toTranscriptView(await loadTranscript(id)) }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.sessionDelete, async (_event: IpcMainInvokeEvent, id: string): Promise<WorkspaceStatus> => {
+    sessions.delete(id)
+    await deleteSession(id)
+    return workspaceStatus()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.permissionRespond, (event: IpcMainInvokeEvent, req: { id: string; decision: PermissionDecision }) => {
+    brokerFor(event.sender).resolve(req.id, req.decision)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.sessionSend, async (event: IpcMainInvokeEvent, req: SessionSendRequest) => {
+    const session = await sessionFor(event.sender, req.sessionId)
     const usage = await session.run(req.text)
+
+    // The transcript is written after the turn, not during it: a half-streamed
+    // answer is not a message, and a crash mid-turn should leave the session
+    // exactly as it was before the message was sent.
+    await saveTranscript(req.sessionId, session.transcript)
+    const updated = await noteTurn(req.sessionId, req.text)
+
     // One line per completed turn, so `nh usage` has something to read. A log
     // that cannot be written is worth a warning, never a failed turn.
     await appendUsage({
@@ -94,7 +213,11 @@ app.whenReady().then(() => {
     }).catch((err: unknown) => {
       process.stderr.write(`usage log: ${err instanceof Error ? err.message : String(err)}\n`)
     })
-    return { sessionId: session.options.sessionId, usage }
+
+    const status = await workspaceStatus()
+    const view = updated ?? status.sessions.find(s => s.id === req.sessionId)
+    if (view === undefined) throw new Error('that session is gone; start a new one from the sidebar')
+    return { sessionId: req.sessionId, usage, session: view }
   })
 
   createWindow()

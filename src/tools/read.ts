@@ -1,6 +1,5 @@
 // doc: docs/harness/tools.md
 import { readFile, stat } from 'node:fs/promises'
-import { resolve } from 'node:path'
 import { defineTool } from '../core/session.js'
 import type { ArgsParse } from '../core/session.js'
 import type { ToolResult } from '../core/types.js'
@@ -41,10 +40,15 @@ export const READ_TOOL = defineTool<ReadArgs>({
     },
   },
   parse: parseArgs,
-  async run({ path: rel, offset: rawOffset, limit: rawLimit }, cwd): Promise<ToolResult> {
+  async run({ path: rel, offset: rawOffset, limit: rawLimit }, { access }): Promise<ToolResult> {
     const offset = rawOffset === undefined ? 0 : Math.max(0, Math.floor(rawOffset))
     const limit = rawLimit === undefined ? MAX_LINES : Math.min(MAX_LINES, Math.max(1, Math.floor(rawLimit)))
-    const abs = resolve(cwd, rel)
+
+    // Scope first: whether the file exists is none of the session's business
+    // until it is allowed to look there at all.
+    const allowed = await access.check(rel, 'read')
+    if (!allowed.ok) return { ok: false, summary: allowed.reason, content: allowed.reason, isError: true }
+    const abs = allowed.path
 
     const info = await stat(abs).catch(() => null)
     if (!info) return { ok: false, summary: `read: ${rel}: no such file`, content: `read: ${rel}: no such file`, isError: true }

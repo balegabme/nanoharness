@@ -1,6 +1,6 @@
 // doc: docs/harness/tools.md
 import { mkdir, writeFile } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
+import { dirname } from 'node:path'
 import { defineTool } from '../core/session.js'
 import type { ArgsParse } from '../core/session.js'
 
@@ -27,8 +27,10 @@ export const WRITE_TOOL = defineTool<WriteArgs>({
     },
   },
   parse: parseArgs,
-  async run({ path: rel, content }, cwd) {
-    const abs = resolve(cwd, rel)
+  async run({ path: rel, content }, { access }) {
+    const allowed = await access.check(rel, 'write')
+    if (!allowed.ok) return { ok: false, summary: allowed.reason, content: allowed.reason, isError: true }
+    const abs = allowed.path
     await mkdir(dirname(abs), { recursive: true })
     await writeFile(abs, content, 'utf8')
     return { ok: true, summary: `wrote ${rel} (${Buffer.byteLength(content, 'utf8')} bytes)` }
