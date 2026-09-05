@@ -10,7 +10,12 @@ interface OpenAIOptions {
 
 interface WireDelta {
   content?: string
+  // Thinking has no standard field on this wire. DeepSeek and vLLM send
+  // `reasoning_content`, OpenRouter sends `reasoning`, and OpenAI itself sends
+  // neither, so all the known spellings are read and the block simply stays
+  // empty where a server streams nothing.
   reasoning_content?: string
+  reasoning?: string
   tool_calls?: { index: number; id?: string; function?: { name?: string; arguments?: string } }[]
 }
 
@@ -47,6 +52,7 @@ interface WireRequest {
   tools: WireToolDef[]
   stream: true
   stream_options: { include_usage: true }
+  reasoning_effort?: string
 }
 
 interface PendingTool {
@@ -67,6 +73,10 @@ export function createOpenAIProvider(opts: OpenAIOptions): ChatProvider {
         // zero tokens. Compatible servers that do not know the field ignore it.
         stream_options: { include_usage: true },
       }
+      // Which values a family accepts varies, and an unknown one is either a 400
+      // or a silent drop, so "none" simply leaves the field out rather than
+      // asserting a level the model may not have (plan §11).
+      if (input.effort !== undefined && input.effort !== 'none') body.reasoning_effort = input.effort
       const res = await fetch(`${opts.baseURL}/v1/chat/completions`, {
         method: 'POST',
         headers: {
@@ -101,7 +111,8 @@ export function createOpenAIProvider(opts: OpenAIOptions): ChatProvider {
               if (event === null) continue
               const delta = event.delta
               if (delta?.content) yield { kind: 'text', text: delta.content }
-              if (delta?.reasoning_content) yield { kind: 'thinking', text: delta.reasoning_content }
+              const thinking = delta?.reasoning_content ?? delta?.reasoning
+              if (thinking) yield { kind: 'thinking', text: thinking }
               if (delta?.tool_calls) {
                 for (const tc of delta.tool_calls) {
                   const entry = pending.get(tc.index) ?? { id: '', name: '', args: '' }
