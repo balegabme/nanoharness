@@ -37,3 +37,17 @@ written to.
 - [ ] `Menu.setApplicationMenu(null)` also removes the accelerators that came with the default menu. Text editing is handled by Chromium so copy and paste still work, but a deliberate keyboard map (plan §13) has to register its own shortcuts — src/main/window.ts.
 - [ ] With the environment variables gone, a machine whose OS has no secret store (Linux without libsecret) cannot save a key at all, so the app is unusable there. It needs a real fallback — an OS-agnostic encrypted store or an explicit, clearly labelled plaintext opt-in — rather than a refusal — src/main/config-store.ts.
 - [ ] Nothing can configure a provider without the GUI, so headless runs and CI have no way in. A `nh config` subcommand writing the same files is the missing half — src/cli/index.ts, src/main/config-store.ts.
+- [x] Sessions still run in `process.cwd()`, whatever directory Electron was launched from. A session has no root of its own, so nothing scopes a tool to the folder an agent was invoked in. (fixed: src/core/scope.ts, src/main/workspace-store.ts, src/main/permission.ts, src/main/index.ts)
+- [ ] The model picker has no capability warnings, and the Anthropic side could read them straight from `GET /v1/models` rather than probing — src/providers/anthropic.ts, src/renderer/index.ts.
+- [ ] `reasoning_effort` is passed through verbatim on the OpenAI wire. Plan §11 wants a per-family allow-list, because o1-mini takes no effort at all and other families reject values outside their own set — src/providers/openai.ts.
+- [ ] Nothing sends `cache_control` on the Anthropic wire, so prompt caching never engages and `cacheWrite` stays zero on that provider — src/providers/anthropic.ts.
+- [ ] Effort is one global setting. Plan §11 wants it per agent, alongside a per-agent provider and model — src/core/config.ts.
+
+## 2026-09-05
+
+- [ ] The bash tool screens a command by pulling absolute, `~` and `../` tokens out of the string. That is a screen, not a sandbox: a path built from a variable, a subshell, a `cd` earlier in the command, or a symlink created mid-command all slip past it. Real containment needs the command run inside a sandbox that cannot see outside the root — src/tools/bash.ts.
+- [ ] A git-bash style path (`/c/blockchain/x`) resolves to `C:\c\blockchain\x` on Windows, so it is refused as outside the root but the path named in the refusal is not the path the user meant. POSIX-shaped paths from a model need translating before they are judged — src/core/scope.ts.
+- [ ] Thinking is streamed but never stored, so a re-opened session shows the messages and tool calls with the reasoning missing. Either persist it beside the transcript or say so in the UI rather than silently dropping it — src/main/workspace-store.ts.
+- [ ] Permission grants live in memory on the broker and nothing shows them. A session can be holding several outside paths with no list of what it may reach and no way to take one back short of restarting the app — src/main/permission.ts.
+- [ ] `workspace:add` opens a native directory picker, which no headless run can drive, so the one path into the whole workspace feature is exercised by hand only. It needs a seam — the chosen directory passed in — so a probe can add a folder the way the user does — src/main/index.ts.
+- [ ] A permission request that arrives for a session other than the one on screen is auto-denied. That is the safe answer, but a background turn loses its work with nothing to tell the user why — src/renderer/index.ts.
