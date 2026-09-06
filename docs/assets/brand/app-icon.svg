@@ -1,0 +1,8 @@
+<!-- The OS icon. Same mark as favicon.svg, drawn to the edge of the canvas:
+     a taskbar or dock scales the whole square to its slot, so padding baked
+     into the artwork is padding the OS cannot take back, and the icon reads
+     smaller than every other icon on the bar. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect x="18" y="18" width="476" height="476" rx="108" fill="#0D1117" stroke="#3A424B" stroke-width="14"/>
+  <polyline points="154,341 256,239 358,341" fill="none" stroke="#27C93F" stroke-width="60" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

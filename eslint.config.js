@@ -9,6 +9,13 @@ export default tseslint.config(
     },
   },
   {
+    // The icon rasteriser is a CommonJS entry on purpose: Electron only reaches
+    // `ready` for an ES-module entry when that entry is the app's `main`, and
+    // that script is passed to Electron as a path. See scripts/brand-icons.cjs.
+    files: ['scripts/**/*.cjs'],
+    rules: { '@typescript-eslint/no-require-imports': 'off' },
+  },
+  {
     // The renderer is served over app://, whose handler refuses anything outside
     // out/renderer. A value import from ../core or ../ipc therefore 404s at
     // runtime and takes the whole page down with no error on screen. Types are

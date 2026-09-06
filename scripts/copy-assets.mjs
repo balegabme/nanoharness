@@ -21,7 +21,10 @@ const brand = join(root, 'docs', 'assets', 'brand')
 await mkdir(join(root, 'out', 'assets'), { recursive: true })
 await copyFile(join(brand, 'logo.svg'), join(to, 'logo.svg'))
 await copyFile(join(brand, 'favicon.svg'), join(to, 'mark.svg'))
-await copyFile(join(brand, 'png', 'logo-256.png'), join(root, 'out', 'assets', 'logo-256.png'))
+// The window icon is the full-bleed variant: a taskbar scales the whole square
+// into its slot, so artwork that leaves a margin of its own lands smaller than
+// every neighbouring icon. 256 is the largest size Windows asks for.
+await copyFile(join(brand, 'png', 'app-icon-256.png'), join(root, 'out', 'assets', 'app-icon-256.png'))
 
 await copyFile(join(root, 'out', 'main', 'preload.js'), join(root, 'out', 'main', 'preload.mjs'))
 console.log(`copied ${assets.length} renderer assets, the brand marks and the preload`)
