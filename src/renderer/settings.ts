@@ -1,5 +1,6 @@
 // doc: docs/harness/ui.md
-import { el, message, must } from './dom.js'
+import { ask } from './confirm.js'
+import { el, GLYPH, icon, message, must } from './dom.js'
 import type { ConfigStatus, NanoBridge, ProviderSaveRequest, ProviderView } from '../ipc/contract.js'
 import type { ProviderKind } from '../core/config.js'
 
@@ -24,10 +25,8 @@ const setupName = must<HTMLInputElement>('setup-name')
 const setupKind = must<HTMLSelectElement>('setup-kind')
 const setupBase = must<HTMLInputElement>('setup-base')
 const setupBaseHint = must<HTMLElement>('setup-base-hint')
-const setupModelInput = must<HTMLInputElement>('setup-model')
 const setupKey = must<HTMLInputElement>('setup-key')
 const setupSave = must<HTMLButtonElement>('setup-save')
-const setupDelete = must<HTMLButtonElement>('setup-delete')
 const setupNote = must<HTMLElement>('setup-note')
 const setupTitle = must<HTMLElement>('setup-title')
 const setupHint = must<HTMLElement>('setup-hint')
@@ -37,7 +36,7 @@ const setupProbeNote = must<HTMLElement>('setup-probe-note')
 const setupModels = must<HTMLElement>('setup-models')
 const setupModelList = must<HTMLElement>('setup-model-list')
 const setupAll = must<HTMLInputElement>('setup-all')
-const setupModelSelect = must<HTMLSelectElement>('setup-model-select')
+const aboutLink = must<HTMLAnchorElement>('about-x')
 
 let bridge: NanoBridge | null = null
 let onConfig: (status: ConfigStatus) => void = () => {}
@@ -71,8 +70,18 @@ function showPane(pane: 'providers' | 'about'): void {
   navAbout.classList.toggle('current', pane === 'about')
 }
 
+/**
+ * Which model a save leaves the provider running. There is no field for it:
+ * the composer's model chip is where a model is chosen, so settings only has
+ * to keep a working answer — what is running now if it is still allowed, and
+ * otherwise the first model ticked.
+ */
 function activeModel(): string {
-  return setupModelSelect.hidden ? setupModelInput.value.trim() : setupModelSelect.value
+  const picks = [...allowed]
+  const active = lastStatus?.active
+  const current = active !== undefined && active.providerId === editing ? active.model : ''
+  if (current !== '' && picks.includes(current)) return current
+  return picks[0] ?? current
 }
 
 function currentKind(): ProviderKind {
@@ -124,20 +133,6 @@ function renderModels(): void {
 
   setupAll.checked = available.length > 0 && allowed.size === available.length
   setupAll.indeterminate = allowed.size > 0 && allowed.size < available.length
-
-  // With a list to choose from, the active model is a pick rather than a guess.
-  // Without one (a proxy with no /v1/models) the text field stays the way in.
-  const picks = [...allowed]
-  const wanted = activeModel()
-  setupModelSelect.hidden = picks.length === 0
-  setupModelInput.hidden = picks.length > 0
-  setupModelSelect.replaceChildren()
-  for (const id of picks) {
-    const option = el('option', undefined, id)
-    option.value = id
-    setupModelSelect.append(option)
-  }
-  if (picks.length > 0) setupModelSelect.value = picks.includes(wanted) ? wanted : (picks[0] ?? '')
 }
 
 /** The saved endpoints, one row each, so switching between them is one click. */
@@ -146,21 +141,33 @@ function renderProviders(status: ConfigStatus): void {
   providerList.replaceChildren()
 
   for (const provider of status.providers) {
-    const row = el('button', 'provider-row')
-    row.type = 'button'
+    const row = el('div', 'provider-row')
     row.classList.toggle('editing', provider.id === editing)
     row.classList.toggle('active', provider.id === status.active?.providerId)
 
     const count = `${provider.models.length} model${provider.models.length === 1 ? '' : 's'}`
-    row.append(
+    const open = el('button', 'provider-open')
+    open.type = 'button'
+    open.append(
       el('span', 'provider-name', provider.name),
       el('span', 'provider-detail', `${provider.kind} · ${count}${provider.hasKey ? '' : ' · no key'}`),
     )
-    row.addEventListener('click', () => {
+    open.addEventListener('click', () => {
       editing = provider.id
       loadForm(provider)
       renderProviders(status)
     })
+
+    // Removing a provider is an act on one card, so the control is on that
+    // card. As a button at the foot of the form it named nothing in particular.
+    const remove = el('button', 'icon-btn tiny danger provider-remove')
+    remove.type = 'button'
+    remove.append(icon(GLYPH.close, 12))
+    remove.title = `Remove ${provider.name}`
+    remove.setAttribute('aria-label', `Remove ${provider.name}`)
+    remove.addEventListener('click', () => void removeProvider(provider.id, provider.name))
+
+    row.append(open, remove)
     providerList.append(row)
   }
 }
@@ -172,12 +179,9 @@ function loadForm(provider: ProviderView | null): void {
   setupBase.value = provider?.baseURL ?? ''
   setupKey.value = ''
   setupKey.placeholder = provider?.hasKey === true ? 'stored - leave blank to keep it' : 'stored encrypted, never written in plain text'
-  setupDelete.hidden = provider === null
 
   available = provider?.models ?? []
   allowed = new Set(available)
-  const active = lastStatus?.active
-  setupModelInput.value = provider !== null && active?.providerId === provider.id ? active.model : (available[0] ?? '')
   setupProbeNote.textContent = ''
   renderBaseHint()
   renderModels()
@@ -285,17 +289,15 @@ async function saveSetup(): Promise<void> {
   }
 }
 
-async function removeProvider(): Promise<void> {
-  if (bridge === null || editing === null) return
-  const id = editing
-  setupDelete.disabled = true
+async function removeProvider(id: string, name: string): Promise<void> {
+  if (bridge === null) return
+  const go = await ask({ title: `Remove ${name}?`, detail: 'Its key is deleted with it. Sessions already started keep running until they end.' })
+  if (!go) return
   try {
-    editing = null
+    if (editing === id) editing = null
     applyConfig(await bridge.deleteProvider(id))
   } catch (err) {
     setupNote.textContent = message(err)
-  } finally {
-    setupDelete.disabled = false
   }
 }
 
@@ -320,7 +322,12 @@ export function initSettings(handlers: SettingsHandlers): void {
   })
 
   setupSave.addEventListener('click', () => void saveSetup())
-  setupDelete.addEventListener('click', () => void removeProvider())
+  // The window itself may not navigate, so the one link in the app is handed
+  // to the OS browser.
+  aboutLink.addEventListener('click', event => {
+    event.preventDefault()
+    void handlers.bridge.openExternal(aboutLink.href)
+  })
   providerAdd.addEventListener('click', () => {
     editing = null
     loadForm(null)
@@ -328,7 +335,7 @@ export function initSettings(handlers: SettingsHandlers): void {
     setupName.focus()
   })
   // The saved-state complaint stops being true the moment the user starts typing.
-  for (const field of [setupBase, setupKey, setupModelInput, setupName]) {
+  for (const field of [setupBase, setupKey, setupName]) {
     field.addEventListener('input', () => {
       setupNote.textContent = ''
     })

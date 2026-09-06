@@ -18,6 +18,31 @@ export function el<K extends keyof HTMLElementTagNameMap>(
   return node
 }
 
+const SVG_NS = 'http://www.w3.org/2000/svg'
+
+/** Stroked 24-grid glyphs, the one shape language the chrome uses. */
+export const GLYPH = {
+  chevronDown: 'm6 9 6 6 6-6',
+  close: 'M6.5 6.5l11 11M17.5 6.5l-11 11',
+} as const
+
+export function icon(d: string, size = 14): SVGSVGElement {
+  const svg = document.createElementNS(SVG_NS, 'svg')
+  svg.setAttribute('width', String(size))
+  svg.setAttribute('height', String(size))
+  svg.setAttribute('viewBox', '0 0 24 24')
+  svg.setAttribute('fill', 'none')
+  svg.setAttribute('stroke', 'currentColor')
+  svg.setAttribute('stroke-width', '2')
+  svg.setAttribute('stroke-linecap', 'round')
+  svg.setAttribute('stroke-linejoin', 'round')
+  svg.setAttribute('aria-hidden', 'true')
+  const path = document.createElementNS(SVG_NS, 'path')
+  path.setAttribute('d', d)
+  svg.append(path)
+  return svg
+}
+
 /**
  * Electron wraps a rejected invoke as
  * `Error invoking remote method 'x': Error: y`. The reader only wants y.

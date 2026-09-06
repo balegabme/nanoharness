@@ -9,71 +9,163 @@
   <body>
     <div class="app" id="app">
       <aside class="sidebar" id="sidebar">
-        <div class="side-top">
-          <img class="mark" src="./mark.svg" alt="" width="24" height="24" />
-          <span class="wordmark">nanoharness</span>
-          <button class="icon" id="sidebar-toggle" type="button" title="Collapse sidebar" aria-label="Collapse sidebar">«</button>
+        <div class="side-brand">
+          <span class="brand">
+            <img class="mark" src="./mark.svg" alt="" width="22" height="22" />
+            <span class="wordmark">nanoharness</span>
+          </span>
+          <button class="icon-btn" id="sidebar-toggle" type="button" title="Collapse sidebar" aria-label="Collapse sidebar">
+            <img class="rail-mark" src="./mark.svg" alt="" width="22" height="22" />
+            <svg class="panel-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
+              <rect x="3" y="4" width="18" height="16" rx="3" />
+              <path d="M9.5 4v16" />
+            </svg>
+          </button>
         </div>
 
-        <button class="primary block-button" id="new-session" type="button">New session</button>
+        <button class="new-session" id="new-session" type="button" title="New session">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+          <span class="label">New session</span>
+        </button>
 
-        <div class="side-head">
+        <div class="side-search wide-only">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="7" />
+            <path d="m20 20-3.4-3.4" />
+          </svg>
+          <input id="session-search" type="search" spellcheck="false" placeholder="Search sessions" aria-label="Search sessions" />
+        </div>
+
+        <div class="side-head wide-only">
           <span class="side-label">Folders</span>
-          <button class="icon" id="workspace-add" type="button" title="Add folder" aria-label="Add folder">+</button>
+          <button class="icon-btn" id="workspace-add" type="button" title="Add folder" aria-label="Add folder">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+          </button>
         </div>
 
-        <input class="search" id="session-search" type="search" spellcheck="false" placeholder="Search sessions" aria-label="Search sessions" />
+        <nav class="tree wide-only" id="tree" aria-label="Sessions"></nav>
 
-        <nav class="tree" id="tree" aria-label="Sessions"></nav>
+        <section class="jobs wide-only" id="jobs" aria-label="Background jobs" hidden>
+          <span class="side-label">Background</span>
+          <div class="job-list" id="job-list"></div>
+        </section>
 
-        <button class="side-foot" id="settings" type="button">Settings</button>
+        <div class="side-foot">
+          <button class="foot-item" id="settings" type="button" title="Settings">
+            <!-- Sliders, not a cogwheel: a 24-grid gear turns to mush at 16px. -->
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+              <path d="M4 8h9M17 8h3M4 16h3M11 16h9" />
+              <circle cx="15" cy="8" r="2.2" />
+              <circle cx="9" cy="16" r="2.2" />
+            </svg>
+            <span class="label">Settings</span>
+          </button>
+        </div>
       </aside>
 
       <main class="main">
         <header class="topbar">
-          <button class="icon" id="sidebar-show" type="button" title="Show sidebar" aria-label="Show sidebar" hidden>»</button>
           <span class="title" id="session-title">No session</span>
           <span class="chip scope" id="scope-chip" hidden></span>
           <span class="spacer"></span>
-          <span class="chip" id="status">idle</span>
+          <span class="usage-line" id="usage-line" title="This session, every turn added up" hidden></span>
+          <span class="chip" id="status" hidden></span>
         </header>
 
-        <section class="stream" id="stream" hidden></section>
+        <div class="conversation">
+          <section class="stream" id="stream" hidden>
+            <img class="stream-mark" id="stream-mark" src="./logo.svg" alt="" width="180" height="180" hidden />
+            <div class="stream-tail" id="stream-tail"></div>
+          </section>
 
-        <section class="hero" id="hero">
-          <img class="hero-mark" src="./logo.svg" alt="" width="112" height="112" />
-          <h1 id="hero-title">NanoHarness</h1>
-          <p class="hero-note" id="hero-note">Add a folder to work in. A session can only touch the folder it was started in.</p>
-          <div class="hero-actions">
-            <button class="primary" id="hero-add" type="button">Add folder</button>
-            <button class="ghost" id="hero-settings" type="button">Provider settings</button>
-          </div>
-        </section>
+          <section class="hero" id="hero">
+            <img class="hero-mark" src="./logo.svg" alt="" width="96" height="96" />
+            <h1 id="hero-title">NanoHarness</h1>
+            <p class="hero-note" id="hero-note">Add a folder to work in. A session can only touch the folder it was started in.</p>
+            <div class="hero-seat" id="hero-seat"></div>
+            <div class="hero-actions">
+              <button class="btn sm ghost" id="hero-settings" type="button">Provider settings</button>
+            </div>
+          </section>
 
-        <footer class="composer" id="composer" hidden>
-          <textarea id="input" rows="3" placeholder="Message the agent. Enter sends, Shift+Enter makes a newline."></textarea>
-          <div class="controls">
-            <select class="chip select" id="model-select" title="Active model" aria-label="Active model"></select>
-            <select
-              class="chip select"
-              id="effort-select"
-              title="How hard the model thinks. OpenAI-compatible: reasoning_effort. Anthropic-compatible: a thinking token budget."
-              aria-label="Thinking effort"
-            >
-              <option value="none">no thinking</option>
-              <option value="low">low effort</option>
-              <option value="medium">medium effort</option>
-              <option value="high">high effort</option>
-            </select>
-            <span class="chip" id="access-chip" title="Tools are limited to this session's folder">workspace only</span>
-            <button class="chip toggle" id="alerts" type="button">alerts on</button>
-            <span class="spacer"></span>
-            <span class="usage-line" id="usage-line"></span>
-            <button class="primary" id="send" type="button">Send</button>
-          </div>
-        </footer>
+          <div class="composer-dock" id="composer-dock" hidden></div>
+        </div>
       </main>
     </div>
+
+    <!--
+      One composer, two seats. It lives in the hero before a session exists and
+      moves into the dock once one is open; the element itself, and everything
+      typed into it, survives the move.
+    -->
+    <form class="composer" id="composer" autocomplete="off">
+      <div class="composer-text" id="composer-text">
+        <textarea id="input" rows="1" placeholder="Message the agent. Enter sends, Shift+Enter makes a newline."></textarea>
+      </div>
+      <div class="controls">
+        <span class="chip-select" id="agent-chip">
+          <span class="chip-value" id="agent-value">Builder</span>
+          <svg class="chip-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="m6 9 6 6 6-6" />
+          </svg>
+          <select id="agent-select" title="Which agent this session is talking to" aria-label="Agent"></select>
+        </span>
+        <span class="chip-select" id="model-chip">
+          <span class="chip-value" id="model-value">model</span>
+          <svg class="chip-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="m6 9 6 6 6-6" />
+          </svg>
+          <select id="model-select" title="Active model" aria-label="Active model"></select>
+        </span>
+        <span class="chip-select" id="effort-chip">
+          <span class="chip-value" id="effort-value">medium effort</span>
+          <svg class="chip-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="m6 9 6 6 6-6" />
+          </svg>
+          <select
+            id="effort-select"
+            title="How hard the model thinks. OpenAI-compatible: reasoning_effort. Anthropic-compatible: a thinking token budget."
+            aria-label="Thinking effort"
+          >
+            <option value="none">no thinking</option>
+            <option value="low">low effort</option>
+            <option value="medium">medium effort</option>
+            <option value="high">high effort</option>
+          </select>
+        </span>
+        <span class="chip" id="access-chip" title="Tools are limited to this session's folder">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <rect x="4.5" y="10.5" width="15" height="9.5" rx="2.5" />
+            <path d="M8 10.5V7.8a4 4 0 0 1 8 0v2.7" />
+          </svg>
+          workspace only
+        </span>
+        <button class="chip icon" id="alerts" type="button">
+          <svg class="bell-on" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M18 9a6 6 0 1 0-12 0c0 5-2 6.5-2 6.5h16S18 14 18 9Z" />
+            <path d="M13.7 19a2 2 0 0 1-3.4 0" />
+          </svg>
+          <svg class="bell-off" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden>
+            <path d="M18 9a6 6 0 0 0-8.1-5.6M6.2 6.2A6 6 0 0 0 6 9c0 5-2 6.5-2 6.5h13" />
+            <path d="M13.7 19a2 2 0 0 1-3.4 0" />
+            <path d="M3.5 3.5l17 17" />
+          </svg>
+        </button>
+        <span class="spacer"></span>
+        <button class="send" id="send" type="submit" title="Send (Enter)" aria-label="Send">
+          <svg class="send-glyph" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 19V5M5.5 11.5 12 5l6.5 6.5" />
+          </svg>
+          <svg class="stop-glyph" width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <rect x="6.5" y="6.5" width="11" height="11" rx="2.5" />
+          </svg>
+        </button>
+      </div>
+    </form>
 
     <dialog class="sheet" id="settings-dialog" aria-label="Settings">
       <nav class="sheet-nav">
@@ -81,7 +173,11 @@
         <button class="nav-item" id="pane-providers" type="button">Providers</button>
         <button class="nav-item" id="pane-about" type="button">About</button>
         <span class="spacer"></span>
-        <button class="ghost" id="settings-close" type="button">Close</button>
+        <button class="icon-btn" id="settings-close" type="button" title="Close" aria-label="Close">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M6.5 6.5l11 11M17.5 6.5l-11 11" />
+          </svg>
+        </button>
       </nav>
 
       <section class="sheet-pane" id="providers-pane">
@@ -90,7 +186,9 @@
 
         <div class="providers" id="providers" hidden>
           <div class="provider-list" id="provider-list"></div>
-          <button id="provider-add" class="ghost" type="button">Add another provider</button>
+          <div class="setup-actions">
+            <button id="provider-add" class="btn sm outline" type="button">Add another provider</button>
+          </div>
         </div>
 
         <label for="setup-name">Name</label>
@@ -110,8 +208,8 @@
         <input id="setup-key" type="password" spellcheck="false" placeholder="stored encrypted, never written in plain text" />
 
         <div class="setup-actions">
-          <button id="setup-test" class="ghost" type="button">Test connection</button>
-          <button id="setup-fetch" class="ghost" type="button">Fetch models</button>
+          <button id="setup-test" class="btn sm outline" type="button">Test connection</button>
+          <button id="setup-fetch" class="btn sm outline" type="button">Fetch models</button>
           <span class="setup-note" id="setup-probe-note"></span>
         </div>
 
@@ -124,28 +222,28 @@
           <div class="model-list" id="setup-model-list"></div>
         </fieldset>
 
-        <label for="setup-model">Active model</label>
-        <select id="setup-model-select" hidden></select>
-        <input id="setup-model" type="text" spellcheck="false" placeholder="the model id your provider expects" />
-
         <div class="setup-actions">
-          <button class="primary" id="setup-save" type="button">Save</button>
-          <button id="setup-delete" class="ghost danger" type="button" hidden>Remove provider</button>
+          <button class="btn sm primary" id="setup-save" type="button">Save</button>
           <span class="setup-note" id="setup-note"></span>
         </div>
       </section>
 
-      <section class="sheet-pane" id="about-pane" hidden>
-        <h2>About</h2>
+      <section class="sheet-pane about" id="about-pane" hidden>
+        <img class="about-mark" src="./logo.svg" alt="" width="72" height="72" />
+        <p class="about-line">
+          <span>Built with</span>
+          <svg class="about-heart" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-label="love" role="img">
+            <path d="M12 20.4 4.2 13a4.9 4.9 0 0 1 0-7 4.6 4.6 0 0 1 6.6 0l1.2 1.2 1.2-1.2a4.6 4.6 0 0 1 6.6 0 4.9 4.9 0 0 1 0 7Z" />
+          </svg>
+          <span>by balega</span>
+        </p>
+        <a class="about-link" id="about-x" href="https://x.com/BalegaNorbert">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M17.2 3h3.3l-7.2 8.3L21.8 21h-6.6l-4.3-5.6L5.9 21H2.6l7.7-8.8L2.4 3H9l3.9 5.2Zm-1.2 16h1.8L8.1 4.9H6.2Z" />
+          </svg>
+          @BalegaNorbert
+        </a>
         <p class="hint" id="about-version">nanoharness</p>
-        <p class="hint">
-          Settings and API keys live in your OS user-data directory, never in a project. Keys are encrypted by the
-          OS; everything else is a plain JSON file you can read.
-        </p>
-        <p class="hint">
-          Every session is scoped to the folder it was started in. Reaching outside it stops the turn and asks
-          you first.
-        </p>
       </section>
     </dialog>
 
@@ -155,9 +253,18 @@
       <pre class="perm-path" id="perm-path"></pre>
       <p class="hint" id="perm-root"></p>
       <div class="setup-actions">
-        <button class="primary" id="perm-once" type="button">Allow once</button>
-        <button class="ghost" id="perm-session" type="button">Allow for this session</button>
-        <button class="ghost danger" id="perm-deny" type="button">Deny</button>
+        <button class="btn sm primary" id="perm-once" type="button">Allow once</button>
+        <button class="btn sm outline" id="perm-session" type="button">Allow for this session</button>
+        <button class="btn sm danger" id="perm-deny" type="button">Deny</button>
+      </div>
+    </dialog>
+
+    <dialog class="sheet small" id="confirm-dialog" aria-label="Confirm">
+      <h2 id="confirm-title">Are you sure?</h2>
+      <p class="hint" id="confirm-detail"></p>
+      <div class="setup-actions">
+        <button class="btn sm danger" id="confirm-yes" type="button">Remove</button>
+        <button class="btn sm outline" id="confirm-no" type="button">Cancel</button>
       </div>
     </dialog>
 

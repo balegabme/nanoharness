@@ -6,7 +6,7 @@ import { dirname, join, normalize, sep } from 'node:path'
 const HERE = dirname(fileURLToPath(import.meta.url))
 const RENDERER_DIR = join(HERE, '..', 'renderer')
 const PRELOAD = join(HERE, 'preload.mjs')
-const ICON = join(HERE, '..', 'assets', 'logo-256.png')
+const ICON = join(HERE, '..', 'assets', 'app-icon-256.png')
 
 const SCHEME = 'app'
 const HOST = 'nanoharness'
@@ -54,10 +54,58 @@ export function createWindow(): BrowserWindow {
     },
   })
 
+  reportFailures(window)
   window.once('ready-to-show', () => window.show())
   // Nothing in this app should ever open a second window or leave the app scheme.
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   window.webContents.on('will-navigate', event => event.preventDefault())
   void window.loadURL(ENTRY)
   return window
+}
+
+/**
+ * A renderer module that throws on load leaves a window that looks fine and
+ * says nothing. There is no console to read in a packaged build, so the window
+ * itself has to admit it: a failed load or an uncaught renderer error is
+ * printed to the main process log and painted over the page.
+ */
+function reportFailures(window: BrowserWindow): void {
+  const show = (title: string, detail: string): void => {
+    console.error(`renderer: ${title}: ${detail}`)
+    const banner = `
+      (() => {
+        let box = document.getElementById('nh-crash')
+        if (!box) {
+          box = document.createElement('pre')
+          box.id = 'nh-crash'
+          box.setAttribute('style', [
+            'position:fixed;inset:auto 16px 16px 16px;z-index:999;margin:0',
+            'padding:12px 14px;max-height:40vh;overflow:auto;white-space:pre-wrap',
+            'font:400 12px/1.55 var(--nh-font-mono,ui-monospace,monospace)',
+            'color:var(--nh-label-primary,#f4ece2)',
+            'background:var(--nh-bg-layer-2,#221d17)',
+            'border:1px solid var(--nh-border-l2,rgb(255 255 255 / 10%))',
+            'border-left:3px solid var(--nh-state-error,#e2725b)',
+            'border-radius:var(--nh-radius-card,12px)',
+            'box-shadow:var(--nh-shadow-lv3,0 18px 48px rgb(0 0 0 / 46%))',
+          ].join(';'))
+          document.body.append(box)
+        }
+        box.textContent += ${JSON.stringify(`${title}: ${detail}
+`)}
+      })()
+    `
+    window.webContents.executeJavaScript(banner).catch(() => undefined)
+  }
+
+  window.webContents.on('did-fail-load', (_event, code, description, url) => {
+    show('load failed', `${description} (${code}) ${url}`)
+  })
+  window.webContents.on('preload-error', (_event, path, error) => {
+    show('preload failed', `${path}: ${error.message}`)
+  })
+  window.webContents.on('console-message', details => {
+    if (details.level !== 'error') return
+    show('console', `${details.message} (${details.sourceId}:${details.lineNumber})`)
+  })
 }

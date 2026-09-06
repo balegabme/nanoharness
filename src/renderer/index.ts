@@ -1,6 +1,8 @@
 // doc: docs/harness/ui.md
-import { clearChat, errorBlock, handleEvent, renderTranscript, startTurn, userBlock } from './chat.js'
+import { clearChat, errorBlock, handleEvent, renderTranscript, setActivity, showStoredUsage, startTurn, userBlock } from './chat.js'
+import { autoGrow, initComposer, seat } from './composer.js'
 import { message, must } from './dom.js'
+import { handleJobEvent, initJobs } from './jobs.js'
 import { announce, initNotify } from './notify.js'
 import { enqueue, initPermission } from './permission.js'
 import { applyConfig, initSettings, latestConfig, openSettings, refreshConfig } from './settings.js'
@@ -15,7 +17,8 @@ import {
   startSession,
   workspaceOf,
 } from './sidebar.js'
-import type { ConfigStatus, NanoBridge } from '../ipc/contract.js'
+import type { AgentSummary, ConfigStatus, NanoBridge } from '../ipc/contract.js'
+import type { AgentRole } from '../core/agents.js'
 import type { Effort } from '../core/config.js'
 
 declare global {
@@ -28,13 +31,18 @@ const nh = window.nanoharness
 const stream = must<HTMLElement>('stream')
 const hero = must<HTMLElement>('hero')
 const heroNote = must<HTMLElement>('hero-note')
-const heroAdd = must<HTMLButtonElement>('hero-add')
 const heroSettings = must<HTMLButtonElement>('hero-settings')
-const composer = must<HTMLElement>('composer')
+const composer = must<HTMLFormElement>('composer')
 const input = must<HTMLTextAreaElement>('input')
 const sendButton = must<HTMLButtonElement>('send')
 const modelSelect = must<HTMLSelectElement>('model-select')
 const effortSelect = must<HTMLSelectElement>('effort-select')
+const agentSelect = must<HTMLSelectElement>('agent-select')
+const chipValues = new Map<HTMLSelectElement, HTMLElement>([
+  [must<HTMLSelectElement>('agent-select'), must<HTMLElement>('agent-value')],
+  [must<HTMLSelectElement>('model-select'), must<HTMLElement>('model-value')],
+  [must<HTMLSelectElement>('effort-select'), must<HTMLElement>('effort-value')],
+])
 const accessChip = must<HTMLElement>('access-chip')
 const statusChip = must<HTMLElement>('status')
 const titleLabel = must<HTMLElement>('session-title')
@@ -43,6 +51,20 @@ const settingsButton = must<HTMLButtonElement>('settings')
 
 let activeSessionId: string | null = null
 let busy = false
+let agents: AgentSummary[] = []
+
+/**
+ * A native select sizes itself to its widest option, so the chips used to shove
+ * each other along the row whenever a model had a long id. The select is now
+ * invisible and laid over the chip; this writes what it says onto the label the
+ * chip actually draws.
+ */
+function syncChips(): void {
+  for (const [select, label] of chipValues) {
+    label.textContent = select.selectedOptions[0]?.textContent ?? ''
+    label.title = label.textContent
+  }
+}
 
 /** The composer chips: what a turn will run, switchable without opening settings. */
 function renderActive(status: ConfigStatus): void {
@@ -68,30 +90,51 @@ function renderActive(status: ConfigStatus): void {
   modelSelect.title = provider === undefined ? 'Active model' : `${provider.name} · ${provider.baseURL}`
   effortSelect.value = active?.effort ?? 'medium'
   effortSelect.disabled = active === undefined
+  syncChips()
   renderShell()
 }
 
-/** Either a session is open, or the window is the hero that starts one. */
+/**
+ * Either a session is open, or the window is the hero that starts one — and the
+ * composer is the same element in both, so a message written on the hero is
+ * still there once the session it started exists.
+ */
 function renderShell(): void {
   const open = activeSessionId !== null
   stream.hidden = !open
-  composer.hidden = !open
   hero.hidden = open
+  seat(open)
 
   if (!open) {
     const status = currentStatus()
     const workspace = status.workspaces.find(w => w.id === selectedWorkspaceId())
     const configured = latestConfig()?.configured === true
+    // Nothing to send to yet: the card is a "start here" target rather than a
+    // composer that would take a message and then refuse it.
+    const blocked = !configured || workspace === undefined
     heroNote.textContent = !configured
       ? 'No provider yet. Add one in settings, then start a session.'
       : workspace === undefined
         ? 'Add a folder to work in. A session can only touch the folder it was started in.'
-        : `Start a session in ${workspace.name}. It will be scoped to that folder.`
-    heroAdd.textContent = workspace === undefined ? 'Add folder' : 'New session'
+        : `Type below and a session starts in ${workspace.name}, scoped to that folder.`
+    composer.classList.toggle('trigger', blocked)
+    input.readOnly = blocked
+    input.placeholder = !configured
+      ? 'Add a provider to get started'
+      : workspace === undefined
+        ? 'Add a folder to work in'
+        : 'Message the agent. Enter sends, Shift+Enter makes a newline.'
+    sendButton.disabled = blocked
     titleLabel.textContent = 'No session'
     scopeChip.hidden = true
+    renderAgents()
     return
   }
+
+  composer.classList.remove('trigger')
+  input.readOnly = false
+  input.placeholder = 'Message the agent. Enter sends, Shift+Enter makes a newline.'
+  sendButton.disabled = false
 
   const session = activeSessionId === null ? undefined : sessionById(activeSessionId)
   const workspace = activeSessionId === null ? undefined : workspaceOf(activeSessionId)
@@ -104,15 +147,61 @@ function renderShell(): void {
   }
   // The composer stays live during a turn: the next message can be written
   // while this one runs, and Send is the stop button until the turn ends.
-  sendButton.textContent = busy ? 'Stop' : 'Send'
+  renderAgents()
   sendButton.classList.toggle('stop', busy)
-  sendButton.title = busy ? 'End this turn' : 'Send (Enter)'
+  sendButton.title = busy ? 'End this turn (Esc)' : 'Send (Enter)'
+  sendButton.setAttribute('aria-label', busy ? 'Stop' : 'Send')
+}
+
+/** The role chip: what this session is talking to, switchable mid-session. */
+function renderAgents(): void {
+  agentSelect.replaceChildren()
+  for (const agent of agents) {
+    const option = document.createElement('option')
+    option.value = agent.role
+    option.textContent = agent.name
+    option.title = agent.purpose
+    agentSelect.append(option)
+  }
+  const session = activeSessionId === null ? undefined : sessionById(activeSessionId)
+  // With no session there is nothing whose role could change: the next one
+  // starts as a builder, which is what the chip shows.
+  agentSelect.value = session?.role ?? 'builder'
+  agentSelect.disabled = session === undefined
+  const current = agents.find(a => a.role === agentSelect.value)
+  agentSelect.title = current === undefined ? 'Agent' : `${current.name} — ${current.purpose}`
+  syncChips()
+}
+
+/**
+ * Switching agent rebuilds the session's prompt and tool list on the next turn.
+ * The effort chip follows the new role's default, because that default is the
+ * whole reason a role has one — and it is a chip the user can move straight
+ * back.
+ */
+async function switchAgent(): Promise<void> {
+  const sessionId = activeSessionId
+  if (sessionId === null) return
+  const role = agentSelect.value as AgentRole
+  try {
+    await nh.setSessionRole(sessionId, role)
+    setStatus(await nh.workspaces())
+    select(sessionId)
+    const agent = agents.find(a => a.role === role)
+    if (agent !== undefined && effortSelect.value !== agent.defaultEffort) {
+      effortSelect.value = agent.defaultEffort
+      await switchActive()
+    }
+    renderShell()
+  } catch (err) {
+    errorBlock(message(err))
+    renderAgents()
+  }
 }
 
 function setBusy(next: boolean): void {
   busy = next
-  statusChip.textContent = next ? 'working' : 'idle'
-  statusChip.classList.toggle('busy', next)
+  setActivity(next)
   renderShell()
   if (!next) input.focus()
 }
@@ -135,6 +224,9 @@ async function openSession(id: string): Promise<void> {
     activeSessionId = id
     select(id)
     renderTranscript(opened.messages)
+    // What this session has already spent. Without it a re-opened session reads
+    // as one that has cost nothing.
+    showStoredUsage(opened.session.usage)
     renderShell()
     input.focus()
   } catch (err) {
@@ -161,15 +253,20 @@ async function switchActive(): Promise<void> {
 
 async function send(): Promise<void> {
   const text = input.value.trim()
-  const sessionId = activeSessionId
-  if (text === '' || busy || sessionId === null) return
+  if (text === '' || busy) return
   if (latestConfig()?.configured !== true) {
     openSettings('providers')
     return
   }
+  // Sending from the hero is how a session starts: the message names it, so
+  // there is no separate "new session" step to take first.
+  if (activeSessionId === null) await startSession()
+  const sessionId = activeSessionId
+  if (sessionId === null) return
 
   userBlock(text)
   input.value = ''
+  autoGrow()
   startTurn()
   setBusy(true)
 
@@ -201,13 +298,25 @@ input.addEventListener('keydown', event => {
     stop()
   }
 })
-sendButton.addEventListener('click', () => (busy ? stop() : void send()))
+composer.addEventListener('submit', event => {
+  event.preventDefault()
+  if (busy) stop()
+  else void send()
+})
+// In the blocked state the whole card is one pick target: the click does the
+// thing that would unblock it rather than nothing at all.
+composer.addEventListener('click', () => {
+  if (!composer.classList.contains('trigger')) return
+  if (latestConfig()?.configured !== true) openSettings('providers')
+  else void startSession()
+})
 modelSelect.addEventListener('change', () => void switchActive())
 effortSelect.addEventListener('change', () => void switchActive())
+agentSelect.addEventListener('change', () => void switchAgent())
 settingsButton.addEventListener('click', () => openSettings('providers'))
 heroSettings.addEventListener('click', () => openSettings('providers'))
-heroAdd.addEventListener('click', () => void startSession())
 
+initComposer()
 initNotify()
 initPermission({ bridge: nh, report: errorBlock })
 initSidebar({
@@ -229,6 +338,11 @@ nh.onEvent(event => {
     const outcome = event.type === 'session.finished' ? 'finished' : event.type === 'session.stopped' ? 'stopped' : 'error'
     announce(outcome, sessionById(event.sessionId)?.title ?? 'Session')
   }
+  if (event.type === 'job.started' || event.type === 'job.update' || event.type === 'job.finished') {
+    handleJobEvent(event)
+    if (event.type === 'job.finished') announce(event.job.state === 'done' ? 'finished' : 'error', `${event.job.role} job`)
+    return
+  }
   if (event.type === 'permission.request') {
     if (event.sessionId === activeSessionId) enqueue(event)
     // A prompt for a session nobody is looking at cannot be answered
@@ -245,10 +359,15 @@ async function boot(): Promise<void> {
     version = (await nh.ping()).version
     statusChip.title = `nanoharness v${version}`
   } catch {
+    // The chip is for states worth reading, and this is the only one there is.
+    statusChip.hidden = false
     statusChip.textContent = 'offline'
   }
 
   initSettings({ bridge: nh, onConfig: renderActive, version })
+  agents = await nh.agents().catch(() => [])
+  renderAgents()
+  await initJobs(nh)
   await refreshConfig()
   await refreshSidebar()
 

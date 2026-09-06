@@ -68,9 +68,15 @@ function toast(outcome: Outcome, session: string): void {
   })
 }
 
+const bellOn = toggle.querySelector<SVGElement>('.bell-on')
+const bellOff = toggle.querySelector<SVGElement>('.bell-off')
+
+/** A bell, struck or crossed out. The word was a control row's worth of width. */
 function render(): void {
-  toggle.textContent = enabled ? 'alerts on' : 'alerts off'
+  if (bellOn !== null) bellOn.toggleAttribute('hidden', !enabled)
+  if (bellOff !== null) bellOff.toggleAttribute('hidden', enabled)
   toggle.classList.toggle('off', !enabled)
+  toggle.setAttribute('aria-label', enabled ? 'Alerts on' : 'Alerts off')
   toggle.title = enabled
     ? 'Sound and a desktop notification when a turn ends. Click to silence.'
     : 'Turn endings are silent. Click to hear them.'

@@ -1,35 +1,155 @@
-/* The warm dark set the logo is drawn in: one hue family, four surfaces. */
+/* doc: docs/harness/ui.md
+ *
+ * Three layers, in this order, and nothing skips a layer:
+ *
+ *   1. ramp    --nh-warm-*, --nh-accent-*, --nh-green/red/amber-*
+ *              Raw colour. Never referenced by a component.
+ *   2. alias   --nh-bg-*, --nh-border-*, --nh-label-*, --nh-button-*, --nh-state-*
+ *              What a colour is FOR. The only layer a theme redefines.
+ *   3. component
+ *              Reads alias tokens only.
+ *
+ * The app is dark and only dark (plan section 3), so there is one set of alias
+ * values. The layering still earns its keep: a component that reads
+ * `--nh-label-tertiary` says what the colour is for, which a hex code does not.
+ */
+
+/* ── 1. ramp ─────────────────────────────────────────────────────────── */
+
 :root {
-  --bg: #16130f;
-  --bg-raised: #1e1a15;
-  --bg-sunken: #110e0b;
-  --bg-hover: #262019;
-  --border: #2e2822;
-  --border-strong: #3d3529;
-  --text: #ece5da;
-  --muted: #9b9086;
-  --subtle: #6d6459;
-  --accent: #d97742;
-  --accent-soft: rgb(217 119 66 / 14%);
-  --success: #7fa86b;
-  --error: #d4635a;
-  --shadow: 0 8px 24px rgb(0 0 0 / 35%);
+  /* Warm neutral, the hue family the mark is drawn in. */
+  --nh-warm-00: #ffffff;
+  --nh-warm-25: #fbf9f6;
+  --nh-warm-50: #f7f4ef;
+  --nh-warm-75: #f2eee7;
+  --nh-warm-100: #ebe6dd;
+  --nh-warm-150: #e3ddd2;
+  --nh-warm-200: #d9d2c5;
+  --nh-warm-300: #c3bbab;
+  --nh-warm-400: #a79d8c;
+  --nh-warm-500: #8b8172;
+  --nh-warm-600: #6f6659;
+  --nh-warm-700: #554d43;
+  --nh-warm-750: #423b33;
+  --nh-warm-800: #332e27;
+  --nh-warm-850: #29241e;
+  --nh-warm-875: #211d18;
+  --nh-warm-900: #1b1712;
+  --nh-warm-950: #16130f;
+  --nh-warm-1000: #0d0b08;
 
-  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
-  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* One accent, terracotta, in the warm family. */
+  --nh-accent-100: #fbe7da;
+  --nh-accent-200: #f5cbb0;
+  --nh-accent-300: #eeab84;
+  --nh-accent-400: #e58c5b;
+  --nh-accent-500: #d97742;
+  --nh-accent-600: #bd5f2e;
+  --nh-accent-700: #964926;
 
+  --nh-green-300: #a8cd91;
+  --nh-green-500: #7fa86b;
+  --nh-green-600: #5f8a4c;
+  --nh-red-300: #e59089;
+  --nh-red-500: #d4635a;
+  --nh-red-600: #b8443b;
+  --nh-amber-400: #e0a94a;
+  --nh-amber-600: #b57f22;
+
+  /* Motion. Three durations and one curve; every animated rule uses them. */
+  --nh-ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --nh-fast: 110ms;
+  --nh-base: 190ms;
+  --nh-slow: 300ms;
+
+  --nh-font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+  --nh-font-sans: system-ui, -apple-system, "Segoe UI", "Inter", sans-serif;
+
+  /* 4px base scale. */
   --s1: 4px;
   --s2: 8px;
   --s3: 12px;
   --s4: 16px;
+  --s5: 20px;
   --s6: 24px;
   --s8: 32px;
-  --radius: 6px;
-  --radius-lg: 10px;
-  --radius-chip: 4px;
-  --sidebar: 260px;
-  --column: 860px;
+
+  --nh-radius-chip: 8px;
+  --nh-radius-card: 12px;
+  --nh-radius-sheet: 16px;
+  --nh-radius-composer: 22px;
+  --nh-radius-pill: 999px;
+
+  --nh-sidebar-open: 268px;
+  --nh-sidebar-rail: 60px;
+  --nh-sidebar-w: var(--nh-sidebar-open);
+  /* The reading column, and the composer's cap: the card is the column plus its
+     own side padding, so the two share one edge down the window. */
+  --nh-column: 780px;
+  --nh-composer-max: calc(var(--nh-column) + 32px);
+  --nh-composer-gutter: 24px;
+  /* 14 lines of the composer's own metrics, then it scrolls instead of growing. */
+  --nh-composer-cap: 336px;
 }
+
+/* ── 2. alias: dark, the default ─────────────────────────────────────── */
+
+:root {
+  --nh-bg-base: var(--nh-warm-950);
+  --nh-bg-layer-1: var(--nh-warm-875);
+  --nh-bg-layer-2: var(--nh-warm-850);
+  --nh-bg-layer-3: var(--nh-warm-800);
+  --nh-bg-sidebar: var(--nh-warm-900);
+  --nh-bg-input: var(--nh-warm-875);
+  --nh-bg-code: var(--nh-warm-1000);
+  --nh-bg-scrim: rgb(0 0 0 / 58%);
+  --nh-bg-skeleton: rgb(255 255 255 / 7%);
+
+  --nh-border-l1: rgb(255 255 255 / 6%);
+  --nh-border-l2: rgb(255 255 255 / 10%);
+  --nh-border-l3: rgb(255 255 255 / 16%);
+  --nh-border-l4: rgb(255 255 255 / 24%);
+
+  --nh-label-primary: var(--nh-warm-75);
+  --nh-label-secondary: var(--nh-warm-300);
+  --nh-label-tertiary: var(--nh-warm-400);
+  --nh-label-caption: var(--nh-warm-500);
+  --nh-label-on-accent: var(--nh-warm-1000);
+  --nh-label-inverted: var(--nh-warm-950);
+
+  --nh-hover: rgb(255 255 255 / 6%);
+  --nh-hover-solid: var(--nh-warm-850);
+  --nh-active: rgb(255 255 255 / 11%);
+  --nh-hover-danger: rgb(212 99 90 / 14%);
+
+  --nh-button-primary-fill: var(--nh-accent-500);
+  --nh-button-primary-hover: var(--nh-accent-400);
+  --nh-button-elevated-fill: var(--nh-warm-850);
+  --nh-button-elevated-hover: var(--nh-warm-800);
+  --nh-button-floating-fill: var(--nh-warm-850);
+
+  --nh-accent: var(--nh-accent-400);
+  --nh-accent-wash: rgb(217 119 66 / 15%);
+  --nh-accent-line: rgb(217 119 66 / 45%);
+  --nh-state-ok: var(--nh-green-300);
+  --nh-state-error: var(--nh-red-300);
+  --nh-state-warn: var(--nh-amber-400);
+
+  --nh-scrollbar-l1: rgb(255 255 255 / 12%);
+  --nh-scrollbar-l1-hover: rgb(255 255 255 / 20%);
+  --nh-scrollbar-l2: rgb(255 255 255 / 18%);
+  --nh-scrollbar-l2-hover: rgb(255 255 255 / 28%);
+
+  --nh-shadow-lv1: 0 1px 2px rgb(0 0 0 / 28%);
+  --nh-shadow-lv2: 0 2px 6px rgb(0 0 0 / 22%), 0 8px 22px rgb(0 0 0 / 26%);
+  --nh-shadow-lv3: 0 1px 2px rgb(0 0 0 / 30%), 0 18px 48px rgb(0 0 0 / 46%);
+  /* The docked composer floats over the flow; the flow fades out under it. */
+  --nh-fade: linear-gradient(to bottom, rgb(22 19 15 / 0%), var(--nh-bg-base) 62%);
+
+  color-scheme: dark;
+}
+
+/* ── 3. ground ───────────────────────────────────────────────────────── */
 
 * {
   box-sizing: border-box;
@@ -42,221 +162,600 @@ body {
 
 body {
   margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  font: 400 14px/1.5 var(--font-mono);
+  overflow: hidden;
+  background: var(--nh-bg-base);
+  color: var(--nh-label-primary);
+  font: 400 14px/1.55 var(--nh-font-mono);
+  /* Chrome renders the mono stack a shade heavy on Windows; this is the one
+     place the whole app's rasterisation is set. */
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 [hidden] {
   display: none !important;
 }
 
-.app {
-  height: 100%;
-  display: grid;
-  grid-template-columns: var(--sidebar) 1fr;
+::selection {
+  background: var(--nh-accent-wash);
 }
 
-/* ── sidebar ─────────────────────────────────────────────────────────── */
+/* Scrollbars carry the theme rather than the UA's. A surface picks its
+   elevation by rebinding the pair on itself; everything nested reads it. */
+:root {
+  --nh-thumb: var(--nh-scrollbar-l1);
+  --nh-thumb-hover: var(--nh-scrollbar-l1-hover);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: var(--nh-thumb);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--nh-thumb-hover);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+:focus-visible {
+  outline: 2px solid var(--nh-accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 1ms !important;
+    animation-duration: 1ms !important;
+  }
+}
+
+/* ── 4. frame ────────────────────────────────────────────────────────── */
+
+.app {
+  display: grid;
+  grid-template-columns: var(--nh-sidebar-w) 1fr;
+  grid-template-rows: 100%;
+  height: 100%;
+  overflow: hidden;
+  /* Collapse animates the track, so the conversation slides rather than
+     jumping a column width. */
+  transition: grid-template-columns var(--nh-slow) var(--nh-ease);
+}
+
+.app.rail {
+  --nh-sidebar-w: var(--nh-sidebar-rail);
+}
+
+/* ── 5. sidebar ──────────────────────────────────────────────────────── */
 
 .sidebar {
   display: flex;
   flex-direction: column;
-  min-height: 0;
   gap: var(--s2);
-  padding: var(--s3);
-  border-right: 1px solid var(--border);
-  background: var(--bg-sunken);
-  font-family: var(--font-sans);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: var(--s2) var(--s3) var(--s3);
+  background: var(--nh-bg-sidebar);
+  border-right: 1px solid var(--nh-border-l1);
+  font-family: var(--nh-font-sans);
+  /* Elevated above the conversation, so a thumb in here takes the l2 pair. */
+  --nh-thumb: var(--nh-scrollbar-l2);
+  --nh-thumb-hover: var(--nh-scrollbar-l2-hover);
 }
 
-.app:has(> .sidebar[hidden]) {
-  grid-template-columns: 1fr;
+/* The bars are a pointer affordance: transparent until the pointer is inside,
+   and transparent rather than hidden so revealing one never reflows a row. */
+.sidebar:not(:hover) {
+  --nh-thumb: transparent;
+  --nh-thumb-hover: transparent;
 }
 
-.side-top {
+.rail .sidebar {
+  padding: var(--s2) 10px var(--s3);
+  align-items: center;
+}
+
+/* Everything but the icon rail fades out on collapse and back in on expand,
+   so no text is caught mid-squeeze while the track animates. */
+.wide-only {
+  transition: opacity var(--nh-fast) var(--nh-ease);
+}
+
+.rail .wide-only {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.side-brand {
   display: flex;
   align-items: center;
   gap: var(--s2);
-  padding: var(--s1) 0 var(--s2);
+  height: 40px;
+  flex: none;
+  padding-left: var(--s1);
+}
+
+.rail .side-brand {
+  padding-left: 0;
+  justify-content: center;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: default;
+}
+
+.rail .brand {
+  display: none;
 }
 
 .mark {
   display: block;
-  border-radius: 4px;
+  flex: none;
+  border-radius: 5px;
 }
 
 .wordmark {
-  flex: 1;
-  color: var(--text);
-  font-size: 15px;
-  font-weight: 600;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: 600 15px/1 var(--nh-font-sans);
   letter-spacing: -0.01em;
+}
+
+/* The rail's toggle wears the mark and swaps to the panel glyph on hover, so
+   the one control in the collapsed column is also the brand. */
+.rail-mark,
+.rail #sidebar-toggle .panel-icon {
+  display: none;
+}
+
+.rail #sidebar-toggle .rail-mark {
+  display: block;
+}
+
+.rail #sidebar-toggle:hover .rail-mark {
+  display: none;
+}
+
+.rail #sidebar-toggle:hover .panel-icon {
+  display: block;
+}
+
+/* New session: an elevated bar, not a filled button. The accent belongs to
+   Send, which is the button that spends money. */
+.new-session {
+  display: flex;
+  align-items: center;
+  /* One column down the sidebar: glyph at 10px from the edge, text at 30px,
+     which is where the search field's placeholder starts. The border is inside
+     the box, so this padding is a pixel short of the borderless rows below. */
+  gap: var(--s1);
+  flex: none;
+  height: 34px;
+  padding: 0 var(--s2) 0 9px;
+  border: 1px solid var(--nh-border-l2);
+  border-radius: var(--nh-radius-chip);
+  background: var(--nh-button-elevated-fill);
+  color: var(--nh-label-primary);
+  font: 500 13px var(--nh-font-sans);
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+  transition:
+    background var(--nh-fast) var(--nh-ease),
+    border-color var(--nh-fast) var(--nh-ease),
+    width var(--nh-slow) var(--nh-ease);
+}
+
+.new-session > svg,
+.foot-item > svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+.new-session .label,
+.foot-item .label {
+  /* Flex centres the label's line box, and that box is drawn for a cap and a
+     descender the word may not have, so the ink lands a pixel under the glyph
+     beside it. Phantom space below the text pushes it back onto the line. */
+  line-height: 1;
+  margin-bottom: 2px;
+}
+
+.new-session:hover {
+  background: var(--nh-button-elevated-hover);
+  border-color: var(--nh-border-l3);
+}
+
+.rail .new-session {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  gap: 0;
+  justify-content: center;
+  border-color: transparent;
+  background: transparent;
+}
+
+.rail .new-session:hover {
+  background: var(--nh-hover);
+}
+
+.rail .new-session .label {
+  display: none;
+}
+
+.side-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: none;
+}
+
+.side-search svg {
+  position: absolute;
+  left: 10px;
+  color: var(--nh-label-caption);
+  pointer-events: none;
+}
+
+.side-search input {
+  width: 100%;
+  height: 32px;
+  padding: 0 var(--s2) 0 30px;
+  border: 1px solid transparent;
+  border-radius: var(--nh-radius-chip);
+  background: var(--nh-hover);
+  color: var(--nh-label-primary);
+  font: 400 13px var(--nh-font-sans);
+  transition:
+    background var(--nh-fast) var(--nh-ease),
+    border-color var(--nh-fast) var(--nh-ease);
+}
+
+.side-search input::placeholder {
+  color: var(--nh-label-caption);
+}
+
+.side-search input:focus {
+  outline: none;
+  border-color: var(--nh-accent-line);
+  background: var(--nh-bg-input);
+}
+
+/* `search` inputs get a UA clear button that sits on the wrong ground. */
+.side-search input::-webkit-search-cancel-button {
+  appearance: none;
 }
 
 .side-head {
   display: flex;
   align-items: center;
-  margin-top: var(--s2);
+  flex: none;
+  height: 24px;
+  padding-left: var(--s2);
 }
 
 .side-label {
   flex: 1;
-  color: var(--subtle);
-  font-size: 11px;
-  letter-spacing: 0.08em;
+  color: var(--nh-label-caption);
+  font: 500 10px var(--nh-font-sans);
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-}
-
-.search {
-  padding: var(--s1) var(--s2);
-  background: var(--bg);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-chip);
-  font: 400 12px var(--font-sans);
-}
-
-.search:focus {
-  outline: none;
-  border-color: var(--accent);
 }
 
 .tree {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: var(--s1);
+  overflow-x: hidden;
+  /* The bar sits in reserved space, so revealing it never moves a row. */
+  scrollbar-gutter: stable;
+  margin: 0 calc(var(--s2) * -1);
+  padding: 0 var(--s1);
+}
+
+.rail .tree {
+  visibility: hidden;
 }
 
 .tree-empty {
-  margin: var(--s1) 0 var(--s2) var(--s4);
-  color: var(--subtle);
+  margin: var(--s1) var(--s2) var(--s2);
+  color: var(--nh-label-caption);
   font-size: 12px;
+  line-height: 1.5;
 }
 
-.group-head {
+.group + .group {
+  margin-top: var(--s1);
+}
+
+.group-head,
+.session-row {
   display: flex;
   align-items: center;
-  gap: 2px;
-  border-radius: var(--radius-chip);
+  border-radius: var(--nh-radius-chip);
+  transition: background var(--nh-fast) var(--nh-ease);
 }
 
-.group-head.current {
-  background: var(--bg-raised);
+.group-head:hover,
+.session-row:hover {
+  background: var(--nh-hover);
+}
+
+.group-head.current .group-label {
+  color: var(--nh-label-primary);
+}
+
+.twisty {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--nh-label-caption);
+  cursor: pointer;
+}
+
+.twisty svg {
+  transition: transform var(--nh-base) var(--nh-ease);
+}
+
+.twisty[aria-expanded="false"] svg {
+  transform: rotate(-90deg);
 }
 
 .group-name {
-  flex: 1;
   display: flex;
   align-items: center;
   gap: var(--s2);
+  flex: 1;
   min-width: 0;
-  padding: var(--s1) var(--s2);
-  background: transparent;
+  height: 28px;
+  padding: 0 var(--s1);
   border: 0;
-  color: var(--text);
-  font: 500 13px var(--font-sans);
+  background: transparent;
+  color: var(--nh-label-secondary);
+  font: 500 12.5px var(--nh-font-sans);
   text-align: left;
   cursor: pointer;
 }
 
 .group-label {
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .count {
-  color: var(--subtle);
+  flex: none;
+  color: var(--nh-label-caption);
   font-size: 11px;
-}
-
-.twisty {
-  width: 18px;
-  padding: 0;
-  background: transparent;
-  border: 0;
-  color: var(--subtle);
-  font-size: 11px;
-  cursor: pointer;
+  font-variant-numeric: tabular-nums;
 }
 
 .session-row {
-  display: flex;
-  align-items: center;
-  margin-left: var(--s3);
-  border-radius: var(--radius-chip);
-}
-
-.session-row:hover,
-.group-head:hover {
-  background: var(--bg-hover);
+  margin-left: var(--s5);
+  position: relative;
 }
 
 .session-row.selected {
-  background: var(--accent-soft);
-  box-shadow: inset 2px 0 0 var(--accent);
+  background: var(--nh-accent-wash);
+}
+
+.session-row.selected::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 7px;
+  bottom: 7px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--nh-accent);
 }
 
 .session-open {
-  flex: 1;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--s2);
+  flex: 1;
   min-width: 0;
-  padding: var(--s1) var(--s2);
-  background: transparent;
+  height: 30px;
+  padding: 0 var(--s2);
   border: 0;
-  color: var(--muted);
-  font: 400 13px var(--font-sans);
+  background: transparent;
+  color: var(--nh-label-tertiary);
+  font: 400 13px var(--nh-font-sans);
   text-align: left;
   cursor: pointer;
 }
 
 .session-row.selected .session-open {
-  color: var(--text);
+  color: var(--nh-label-primary);
 }
 
 .session-title {
   flex: 1;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .session-time {
-  color: var(--subtle);
+  flex: none;
+  color: var(--nh-label-caption);
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 
+/* A destructive control only appears over the row it destroys. */
 .row-action {
-  visibility: hidden;
+  opacity: 0;
+  transition: opacity var(--nh-fast) var(--nh-ease);
 }
 
+.group-head:hover .row-action,
 .session-row:hover .row-action,
-.group-head:hover .row-action {
-  visibility: visible;
+.row-action:focus-visible {
+  opacity: 1;
+}
+
+/* Background jobs: a strip above the foot, and nothing at all when no job has
+   run. A job with no window of its own gets three lines here instead. */
+.jobs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  flex: none;
+  max-height: 34%;
+  overflow-y: auto;
+  padding-top: var(--s2);
+  border-top: 1px solid var(--nh-border-l1);
+}
+
+.job-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+
+.job-row {
+  padding: var(--s2);
+  border: 1px solid var(--nh-border-l1);
+  border-radius: var(--nh-radius-chip);
+  background: var(--nh-bg-layer-1);
+  animation: rise var(--nh-base) var(--nh-ease) backwards;
+}
+
+.job-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.job-role {
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--nh-label-primary);
+  font: 500 11px var(--nh-font-sans);
+}
+
+/* The state is the only colour in the row, so a glance answers "is it done?" */
+.job-state {
+  flex: none;
+  color: var(--nh-label-caption);
+  font: 500 10px var(--nh-font-sans);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.job-row.running .job-state {
+  color: var(--nh-accent);
+}
+
+.job-row.done .job-state {
+  color: var(--nh-state-ok);
+}
+
+.job-row.failed .job-state {
+  color: var(--nh-state-error);
+}
+
+.job-note {
+  margin: 4px 0 0;
+  /* Two lines of the job's last word; the row's title holds the whole of it. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  color: var(--nh-label-caption);
+  font: 400 11px/1.45 var(--nh-font-sans);
 }
 
 .side-foot {
-  padding: var(--s2);
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  flex: none;
+  padding-top: var(--s2);
+  border-top: 1px solid var(--nh-border-l1);
+}
+
+.rail .side-foot {
+  flex-direction: column;
+  border-top: 0;
+}
+
+.foot-item {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  padding: 0 var(--s2) 0 10px;
+  border: 0;
+  border-radius: var(--nh-radius-chip);
   background: transparent;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  color: var(--muted);
-  font: 400 13px var(--font-sans);
+  color: var(--nh-label-tertiary);
+  font: 400 13px var(--nh-font-sans);
   cursor: pointer;
+  transition:
+    background var(--nh-fast) var(--nh-ease),
+    color var(--nh-fast) var(--nh-ease);
 }
 
-.side-foot:hover {
-  color: var(--text);
-  border-color: var(--accent);
+.foot-item:hover {
+  background: var(--nh-hover);
+  color: var(--nh-label-primary);
 }
 
-/* ── main column ─────────────────────────────────────────────────────── */
+.rail .foot-item {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  justify-content: center;
+  padding: 0;
+}
+
+.rail .foot-item .label {
+  display: none;
+}
+
+/* ── 6. main column ──────────────────────────────────────────────────── */
 
 .main {
   display: flex;
@@ -269,61 +768,139 @@ body {
   display: flex;
   align-items: center;
   gap: var(--s2);
-  padding: var(--s2) var(--s4);
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-raised);
-  font-family: var(--font-sans);
+  flex: none;
+  height: 48px;
+  padding: 0 var(--s4);
+  font-family: var(--nh-font-sans);
 }
 
 .title {
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
-  font-weight: 600;
+  text-overflow: ellipsis;
+  font: 600 14px var(--nh-font-sans);
 }
 
 .spacer {
   flex: 1;
 }
 
+/* The conversation is one positioned box: the flow scrolls the full height of
+   it and the composer floats over the bottom, so nothing reflows when the
+   composer grows a line. */
+.conversation {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .stream {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--s6) var(--s4);
-  display: flex;
-  flex-direction: column;
-  gap: var(--s3);
+  overscroll-behavior: contain;
+  padding: var(--s3) var(--s6) var(--s4);
+  scrollbar-gutter: stable;
 }
+
+/* A session with nothing in it yet is not an error state, so it says nothing:
+   the mark sits behind where the first answer will land, and goes as soon as
+   there is a message to read. */
+.stream-mark {
+  position: absolute;
+  top: 42%;
+  left: 50%;
+  translate: -50% -50%;
+  width: 180px;
+  height: 180px;
+  opacity: 0.06;
+  pointer-events: none;
+  user-select: none;
+  animation: rise var(--nh-slow) var(--nh-ease);
+}
+
+/* Bottom clearance for the floating composer: a spacer element rather than
+   padding, because its height is written from the composer's measured one. */
+.stream-tail {
+  height: var(--nh-composer-clearance, 128px);
+  flex: none;
+}
+
+.composer-dock {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  display: flex;
+  justify-content: center;
+  padding: 0 var(--nh-composer-gutter) var(--s3);
+  pointer-events: none;
+}
+
+/* The flow dissolves into the ground behind the card instead of being cut by
+   a rule; the strip itself must not eat pointer events aimed at the flow. */
+.composer-dock::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: calc(100% + 28px);
+  background: var(--nh-fade);
+  pointer-events: none;
+}
+
+/* The card sits above the fade: the fade is positioned, so without a stacking
+   position of its own the card would be painted under the gradient. */
+.composer-dock > * {
+  position: relative;
+  z-index: 1;
+  pointer-events: auto;
+}
+
+/* ── 7. hero ─────────────────────────────────────────────────────────── */
 
 .hero {
   flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--s3);
-  padding: var(--s6);
+  gap: var(--s4);
+  padding: var(--s6) var(--nh-composer-gutter) var(--s8);
   text-align: center;
-  font-family: var(--font-sans);
+  font-family: var(--nh-font-sans);
 }
 
 .hero-mark {
-  /* The full mark, at the one size in the app where it has room to be read. */
-  margin-bottom: var(--s2);
-  filter: drop-shadow(0 6px 18px rgb(0 0 0 / 45%));
+  filter: drop-shadow(0 10px 26px rgb(0 0 0 / 34%));
+  animation: rise var(--nh-slow) var(--nh-ease) backwards;
 }
 
 .hero h1 {
   margin: 0;
-  font: 600 24px var(--font-sans);
+  font: 600 22px var(--nh-font-sans);
   letter-spacing: -0.02em;
 }
 
 .hero-note {
   margin: 0;
-  max-width: 46ch;
-  color: var(--muted);
+  max-width: 52ch;
+  color: var(--nh-label-tertiary);
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+.hero-seat {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  margin-top: var(--s1);
 }
 
 .hero-actions {
@@ -331,20 +908,35 @@ body {
   gap: var(--s2);
 }
 
-/* ── message flow ────────────────────────────────────────────────────── */
-
-.block {
-  max-width: var(--column);
-  width: 100%;
-  margin: 0 auto;
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
 }
 
-.label {
-  color: var(--subtle);
-  font-size: 11px;
-  letter-spacing: 0.06em;
+/* ── 8. message flow ─────────────────────────────────────────────────── */
+
+.block {
+  width: 100%;
+  max-width: var(--nh-column);
+  margin: 0 auto var(--s4);
+  animation: block-in var(--nh-base) var(--nh-ease) backwards;
+}
+
+@keyframes block-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.block > .label {
+  margin-bottom: 5px;
+  color: var(--nh-label-caption);
+  font: 500 10px var(--nh-font-sans);
+  letter-spacing: 0.11em;
   text-transform: uppercase;
-  margin-bottom: var(--s1);
 }
 
 .body {
@@ -352,25 +944,38 @@ body {
   overflow-wrap: anywhere;
 }
 
+/* The reader's own words: a card, so a long transcript scans as a dialogue
+   rather than one column of undifferentiated text. */
 .block.user .body {
-  background: var(--bg-raised);
-  border-left: 2px solid var(--accent);
   padding: var(--s2) var(--s3);
-  border-radius: var(--radius-chip);
+  border-radius: var(--nh-radius-card);
+  border-left: 2px solid var(--nh-accent);
+  background: var(--nh-bg-layer-1);
+}
+
+.block.assistant .body {
+  color: var(--nh-label-primary);
 }
 
 .block.error .body {
-  color: var(--error);
+  padding: var(--s2) var(--s3);
+  border-radius: var(--nh-radius-card);
+  background: var(--nh-hover-danger);
+  color: var(--nh-state-error);
 }
 
-/* A line about the run rather than about the conversation: a stop, a resume. */
+/* A line about the run rather than about the conversation. */
 .block.note {
   display: flex;
   align-items: center;
   gap: var(--s3);
-  color: var(--subtle);
-  font-family: var(--font-sans);
-  font-size: 12px;
+  color: var(--nh-label-caption);
+  font-family: var(--nh-font-sans);
+  font-size: 11.5px;
+}
+
+.block.note .label {
+  display: none;
 }
 
 .block.note::before,
@@ -378,444 +983,993 @@ body {
   content: "";
   flex: 1;
   height: 1px;
-  background: var(--border);
+  background: var(--nh-border-l1);
 }
 
-details {
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+/* Disclosure rows — tool calls and thinking. Closed they are one line; the
+   whole row is the hit target. */
+details.block {
+  padding: 0;
+  border: 1px solid var(--nh-border-l1);
+  border-radius: var(--nh-radius-card);
+  background: var(--nh-bg-layer-1);
+  transition: border-color var(--nh-fast) var(--nh-ease);
+}
+
+details.block:hover {
+  border-color: var(--nh-border-l2);
+}
+
+details.block > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-height: 34px;
+  padding: 0 var(--s3);
+  border-radius: inherit;
+  color: var(--nh-label-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  list-style: none;
+}
+
+details.block > summary::-webkit-details-marker {
+  display: none;
+}
+
+details.block > summary::before {
+  content: "";
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--nh-label-caption);
+  transition: background var(--nh-fast) var(--nh-ease);
+}
+
+details.block[open] > summary {
+  border-bottom: 1px solid var(--nh-border-l1);
+  border-radius: var(--nh-radius-card) var(--nh-radius-card) 0 0;
+}
+
+details.block pre {
+  margin: 0;
   padding: var(--s2) var(--s3);
+  max-height: 320px;
+  overflow: auto;
+  background: var(--nh-bg-code);
+  border-radius: 0 0 var(--nh-radius-card) var(--nh-radius-card);
+  color: var(--nh-label-tertiary);
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  --nh-thumb: var(--nh-scrollbar-l2);
+  --nh-thumb-hover: var(--nh-scrollbar-l2-hover);
 }
 
-details:hover {
-  border-color: var(--border-strong);
+details.block pre + pre {
+  border-top: 1px solid var(--nh-border-l1);
+  border-radius: 0 0 var(--nh-radius-card) var(--nh-radius-card);
 }
 
-/* Thinking is context, not the answer: present, quieter than everything else. */
+/* Thinking is context, not the answer: present, and quieter than everything
+   else on screen. */
 .block.thinking {
   background: transparent;
   border-style: dashed;
 }
 
 .block.thinking > summary {
-  color: var(--subtle);
+  color: var(--nh-label-caption);
 }
 
 .block.thinking pre {
   background: transparent;
-  padding: var(--s2) 0 0;
-  color: var(--subtle);
-}
-
-summary {
-  cursor: pointer;
-  color: var(--muted);
-  font-size: 13px;
-}
-
-summary::marker {
-  color: var(--subtle);
-}
-
-details pre {
-  margin: var(--s2) 0 0;
-  padding: var(--s2);
-  background: var(--bg-sunken);
-  border-radius: var(--radius-chip);
-  overflow-x: auto;
-  max-height: 320px;
-  overflow-y: auto;
-  font: inherit;
-  color: var(--muted);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.tool summary {
-  display: flex;
-  align-items: baseline;
-  gap: var(--s2);
+  color: var(--nh-label-caption);
 }
 
 .tool-name {
-  color: var(--text);
+  flex: none;
+  color: var(--nh-label-primary);
   font-weight: 500;
 }
 
 .tool-arg {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--subtle);
+  text-overflow: ellipsis;
+  color: var(--nh-label-caption);
 }
 
-.tool summary::after {
+.tool > summary::after {
   content: attr(data-state);
-  color: var(--subtle);
-  font-size: 12px;
+  flex: none;
+  padding: 1px var(--s2);
+  border-radius: var(--nh-radius-pill);
+  background: var(--nh-hover);
+  color: var(--nh-label-caption);
+  font: 400 11px var(--nh-font-sans);
 }
 
-.tool.ok summary::after {
-  color: var(--success);
+.tool.ok > summary::after {
+  color: var(--nh-state-ok);
 }
 
-.tool.failed summary::after {
-  color: var(--error);
+.tool.ok > summary::before {
+  background: var(--nh-state-ok);
 }
 
-/* ── composer ────────────────────────────────────────────────────────── */
+.tool.failed > summary::after {
+  color: var(--nh-state-error);
+}
+
+.tool.failed > summary::before {
+  background: var(--nh-state-error);
+}
+
+/* Running: the dot breathes, so an unfinished call is legible at a glance. */
+.tool:not(.ok):not(.failed) > summary::before {
+  background: var(--nh-accent);
+  animation: pulse 1.1s var(--nh-ease) infinite alternate;
+}
+
+@keyframes pulse {
+  from {
+    opacity: 0.35;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* The turn indicator. It lives in the flow rather than in the topbar: what the
+   eye is already on is the conversation, and a word in the corner was read by
+   nobody. Nothing is drawn at all when no turn is running — a permanent "idle"
+   is a light that says the fuse is not blown. */
+.activity {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  /* The same column every message is in: against the scroller's edge it read
+     as a stray line rather than as the turn that is being waited for. */
+  width: 100%;
+  max-width: var(--nh-column);
+  margin: 0 auto;
+  padding: var(--s1) 0 var(--s2);
+  color: var(--nh-accent);
+  font: 500 11px var(--nh-font-sans);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  animation: rise var(--nh-base) var(--nh-ease);
+}
+
+.activity-dots {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.activity-dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: currentColor;
+  animation: bounce 1.05s var(--nh-ease) infinite;
+}
+
+.activity-dots i:nth-child(2) {
+  animation-delay: 0.14s;
+}
+
+.activity-dots i:nth-child(3) {
+  animation-delay: 0.28s;
+}
+
+@keyframes bounce {
+  0%,
+  70%,
+  100% {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+  35% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
+/* The clock is the honest part: a turn that has been running for two minutes
+   looks different from one that started a second ago. */
+.activity-time {
+  color: var(--nh-label-caption);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .activity-dots i {
+    animation: none;
+    opacity: 0.8;
+  }
+}
+
+/* ── 9. composer ─────────────────────────────────────────────────────── */
 
 .composer {
   display: flex;
   flex-direction: column;
   gap: var(--s2);
-  padding: var(--s3) var(--s4);
-  border-top: 1px solid var(--border);
-  background: var(--bg-raised);
+  width: 100%;
+  max-width: var(--nh-composer-max);
+  padding: var(--s2) 0 var(--s1);
+  border: 1px solid var(--nh-border-l2);
+  border-radius: var(--nh-radius-composer);
+  background: var(--nh-bg-input);
+  box-shadow: var(--nh-shadow-lv2);
+  transition:
+    border-color var(--nh-base) var(--nh-ease),
+    box-shadow var(--nh-base) var(--nh-ease);
+  --nh-thumb: var(--nh-scrollbar-l2);
+  --nh-thumb-hover: var(--nh-scrollbar-l2-hover);
+  /* The control row is measured against the card, not the window: the same
+     card is narrow with the rail open and wide with it collapsed. */
+  container: composer / inline-size;
 }
 
-.composer > textarea,
-.controls {
-  max-width: var(--column);
+.composer:focus-within {
+  border-color: var(--nh-accent-line);
+  box-shadow: var(--nh-shadow-lv3);
+}
+
+/* No session to send to: the card is one big "start here" target instead of a
+   composer that would refuse the message. */
+.composer.trigger {
+  cursor: pointer;
+  border-style: dashed;
+  border-color: var(--nh-border-l3);
+}
+
+.composer.trigger:hover {
+  border-color: var(--nh-accent-line);
+}
+
+.composer.trigger textarea {
+  cursor: pointer;
+}
+
+.composer-text {
+  max-height: var(--nh-composer-cap);
+  overflow-y: auto;
+  padding: 0 var(--s2) 0 0;
+}
+
+.composer textarea {
+  display: block;
   width: 100%;
-  margin: 0 auto;
+  /* Grown from the content by the renderer, capped by .composer-text. */
+  height: auto;
+  min-height: 26px;
+  padding: 0 var(--s3) 0 var(--s4);
+  border: 0;
+  background: transparent;
+  color: var(--nh-label-primary);
+  font: inherit;
+  line-height: 24px;
+  resize: none;
+  overflow: hidden;
+}
+
+.composer textarea:focus {
+  outline: none;
+}
+
+.composer textarea::placeholder {
+  color: var(--nh-label-caption);
 }
 
 .controls {
   display: flex;
   align-items: center;
-  gap: var(--s2);
+  gap: var(--s1);
+  padding: 0 var(--s2) 0 var(--s3);
+  min-width: 0;
 }
 
+/* In the topbar, not on the composer: the control row squeezes it out, and the
+   card's bottom corner is where it collided with the send button. */
 .usage-line {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  flex: none;
   overflow: hidden;
-  text-overflow: ellipsis;
+  font-family: var(--nh-font-sans);
+}
+
+/* Name dim, number bright: the numbers are what gets read, and the names are
+   only there to say which number is which. */
+.metric {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: var(--nh-radius-chip);
+  background: var(--nh-bg-layer-1);
+  color: var(--nh-label-caption);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
   white-space: nowrap;
-  color: var(--subtle);
+}
+
+.metric b {
+  color: var(--nh-label-secondary);
+  font: 500 11.5px var(--nh-font-sans);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Cache hit and throughput are the two worth noticing, so they carry colour. */
+.metric.rate b,
+.metric.hit b {
+  color: var(--nh-accent);
+}
+
+/* Send is a circle, and it is the only accent-filled control in the window. */
+.send {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--nh-radius-pill);
+  background: var(--nh-button-primary-fill);
+  color: var(--nh-label-on-accent);
+  cursor: pointer;
+  transition:
+    background var(--nh-fast) var(--nh-ease),
+    transform var(--nh-fast) var(--nh-ease);
+}
+
+.send:hover:enabled {
+  background: var(--nh-button-primary-hover);
+}
+
+.send:active:enabled {
+  transform: scale(0.94);
+}
+
+.send:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Send becomes Stop for the length of a turn: same seat, opposite meaning. */
+.send.stop {
+  background: var(--nh-red-500);
+  color: #fff;
+}
+
+.send.stop:hover:enabled {
+  background: var(--nh-red-600);
+}
+
+.send .stop-glyph,
+.send.stop .send-glyph {
+  display: none;
+}
+
+.send.stop .stop-glyph {
+  display: block;
+}
+
+/* ── 10. chips and buttons ───────────────────────────────────────────── */
+
+button {
+  font-family: var(--nh-font-sans);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 var(--s4);
+  border: 1px solid transparent;
+  border-radius: var(--nh-radius-pill);
+  background: transparent;
+  color: var(--nh-label-primary);
+  font: 500 13px var(--nh-font-sans);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--nh-fast) var(--nh-ease),
+    border-color var(--nh-fast) var(--nh-ease),
+    color var(--nh-fast) var(--nh-ease);
+}
+
+.btn.sm {
+  height: 28px;
+  padding: 0 var(--s3);
   font-size: 12px;
 }
 
-textarea {
-  resize: none;
-  padding: var(--s3);
-  background: var(--bg-sunken);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  font: inherit;
+.btn.primary {
+  background: var(--nh-button-primary-fill);
+  color: var(--nh-label-on-accent);
 }
 
-textarea::placeholder {
-  color: var(--subtle);
+.btn.primary:hover:enabled {
+  background: var(--nh-button-primary-hover);
 }
 
-textarea:focus,
-button:focus-visible,
-select:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -1px;
+.btn.outline {
+  border-color: var(--nh-border-l2);
 }
 
-/* ── controls ────────────────────────────────────────────────────────── */
-
-button {
-  padding: var(--s2) var(--s3);
-  background: transparent;
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  font: 500 13px var(--font-sans);
-  cursor: pointer;
+.btn.outline:hover:enabled {
+  background: var(--nh-hover);
+  border-color: var(--nh-border-l3);
 }
 
-button:hover:enabled {
-  border-color: var(--accent);
+.btn.ghost {
+  color: var(--nh-label-secondary);
 }
 
-button.primary {
-  background: var(--accent);
-  color: var(--bg);
-  border-color: var(--accent);
-  font-weight: 600;
+.btn.ghost:hover:enabled {
+  background: var(--nh-hover);
+  color: var(--nh-label-primary);
 }
 
-button.primary:hover:enabled {
-  filter: brightness(1.08);
+.btn.danger {
+  color: var(--nh-state-error);
 }
 
-/* Send becomes Stop for the length of a turn - same place, opposite meaning. */
-button.primary.stop {
-  background: var(--error);
-  border-color: var(--error);
+.btn.danger:hover:enabled {
+  background: var(--nh-hover-danger);
 }
 
-button.block-button {
-  width: 100%;
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
-button.ghost {
-  background: transparent;
-  color: var(--muted);
-}
-
-button.ghost:hover {
-  color: var(--text);
-  border-color: var(--accent);
-}
-
-button.ghost.danger:hover {
-  color: var(--error);
-  border-color: var(--error);
-}
-
-button.icon {
-  padding: 0 var(--s2);
-  background: transparent;
+/* Icon-only control: a circle the size of a touch target, no chrome at rest. */
+.icon-btn {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  padding: 0;
   border: 0;
-  color: var(--subtle);
-  font-size: 14px;
-  line-height: 1.6;
+  border-radius: var(--nh-radius-pill);
+  background: transparent;
+  color: var(--nh-label-tertiary);
+  cursor: pointer;
+  transition:
+    background var(--nh-fast) var(--nh-ease),
+    color var(--nh-fast) var(--nh-ease);
 }
 
-button.icon:hover {
-  color: var(--text);
+.icon-btn:hover {
+  background: var(--nh-hover);
+  color: var(--nh-label-primary);
 }
 
-button:disabled,
-select:disabled,
-textarea:disabled {
+.icon-btn.danger:hover {
+  background: var(--nh-hover-danger);
+  color: var(--nh-state-error);
+}
+
+.rail .icon-btn {
+  width: 40px;
+  height: 40px;
+  color: var(--nh-label-primary);
+}
+
+/* Row-level actions live inside a 30px row, so they get their own size rather
+   than the chrome's touch target. */
+.icon-btn.tiny {
+  width: 22px;
+  height: 22px;
+  margin-right: 2px;
+}
+
+/* A chip states a fact; a chip that is also a button offers to change it. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  height: 26px;
+  max-width: 220px;
+  padding: 0 var(--s2);
+  border: 0;
+  border-radius: var(--nh-radius-chip);
+  background: transparent;
+  color: var(--nh-label-tertiary);
+  font: 400 12px var(--nh-font-sans);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+button.chip,
+.chip-select {
+  cursor: pointer;
+  transition:
+    background var(--nh-fast) var(--nh-ease),
+    color var(--nh-fast) var(--nh-ease);
+}
+
+button.chip:hover:enabled,
+.chip-select:hover {
+  background: var(--nh-hover);
+  color: var(--nh-label-primary);
+}
+
+.chip.icon {
+  padding: 0 6px;
+  gap: 0;
+}
+
+.chip.off {
+  color: var(--nh-label-caption);
+}
+
+.chip.busy {
+  color: var(--nh-accent);
+}
+
+.chip.busy::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+  animation: pulse 1.1s var(--nh-ease) infinite alternate;
+}
+
+/* A native select with its own chevron: the UA arrow is not themeable, so the
+   control is `appearance: none` and the glyph is a real element beside it. */
+.chip-select {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  /* Shrinks before it collides: the row is chips, not fixed columns. */
+  flex: 0 1 auto;
+  height: 26px;
+  min-width: 0;
+  padding: 0 var(--s2);
+  border-radius: var(--nh-radius-chip);
+  color: var(--nh-label-tertiary);
+}
+
+.chip-value {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: 500 12px var(--nh-font-sans);
+}
+
+/* Everything on the row is short and fixed except the model id, so the model
+   chip is the one that gives way when the window narrows. */
+#agent-chip,
+#effort-chip {
+  flex-shrink: 0;
+}
+
+#model-chip .chip-value {
+  min-width: 8ch;
+  max-width: 22ch;
+}
+
+/* When the card runs out of room the read-only chips go first: the alert
+   toggle and the scope badge both say something the settings pane also says,
+   while the three selects are the only way to change a turn from here. */
+@container composer (max-width: 560px) {
+  #alerts {
+    display: none;
+  }
+}
+
+@container composer (max-width: 460px) {
+  #access-chip {
+    display: none;
+  }
+}
+
+/* The select itself is invisible and covers the chip: the popup still opens
+   from the right place, and nothing about the chip's size depends on the
+   length of the options inside it. */
+.chip-select select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: transparent;
+  font: 500 12px var(--nh-font-sans);
+  opacity: 0;
+  appearance: none;
+  cursor: inherit;
+}
+
+.chip-select select:focus {
+  outline: none;
+}
+
+.chip-select:focus-within {
+  outline: 2px solid var(--nh-accent);
+  outline-offset: 2px;
+}
+
+.chip-chevron {
+  flex: none;
+  pointer-events: none;
+  opacity: 0.75;
+}
+
+.chip-select:has(select:disabled) {
   opacity: 0.5;
   cursor: default;
 }
 
-.chip {
-  padding: 2px var(--s2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-chip);
-  color: var(--muted);
-  font: 400 12px var(--font-sans);
-  white-space: nowrap;
+/* Without a customisable picker the popup is drawn by the OS, which does not
+   read our tokens; naming the ground is the one thing that keeps it from
+   flashing white. The block below replaces it wherever the engine can. */
+.chip-select select option,
+.sheet select option {
+  background: var(--nh-bg-layer-2);
+  color: var(--nh-label-primary);
 }
 
-.chip.scope {
-  max-width: 240px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* ── 10b. dropdowns ──────────────────────────────────────────────────── */
+
+/* A select's popup used to be the one thing in the window the app did not
+   draw: system colours, system radius, system font, in the middle of a themed
+   app. `base-select` hands the list back to the page, so it is styled here
+   exactly like every other surface. The rules above stay as the fallback for
+   an engine that cannot. */
+@supports (appearance: base-select) {
+  .chip-select select,
+  .sheet select,
+  .chip-select select::picker(select),
+  .sheet select::picker(select) {
+    appearance: base-select;
+  }
+
+  /* The chip still draws its own label: the select is the hit area and the
+     anchor the list opens from, so its own text and arrow stay hidden. */
+  .chip-select select {
+    opacity: 1;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: transparent;
+  }
+
+  .chip-select select::picker-icon {
+    display: none;
+  }
+
+  .sheet select {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s2);
+    text-align: left;
+  }
+
+  /* The default picker icon is a system triangle. This is the same chevron the
+     composer chips draw, built out of two borders so it stays crisp. */
+  .sheet select::picker-icon {
+    content: "";
+    width: 7px;
+    height: 7px;
+    margin-right: 3px;
+    border: solid var(--nh-label-caption);
+    border-width: 0 1.6px 1.6px 0;
+    rotate: 45deg;
+    translate: 0 -2px;
+    transition:
+      rotate var(--nh-fast) var(--nh-ease),
+      translate var(--nh-fast) var(--nh-ease);
+  }
+
+  .sheet select:open::picker-icon {
+    rotate: 225deg;
+    translate: 0 2px;
+  }
+
+  ::picker(select) {
+    min-width: anchor-size(width);
+    max-height: 320px;
+    margin-block: 4px;
+    padding: var(--s1);
+    border: 1px solid var(--nh-border-l2);
+    border-radius: var(--nh-radius-card);
+    background: var(--nh-bg-layer-2);
+    box-shadow: var(--nh-shadow-lv3);
+    overflow-y: auto;
+    /* Same entrance as a sheet, and it has to be told to animate out of the
+       top layer as well, or closing is an instant disappearance. */
+    opacity: 0;
+    translate: 0 -4px;
+    transition:
+      opacity var(--nh-fast) var(--nh-ease),
+      translate var(--nh-fast) var(--nh-ease),
+      display var(--nh-fast) allow-discrete,
+      overlay var(--nh-fast) allow-discrete;
+    --nh-thumb: var(--nh-scrollbar-l2);
+    --nh-thumb-hover: var(--nh-scrollbar-l2-hover);
+  }
+
+  :open::picker(select) {
+    opacity: 1;
+    translate: 0 0;
+  }
+
+  @starting-style {
+    :open::picker(select) {
+      opacity: 0;
+      translate: 0 -4px;
+    }
+  }
+
+  ::picker(select) option {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    min-height: 30px;
+    padding: 6px var(--s2);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--nh-label-secondary);
+    font: 400 12.5px var(--nh-font-sans);
+  }
+
+  ::picker(select) option:hover,
+  ::picker(select) option:focus {
+    background: var(--nh-hover);
+    color: var(--nh-label-primary);
+    outline: none;
+  }
+
+  ::picker(select) option:checked {
+    color: var(--nh-label-primary);
+  }
+
+  /* The tick keeps its column whether or not it is drawn, so the labels line
+     up and the list does not shift as the choice moves. */
+  ::picker(select) option::checkmark {
+    content: "¹3";
+    width: 12px;
+    color: var(--nh-accent);
+    font-size: 11px;
+    visibility: hidden;
+  }
+
+  ::picker(select) option:checked::checkmark {
+    visibility: visible;
+  }
+
+  ::picker(select) option:disabled {
+    color: var(--nh-label-caption);
+  }
 }
 
-.chip.busy {
-  color: var(--accent);
-  border-color: var(--accent);
-}
-
-/* A chip that is also a button: the chip look, without the button padding. */
-.chip.toggle {
-  padding: 2px var(--s2);
-  background: transparent;
-  font-weight: 400;
-  cursor: pointer;
-}
-
-.chip.toggle:hover {
-  color: var(--text);
-  border-color: var(--accent);
-}
-
-.chip.toggle.off {
-  color: var(--subtle);
-}
-
-.chip.select {
-  max-width: 220px;
-  background: transparent;
-  cursor: pointer;
-}
-
-.chip.select:hover:enabled {
-  color: var(--text);
-  border-color: var(--accent);
-}
-
-/* ── settings and permission sheets ──────────────────────────────────── */
+/* ── 11. sheets ──────────────────────────────────────────────────────── */
 
 .sheet {
-  width: min(860px, 92vw);
+  width: min(880px, 92vw);
   max-height: 86vh;
   padding: 0;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-lg);
-  background: var(--bg-raised);
-  color: var(--text);
-  box-shadow: var(--shadow);
+  border: 1px solid var(--nh-border-l2);
+  border-radius: var(--nh-radius-sheet);
+  background: var(--nh-bg-layer-1);
+  color: var(--nh-label-primary);
+  box-shadow: var(--nh-shadow-lv3);
+  font-family: var(--nh-font-sans);
+  overflow: hidden;
+  --nh-thumb: var(--nh-scrollbar-l2);
+  --nh-thumb-hover: var(--nh-scrollbar-l2-hover);
+}
+
+.sheet[open] {
+  animation: sheet-in var(--nh-base) var(--nh-ease);
+}
+
+@keyframes sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
 }
 
 .sheet.small {
   width: min(560px, 92vw);
-  padding: var(--s4);
+  padding: var(--s5);
 }
 
 .sheet::backdrop {
-  background: rgb(0 0 0 / 55%);
+  background: var(--nh-bg-scrim);
+  backdrop-filter: blur(3px);
 }
 
 .sheet-nav {
   display: flex;
   align-items: center;
-  gap: var(--s2);
+  gap: var(--s1);
   padding: var(--s3) var(--s4);
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-sunken);
-  font-family: var(--font-sans);
+  border-bottom: 1px solid var(--nh-border-l1);
 }
 
 .sheet-title {
-  margin-right: var(--s2);
-  font-weight: 600;
+  margin-right: var(--s3);
+  font: 600 14px var(--nh-font-sans);
 }
 
 .nav-item {
-  padding: var(--s1) var(--s3);
+  height: 30px;
+  padding: 0 var(--s3);
+  border: 0;
+  border-radius: var(--nh-radius-chip);
   background: transparent;
-  border: 1px solid transparent;
-  color: var(--muted);
+  color: var(--nh-label-tertiary);
+  font: 500 13px var(--nh-font-sans);
+  cursor: pointer;
+  transition:
+    background var(--nh-fast) var(--nh-ease),
+    color var(--nh-fast) var(--nh-ease);
+}
+
+.nav-item:hover {
+  background: var(--nh-hover);
 }
 
 .nav-item.current {
-  border-color: var(--border);
-  background: var(--bg-raised);
-  color: var(--text);
+  background: var(--nh-hover-solid);
+  color: var(--nh-label-primary);
 }
 
 .sheet-pane {
   display: flex;
   flex-direction: column;
   gap: var(--s2);
-  max-height: calc(86vh - 58px);
+  max-height: calc(86vh - 59px);
   overflow-y: auto;
-  padding: var(--s4);
+  padding: var(--s5);
 }
 
 .sheet h2 {
-  margin: 0;
-  font: 600 15px/1.4 var(--font-sans);
+  margin: 0 0 var(--s1);
+  font: 600 15px var(--nh-font-sans);
 }
 
 .hint {
   margin: 0 0 var(--s2);
-  max-width: 66ch;
-  color: var(--muted);
-  font-family: var(--font-sans);
+  max-width: 68ch;
+  color: var(--nh-label-tertiary);
+  font-size: 13px;
+  line-height: 1.6;
 }
 
-/* Sits under the field it explains, so it reads as part of that field. */
 .field-hint {
   margin: 0;
-  color: var(--subtle);
+  color: var(--nh-label-caption);
   font-size: 12px;
-  overflow-wrap: anywhere;
-}
-
-.perm-path {
-  margin: 0;
-  padding: var(--s2) var(--s3);
-  background: var(--bg-sunken);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-chip);
-  /* One line per path: a call that reaches four places asks about four here. */
-  max-height: 180px;
-  overflow: auto;
-  font: inherit;
-  color: var(--text);
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
 .sheet label {
-  color: var(--muted);
-  font-family: var(--font-sans);
+  margin-top: var(--s2);
+  color: var(--nh-label-tertiary);
   font-size: 12px;
 }
 
 .sheet input,
+.sheet select,
+.sheet textarea {
+  height: 36px;
+  padding: 0 var(--s3);
+  border: 1px solid var(--nh-border-l2);
+  border-radius: var(--nh-radius-chip);
+  background: var(--nh-bg-input);
+  color: var(--nh-label-primary);
+  font: 400 13px var(--nh-font-mono);
+  transition: border-color var(--nh-fast) var(--nh-ease);
+}
+
 .sheet select {
-  padding: var(--s2) var(--s3);
-  background: var(--bg-sunken);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  font: inherit;
+  font-family: var(--nh-font-sans);
 }
 
 .sheet input:focus,
 .sheet select:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--nh-accent-line);
+}
+
+.perm-path {
+  margin: 0;
+  padding: var(--s2) var(--s3);
+  max-height: 180px;
+  overflow: auto;
+  border: 1px solid var(--nh-border-l1);
+  border-radius: var(--nh-radius-chip);
+  background: var(--nh-bg-code);
+  color: var(--nh-label-primary);
+  font: 400 12.5px/1.6 var(--nh-font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .setup-actions {
   display: flex;
   align-items: center;
-  gap: var(--s3);
-  margin-top: var(--s2);
+  gap: var(--s2);
   flex-wrap: wrap;
-}
-
-.setup-actions button {
-  white-space: nowrap;
+  margin-top: var(--s3);
 }
 
 .setup-note {
-  color: var(--muted);
-  font-family: var(--font-sans);
+  color: var(--nh-label-tertiary);
   font-size: 12px;
 }
 
 .models {
-  margin: var(--s2) 0 0;
+  margin: var(--s3) 0 0;
   padding: var(--s3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-sunken);
+  border: 1px solid var(--nh-border-l1);
+  border-radius: var(--nh-radius-card);
+  background: var(--nh-bg-layer-2);
 }
 
 .models legend {
   padding: 0 var(--s2);
-  color: var(--muted);
-  font-family: var(--font-sans);
+  color: var(--nh-label-tertiary);
   font-size: 12px;
 }
 
 .model-list {
-  max-height: 220px;
-  overflow-y: auto;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: var(--s1) var(--s3);
+  gap: 2px var(--s3);
+  max-height: 220px;
+  overflow-y: auto;
 }
 
 .model-row {
   display: flex;
   align-items: center;
   gap: var(--s2);
-  padding: 2px 0;
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: 13px;
+  padding: 3px 0;
+  color: var(--nh-label-primary);
+  font: 400 12.5px var(--nh-font-mono);
   cursor: pointer;
 }
 
 .model-row.all {
   margin-bottom: var(--s2);
   padding-bottom: var(--s2);
-  border-bottom: 1px solid var(--border);
-  color: var(--muted);
-  font-family: var(--font-sans);
+  border-bottom: 1px solid var(--nh-border-l1);
+  color: var(--nh-label-tertiary);
+  font-family: var(--nh-font-sans);
 }
 
 .model-row input {
-  accent-color: var(--accent);
+  accent-color: var(--nh-accent-500);
 }
 
 .providers {
@@ -831,32 +1985,130 @@ textarea:disabled {
   gap: var(--s2);
 }
 
+/* The card is the row, and removing it is an action on the card rather than a
+   button parked at the bottom of the form that never said which one it meant. */
 .provider-row {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 2px;
   padding: var(--s2) var(--s3);
-  background: var(--bg-sunken);
+  border: 1px solid var(--nh-border-l2);
+  border-radius: var(--nh-radius-card);
+  background: var(--nh-bg-layer-2);
+  color: var(--nh-label-primary);
   text-align: left;
+  cursor: pointer;
+  transition: border-color var(--nh-fast) var(--nh-ease);
+}
+
+.provider-row:hover {
+  border-color: var(--nh-border-l3);
 }
 
 .provider-row.editing,
 .provider-row.active {
-  border-color: var(--accent);
+  border-color: var(--nh-accent-line);
 }
 
 .provider-name {
-  font-family: var(--font-sans);
-  font-weight: 600;
+  font: 600 13px var(--nh-font-sans);
 }
 
 .provider-row.active .provider-name::after {
   content: " · active";
-  color: var(--accent);
+  color: var(--nh-accent);
+  font-weight: 400;
 }
 
 .provider-detail {
-  color: var(--muted);
-  font-family: var(--font-sans);
+  color: var(--nh-label-tertiary);
+  font: 400 11.5px var(--nh-font-sans);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The whole card opens the provider for editing; the corner removes it. */
+.provider-open {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.provider-remove {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  opacity: 0;
+  transition: opacity var(--nh-fast) var(--nh-ease);
+}
+
+.provider-row:hover .provider-remove,
+.provider-remove:focus-visible {
+  opacity: 1;
+}
+
+/* ── 13. about ───────────────────────────────────────────────────────── */
+
+.sheet-pane.about {
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s8) var(--s5);
+  text-align: center;
+}
+
+.about-mark {
+  opacity: 0.9;
+}
+
+.about-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--nh-label-primary);
+  font: 500 15px var(--nh-font-sans);
+}
+
+.about-heart {
+  color: var(--nh-accent);
+}
+
+.about-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 var(--s3);
+  border: 1px solid var(--nh-border-l2);
+  border-radius: var(--nh-radius-pill);
+  color: var(--nh-label-secondary);
+  font: 500 12.5px var(--nh-font-sans);
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background var(--nh-fast) var(--nh-ease),
+    border-color var(--nh-fast) var(--nh-ease),
+    color var(--nh-fast) var(--nh-ease);
+}
+
+.about-link:hover {
+  background: var(--nh-hover);
+  border-color: var(--nh-border-l3);
+  color: var(--nh-label-primary);
+}
+
+.sheet-pane.about .hint {
+  margin: 0;
+  color: var(--nh-label-caption);
   font-size: 12px;
 }

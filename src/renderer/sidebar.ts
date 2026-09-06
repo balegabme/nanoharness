@@ -1,5 +1,6 @@
 // doc: docs/harness/ui.md
-import { el, message, must, relativeTime } from './dom.js'
+import { ask } from './confirm.js'
+import { el, GLYPH, icon, message, must, relativeTime } from './dom.js'
 import type { NanoBridge, SessionView, WorkspaceStatus, WorkspaceView } from '../ipc/contract.js'
 
 /**
@@ -12,9 +13,8 @@ const tree = must<HTMLElement>('tree')
 const search = must<HTMLInputElement>('session-search')
 const addButton = must<HTMLButtonElement>('workspace-add')
 const newButton = must<HTMLButtonElement>('new-session')
-const sidebar = must<HTMLElement>('sidebar')
+const app = must<HTMLElement>('app')
 const toggle = must<HTMLButtonElement>('sidebar-toggle')
-const showButton = must<HTMLButtonElement>('sidebar-show')
 
 export interface SidebarHandlers {
   bridge: NanoBridge
@@ -30,6 +30,8 @@ let selectedSession: string | null = null
 /** The folder a new session lands in: the one last touched. */
 let selectedWorkspace: string | null = null
 const collapsed = new Set<string>()
+/** Whether the column is a rail. A preference about this machine's screen. */
+const RAIL_KEY = 'nanoharness.rail'
 
 export function currentStatus(): WorkspaceStatus {
   return status
@@ -82,9 +84,12 @@ function render(): void {
     const group = el('div', 'group')
 
     const head = el('div', 'group-head')
-    const twisty = el('button', 'twisty', collapsed.has(workspace.id) ? '▸' : '▾')
+    const open = !collapsed.has(workspace.id)
+    const twisty = el('button', 'twisty')
     twisty.type = 'button'
-    twisty.title = collapsed.has(workspace.id) ? 'Expand' : 'Collapse'
+    twisty.append(icon(GLYPH.chevronDown, 13))
+    twisty.setAttribute('aria-expanded', String(open))
+    twisty.title = open ? 'Collapse' : 'Expand'
     twisty.addEventListener('click', () => {
       if (collapsed.has(workspace.id)) collapsed.delete(workspace.id)
       else collapsed.add(workspace.id)
@@ -100,9 +105,11 @@ function render(): void {
       render()
     })
 
-    const remove = el('button', 'icon row-action', '×')
+    const remove = el('button', 'icon-btn tiny row-action')
     remove.type = 'button'
+    remove.append(icon(GLYPH.close, 13))
     remove.title = `Remove ${workspace.name} from the sidebar`
+    remove.setAttribute('aria-label', `Remove ${workspace.name}`)
     remove.addEventListener('click', () => void removeWorkspace(workspace))
 
     head.append(twisty, name, remove)
@@ -131,9 +138,11 @@ function sessionRow(session: SessionView): HTMLElement {
   open.append(el('span', 'session-title', session.title), el('span', 'session-time', relativeTime(session.updatedAt)))
   open.addEventListener('click', () => void handlers?.openSession(session.id))
 
-  const remove = el('button', 'icon row-action', '×')
+  const remove = el('button', 'icon-btn tiny row-action danger')
   remove.type = 'button'
+  remove.append(icon(GLYPH.close, 13))
   remove.title = 'Delete session'
+  remove.setAttribute('aria-label', 'Delete session')
   remove.addEventListener('click', () => void deleteSession(session))
 
   row.append(open, remove)
@@ -145,7 +154,11 @@ async function removeWorkspace(workspace: WorkspaceView): Promise<void> {
   // Removing a folder takes its sessions with it, so say so before it happens.
   const count = status.sessions.filter(s => s.workspaceId === workspace.id).length
   const warning = count === 0 ? '' : ` and ${count} session${count === 1 ? '' : 's'}`
-  if (!confirm(`Remove ${workspace.name}${warning} from the sidebar? Files on disk are not touched.`)) return
+  const go = await ask({
+    title: `Remove ${workspace.name}?`,
+    detail: `The folder${warning} leaves the sidebar. Files on disk are not touched.`,
+  })
+  if (!go) return
   try {
     setStatus(await handlers.bridge.removeWorkspace(workspace.id))
     handlers.changed(status)
@@ -156,7 +169,8 @@ async function removeWorkspace(workspace: WorkspaceView): Promise<void> {
 
 async function deleteSession(session: SessionView): Promise<void> {
   if (handlers === null) return
-  if (!confirm(`Delete "${session.title}"? Its transcript is removed.`)) return
+  const go = await ask({ title: `Delete "${session.title}"?`, detail: 'Its transcript is removed.', confirmLabel: 'Delete' })
+  if (!go) return
   try {
     setStatus(await handlers.bridge.deleteSession(session.id))
     handlers.changed(status)
@@ -203,15 +217,15 @@ export function initSidebar(next: SidebarHandlers): void {
   addButton.addEventListener('click', () => void addWorkspace())
   newButton.addEventListener('click', () => void startSession())
   search.addEventListener('input', render)
-  for (const [button, hide] of [
-    [toggle, true],
-    [showButton, false],
-  ] as const) {
-    button.addEventListener('click', () => {
-      sidebar.hidden = hide
-      showButton.hidden = !hide
-    })
-  }
+  // Collapsed is a rail, not a hidden column: the brand, New session and
+  // Settings stay reachable, so the sidebar never has to be found again.
+  toggle.addEventListener('click', () => {
+    const rail = app.classList.toggle('rail')
+    toggle.title = rail ? 'Expand sidebar' : 'Collapse sidebar'
+    toggle.setAttribute('aria-label', toggle.title)
+    localStorage.setItem(RAIL_KEY, String(rail))
+  })
+  if (localStorage.getItem(RAIL_KEY) === 'true') toggle.click()
 }
 
 export const addWorkspaceFromUI = addWorkspace
