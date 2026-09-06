@@ -6,6 +6,8 @@ import { workspaceGate } from './scope.js'
 import type { AccessGate } from './scope.js'
 import { emptyUsage } from './types.js'
 import type { ChatMessage, ThinkingBlock, ToolCall, ToolInput, ToolResult, TurnUsage } from './types.js'
+import type { SpawnHost } from './spawn.js'
+import type { JobRegistry } from './jobs.js'
 
 /**
  * What a tool is handed instead of a bare cwd. `access` is the scope guard: a
@@ -15,6 +17,10 @@ import type { ChatMessage, ThinkingBlock, ToolCall, ToolInput, ToolResult, TurnU
 export interface ToolContext {
   cwd: string
   access: AccessGate
+  /** Present when this session may summon subagents. A subagent gets no host. */
+  spawn?: SpawnHost
+  /** Present when this session *is* a background job, so it can report progress. */
+  job?: { id: string; jobs: JobRegistry }
 }
 
 export interface Tool {
@@ -60,6 +66,12 @@ export interface SessionOptions {
   access?: AccessGate
   /** Messages from an earlier run of this session, replayed as history. */
   history?: ChatMessage[]
+  /** Lets the `spawn` tool hand work to another agent (plan §5). */
+  spawn?: SpawnHost
+  /** Set when this session is running as a background job. */
+  job?: { id: string; jobs: JobRegistry }
+  /** What this session had already spent before it was rebuilt. */
+  usage?: TurnUsage
 }
 
 export class Session {
@@ -84,6 +96,9 @@ export class Session {
     this.bus = bus ?? new EventBus()
     this.access = options.access ?? workspaceGate(options.cwd)
     this.messages.push({ role: 'system', content: options.systemPrompt })
+    // A resumed session keeps its running total: the turns it is resuming from
+    // were paid for, and a counter that restarts at zero says they were not.
+    this.totalUsage = { ...(options.usage ?? emptyUsage()) }
     // A resumed session keeps its own system prompt, not the stored one: the
     // prompt is built fresh each launch and may have changed since.
     for (const message of options.history ?? []) {
@@ -265,7 +280,12 @@ export class Session {
     if (!isJsonObject(parsed)) {
       return { ok: false, summary: `args must be a JSON object for ${tool.input.name}`, isError: true }
     }
-    return tool.run(parsed, { cwd: this.options.cwd, access: this.access })
+    return tool.run(parsed, {
+      cwd: this.options.cwd,
+      access: this.access,
+      ...(this.options.spawn === undefined ? {} : { spawn: this.options.spawn }),
+      ...(this.options.job === undefined ? {} : { job: this.options.job }),
+    })
   }
 
   private addUsage(u: TurnUsage): void {

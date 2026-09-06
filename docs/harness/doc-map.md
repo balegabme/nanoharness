@@ -37,8 +37,9 @@ pnpm doc-check
 - `cli.md` — the `nh` command: `doc-check`, `usage`
 - `ui.md` — the desktop window, the context bridge, the renderer
 - `sessions.md` — folders, sessions, transcripts, and the scope rule
+- `agents.md` — the three roles, spawn modes, and background jobs
 - `improvements.md` — the flaw and improvement ledger (living doc)
 - `doc-map.md` — this page
 
 Pages arrive with the features they document; plan §4 lists the ones still to
-come (agents, mcp, skills, snippets, hooks, env-detection, security).
+come (mcp, skills, snippets, hooks, env-detection, security).

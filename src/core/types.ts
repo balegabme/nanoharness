@@ -1,4 +1,6 @@
 // doc: docs/harness/overview.md
+import type { JobView } from './jobs.js'
+
 
 export interface TurnUsage {
   input: number
@@ -62,6 +64,11 @@ export type AppEvent =
   | { type: 'session.finished'; sessionId: string; turn: number; at: number }
   | { type: 'session.stopped'; sessionId: string; turn: number; at: number }
   | { type: 'permission.request'; sessionId: string; id: string; intent: 'read' | 'write' | 'run'; paths: string[]; root: string; at: number }
+  // A background subagent, which has no stream of its own in the window: these
+  // three are everything the user sees of it (plan §5).
+  | { type: 'job.started'; job: JobView; at: number }
+  | { type: 'job.update'; jobId: string; note: string; at: number }
+  | { type: 'job.finished'; job: JobView; at: number }
 
 export type ChatMessage =
   | { role: 'system' | 'user' | 'assistant'; content: string; toolCalls?: ToolCall[]; thinking?: ThinkingBlock[] }

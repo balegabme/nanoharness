@@ -2,9 +2,11 @@
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { basename, join } from 'node:path'
+import { isAgentRole } from '../core/agents.js'
 import { realResolve } from '../core/scope.js'
 import { userDataDir } from '../core/usage-log.js'
-import type { ChatMessage } from '../core/types.js'
+import type { AgentRole } from '../core/agents.js'
+import type { ChatMessage, TurnUsage } from '../core/types.js'
 import type { SessionView, TranscriptMessage, WorkspaceStatus, WorkspaceView } from '../ipc/contract.js'
 
 /**
@@ -27,8 +29,11 @@ interface StoredSession {
   id: string
   workspaceId: string
   title: string
+  role: AgentRole
   createdAt: number
   updatedAt: number
+  /** Every turn this session has ever run, added up. */
+  usage?: TurnUsage
 }
 
 interface WorkspaceState {
@@ -68,7 +73,7 @@ export function parseState(parsed: unknown): WorkspaceState {
   if (Array.isArray(raw.sessions)) {
     for (const entry of raw.sessions) {
       if (typeof entry !== 'object' || entry === null) continue
-      const { id, workspaceId, title, createdAt, updatedAt } = entry as Record<string, unknown>
+      const { id, workspaceId, title, role, createdAt, updatedAt, usage } = entry as Record<string, unknown>
       const [i, w] = [str(id), str(workspaceId)]
       if (i === null || w === null) continue
       // A session whose workspace is gone would be unreachable in the sidebar.
@@ -78,13 +83,28 @@ export function parseState(parsed: unknown): WorkspaceState {
         id: i,
         workspaceId: w,
         title: str(title) ?? 'New session',
+        // Sessions written before roles existed are builders, which is what
+        // they were talking to.
+        role: isAgentRole(role) ? role : 'builder',
         createdAt: created,
         updatedAt: typeof updatedAt === 'number' ? updatedAt : created,
+        // Sessions written before usage was stored have spent something the
+        // file cannot say, so they start the count again rather than claim a
+        // total that is not true.
+        ...(isUsage(usage) ? { usage } : {}),
       })
     }
   }
 
   return { workspaces, sessions }
+}
+
+const USAGE_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite', 'reasoning'] as const
+
+function isUsage(value: unknown): value is TurnUsage {
+  if (typeof value !== 'object' || value === null) return false
+  const raw = value as Record<string, unknown>
+  return USAGE_KEYS.every(key => typeof raw[key] === 'number')
 }
 
 async function readState(): Promise<WorkspaceState> {
@@ -143,7 +163,7 @@ export async function createSession(workspaceId: string): Promise<SessionView> {
   const state = await readState()
   if (!state.workspaces.some(w => w.id === workspaceId)) throw new Error('that folder is not in the sidebar any more')
   const now = Date.now()
-  const session: StoredSession = { id: randomUUID(), workspaceId, title: 'New session', createdAt: now, updatedAt: now }
+  const session: StoredSession = { id: randomUUID(), workspaceId, title: 'New session', role: 'builder', createdAt: now, updatedAt: now }
   state.sessions.push(session)
   await writeState(state)
   return session
@@ -154,6 +174,28 @@ export async function deleteSession(id: string): Promise<void> {
   state.sessions = state.sessions.filter(s => s.id !== id)
   await writeState(state)
   await rm(transcriptPath(id), { force: true })
+}
+
+/** Switch which agent a session talks to. The transcript is untouched. */
+export async function setSessionRole(id: string, role: AgentRole): Promise<SessionView> {
+  const state = await readState()
+  const session = state.sessions.find(s => s.id === id)
+  if (session === undefined) throw new Error('that session is gone; start a new one from the sidebar')
+  session.role = role
+  await writeState(state)
+  return session
+}
+
+/** What a session has spent so far, for seeding it when it is rebuilt. */
+export async function sessionUsage(id: string): Promise<TurnUsage | null> {
+  const state = await readState()
+  return state.sessions.find(s => s.id === id)?.usage ?? null
+}
+
+/** Which agent a session is talking to, or null once the session is gone. */
+export async function sessionRole(id: string): Promise<AgentRole | null> {
+  const state = await readState()
+  return state.sessions.find(s => s.id === id)?.role ?? null
 }
 
 /** The root a session is scoped to, or null once its workspace is gone. */
@@ -170,11 +212,14 @@ const TITLE_MAX = 60
  * A session is named after the first thing asked of it, which is what the user
  * will recognise in the sidebar. Later messages only move it up the list.
  */
-export async function noteTurn(id: string, firstText: string): Promise<SessionView | null> {
+export async function noteTurn(id: string, firstText: string, usage?: TurnUsage): Promise<SessionView | null> {
   const state = await readState()
   const session = state.sessions.find(s => s.id === id)
   if (session === undefined) return null
   session.updatedAt = Date.now()
+  // The session's own running total, so re-opening it shows what it has cost
+  // rather than starting the count at zero.
+  if (usage !== undefined) session.usage = usage
   if (session.title === 'New session') {
     const line = firstText.trim().replace(/\s+/g, ' ')
     if (line !== '') session.title = line.length > TITLE_MAX ? `${line.slice(0, TITLE_MAX - 1)}…` : line

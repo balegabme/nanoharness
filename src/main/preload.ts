@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { IPC_CHANNELS } from '../ipc/contract.js'
 import type {
   ActiveSetRequest,
+  AgentSummary,
   ConfigProbeRequest,
   ConfigProbeResult,
   ConfigStatus,
@@ -15,6 +16,8 @@ import type {
   SessionView,
   WorkspaceStatus,
 } from '../ipc/contract.js'
+import type { AgentRole } from '../core/agents.js'
+import type { JobView } from '../core/jobs.js'
 import type { AppEvent } from '../core/types.js'
 
 // The renderer never sees ipcRenderer itself, only the calls on this bridge.
@@ -31,11 +34,16 @@ const bridge: NanoBridge = {
   deleteSession: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.sessionDelete, id) as Promise<WorkspaceStatus>,
   respondToPermission: (id: string, decision: PermissionDecision) =>
     ipcRenderer.invoke(IPC_CHANNELS.permissionRespond, { id, decision }) as Promise<void>,
+  setSessionRole: (sessionId: string, role: AgentRole) =>
+    ipcRenderer.invoke(IPC_CHANNELS.sessionSetRole, { sessionId, role }) as Promise<SessionView>,
+  jobs: () => ipcRenderer.invoke(IPC_CHANNELS.jobsList) as Promise<JobView[]>,
+  agents: () => ipcRenderer.invoke(IPC_CHANNELS.agentsList) as Promise<AgentSummary[]>,
   config: () => ipcRenderer.invoke(IPC_CHANNELS.configGet) as Promise<ConfigStatus>,
   saveProvider: (request: ProviderSaveRequest) => ipcRenderer.invoke(IPC_CHANNELS.configSaveProvider, request) as Promise<ConfigStatus>,
   deleteProvider: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.configDeleteProvider, id) as Promise<ConfigStatus>,
   setActive: (request: ActiveSetRequest) => ipcRenderer.invoke(IPC_CHANNELS.configSetActive, request) as Promise<ConfigStatus>,
   probeProvider: (request: ConfigProbeRequest) => ipcRenderer.invoke(IPC_CHANNELS.configProbe, request) as Promise<ConfigProbeResult>,
+  openExternal: (url: string) => ipcRenderer.invoke(IPC_CHANNELS.openExternal, url) as Promise<void>,
   onEvent(listener) {
     const handler = (_event: Electron.IpcRendererEvent, payload: AppEvent): void => listener(payload)
     ipcRenderer.on(IPC_CHANNELS.sessionEvent, handler)

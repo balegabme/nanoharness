@@ -1,5 +1,7 @@
 // doc: docs/harness/overview.md
+import type { AgentRole } from '../core/agents.js'
 import type { ActiveSelection, Effort, ProviderKind, ProviderRecord } from '../core/config.js'
+import type { JobView } from '../core/jobs.js'
 import type { AccessIntent } from '../core/scope.js'
 import type { AppEvent, TurnUsage } from '../core/types.js'
 
@@ -20,7 +22,23 @@ export const IPC_CHANNELS = {
   sessionOpen: 'session:open',
   sessionDelete: 'session:delete',
   permissionRespond: 'permission:respond',
+  sessionSetRole: 'session:set-role',
+  jobsList: 'jobs:list',
+  agentsList: 'agents:list',
+  openExternal: 'shell:open-external',
 } as const
+
+/**
+ * One agent as the window lists it. The registry lives in the main process —
+ * the renderer is served over the app scheme and cannot import across into
+ * core — so the three roles arrive over IPC like everything else.
+ */
+export interface AgentSummary {
+  role: AgentRole
+  name: string
+  purpose: string
+  defaultEffort: Effort
+}
 
 export interface SessionSendRequest {
   sessionId: string
@@ -38,8 +56,12 @@ export interface SessionView {
   id: string
   workspaceId: string
   title: string
+  /** Which of the three agents this session is talking to right now (plan §5). */
+  role: AgentRole
   createdAt: number
   updatedAt: number
+  /** What this session has spent so far, across every launch it has run in. */
+  usage?: TurnUsage
 }
 
 /** Everything the sidebar draws itself from. */
@@ -165,11 +187,19 @@ export interface NanoBridge {
   openSession(id: string): Promise<SessionOpenResponse>
   deleteSession(id: string): Promise<WorkspaceStatus>
   respondToPermission(id: string, decision: PermissionDecision): Promise<void>
+  /** Switch the agent a session is talking to. The transcript is kept. */
+  setSessionRole(sessionId: string, role: AgentRole): Promise<SessionView>
+  /** Background subagents, newest first. In-memory: empty after a restart. */
+  jobs(): Promise<JobView[]>
+  /** The three agents, for the role chip. */
+  agents(): Promise<AgentSummary[]>
   config(): Promise<ConfigStatus>
   saveProvider(request: ProviderSaveRequest): Promise<ConfigStatus>
   deleteProvider(id: string): Promise<ConfigStatus>
   setActive(request: ActiveSetRequest): Promise<ConfigStatus>
   probeProvider(request: ConfigProbeRequest): Promise<ConfigProbeResult>
+  /** Hand an https link to the OS browser. The window itself never navigates. */
+  openExternal(url: string): Promise<void>
   /** Subscribe to live session events. Returns an unsubscribe function. */
   onEvent(listener: (event: AppEvent) => void): () => void
 }

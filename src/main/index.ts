@@ -1,13 +1,17 @@
 // doc: docs/harness/overview.md
-import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent, type WebContents } from 'electron'
 import { createRequire } from 'node:module'
 import { createProvider } from '../providers/factory.js'
-import { BASH_TOOL } from '../tools/bash.js'
+import { BASH_TOOL, GUARDED_BASH_TOOL } from '../tools/bash.js'
 import { READ_TOOL } from '../tools/read.js'
 import { WRITE_TOOL } from '../tools/write.js'
 import { LOG_IMPROVEMENT_TOOL } from '../tools/log-improvement.js'
+import { SPAWN_TOOL } from '../tools/spawn.js'
+import { JOB_UPDATE_TOOL } from '../tools/job-update.js'
+import { AGENTS, AGENT_ROLES, agentPrompt, isAgentRole, roleContext } from '../core/agents.js'
 import { EventBus } from '../core/event-bus.js'
-import { buildSystemPrompt } from '../core/prompt.js'
+import { JobRegistry } from '../core/jobs.js'
+import { createSpawnHost } from '../core/spawn.js'
 import { Session } from '../core/session.js'
 import { appendUsage } from '../core/usage-log.js'
 import { IPC_CHANNELS } from '../ipc/contract.js'
@@ -21,14 +25,23 @@ import {
   noteTurn,
   removeWorkspace,
   saveTranscript,
+  sessionRole,
   sessionRoot,
+  sessionUsage,
+  setSessionRole,
   toTranscriptView,
   workspaceStatus,
 } from './workspace-store.js'
 import { createWindow, serveRenderer } from './window.js'
+import type { AgentRole } from '../core/agents.js'
+import type { JobView } from '../core/jobs.js'
+import type { PromptEnvironment } from '../core/prompt.js'
+import type { SubagentSetup } from '../core/spawn.js'
+import type { Tool } from '../core/session.js'
 import type { AppEvent } from '../core/types.js'
 import type {
   ActiveSetRequest,
+  AgentSummary,
   ConfigProbeRequest,
   ConfigProbeResult,
   ConfigStatus,
@@ -54,6 +67,9 @@ const EVENT_TYPES: AppEvent['type'][] = [
   'session.finished',
   'session.stopped',
   'permission.request',
+  'job.started',
+  'job.update',
+  'job.finished',
 ]
 
 const MAX_TOOL_ROUNDS = 8
@@ -90,6 +106,60 @@ function brokerFor(sender: WebContents): PermissionBroker {
   return broker
 }
 
+// One registry per window, for the same reason as the broker: a job is only
+// visible where it can be shown, and its events go to that window's renderer.
+const jobRegistries = new Map<number, JobRegistry>()
+
+function jobsFor(sender: WebContents): JobRegistry {
+  const existing = jobRegistries.get(sender.id)
+  if (existing) return existing
+  const bus = new EventBus()
+  for (const type of ['job.started', 'job.update', 'job.finished'] as const) {
+    bus.on(type, event => {
+      if (!sender.isDestroyed()) sender.send(IPC_CHANNELS.sessionEvent, event)
+    })
+  }
+  const registry = new JobRegistry(bus)
+  jobRegistries.set(sender.id, registry)
+  sender.once('destroyed', () => void jobRegistries.delete(sender.id))
+  return registry
+}
+
+const TOOLS: Record<string, Tool> = {
+  bash: BASH_TOOL,
+  read: READ_TOOL,
+  write: WRITE_TOOL,
+  log_improvement: LOG_IMPROVEMENT_TOOL,
+  spawn: SPAWN_TOOL,
+  job_update: JOB_UPDATE_TOOL,
+}
+
+/**
+ * The role's tools, minus the two that only make sense in one place: nothing
+ * but a background job may report progress, and a subagent may not summon
+ * another one — a tree of agents is a bill nobody asked for.
+ */
+function toolsFor(role: AgentRole, options: { canSpawn: boolean; isJob: boolean }): Tool[] {
+  const definition = AGENTS[role]
+  const tools: Tool[] = []
+  for (const name of definition.tools) {
+    if (name === 'spawn' && !options.canSpawn) continue
+    if (name === 'job_update' && !options.isJob) continue
+    if (name === 'bash') {
+      if (definition.bash === 'none') continue
+      tools.push(definition.bash === 'guarded' ? GUARDED_BASH_TOOL : BASH_TOOL)
+      continue
+    }
+    const tool = TOOLS[name]
+    if (tool !== undefined) tools.push(tool)
+  }
+  return tools
+}
+
+function environment(root: string): PromptEnvironment {
+  return { root, platform: process.platform, shell: shellName(), today: new Date().toISOString().slice(0, 10) }
+}
+
 // No endpoint and no model are baked in: both come from the settings the user
 // saved, and an incomplete configuration is an error the setup screen handles,
 // never a silent default (plan §11).
@@ -109,6 +179,44 @@ async function sessionFor(sender: WebContents, sessionId: string): Promise<Sessi
     })
   }
 
+  const role = (await sessionRole(sessionId)) ?? 'builder'
+  const systemPrompt = agentPrompt(role, environment(root), await roleContext(role, root))
+  const tools = toolsFor(role, { canSpawn: true, isJob: false })
+  // A subagent is held to the parent's boundary, and to the same broker: an
+  // "allow for this session" the user already gave covers the work they asked
+  // for, whoever ends up doing it.
+  const access = promptingGate({ root, sessionId, broker: brokerFor(sender) })
+
+  // A clone is built from the parent's live transcript, and the parent does not
+  // exist until the call below; the holder is what ties the two together.
+  const parent: { session?: Session } = {}
+
+  const spent = await sessionUsage(sessionId)
+
+  const setup = async (request: { role: AgentRole; mode: string }, jobId: string | null): Promise<SubagentSetup> => {
+    const isJob = jobId !== null
+    if (request.mode === 'clone') {
+      // A clone is the parent, one message later: the same prompt, the same
+      // tool list and the same history, so the provider's cache answers the
+      // whole prefix. "The same tool list" is literal — the tool definitions
+      // sit in front of the messages, so dropping one would invalidate exactly
+      // the bytes the mode exists to reuse. `spawn` therefore stays in the
+      // list and refuses at the call, and a background clone has no
+      // `job_update`: it reports once, at the end.
+      return {
+        systemPrompt,
+        tools,
+        history: parent.session?.transcript ?? [],
+        ...(config.effort === undefined ? {} : { effort: config.effort }),
+      }
+    }
+    return {
+      systemPrompt: agentPrompt(request.role, environment(root), await roleContext(request.role, root)),
+      tools: toolsFor(request.role, { canSpawn: false, isJob }),
+      effort: AGENTS[request.role].defaultEffort,
+    }
+  }
+
   const session = new Session(
     {
       sessionId,
@@ -118,20 +226,27 @@ async function sessionFor(sender: WebContents, sessionId: string): Promise<Sessi
       cwd: root,
       model: config.model,
       effort: config.effort,
-      systemPrompt: buildSystemPrompt({
-        root,
-        platform: process.platform,
-        shell: shellName(),
-        today: new Date().toISOString().slice(0, 10),
-      }),
+      systemPrompt,
       maxToolRounds: MAX_TOOL_ROUNDS,
-      access: promptingGate({ root, sessionId, broker: brokerFor(sender) }),
+      access,
       history: await loadTranscript(sessionId),
+      ...(spent === null ? {} : { usage: spent }),
+      spawn: createSpawnHost({
+        sessionId,
+        cwd: root,
+        model: config.model,
+        provider,
+        access,
+        jobs: jobsFor(sender),
+        maxToolRounds: MAX_TOOL_ROUNDS,
+        setup,
+      }),
     },
     provider,
-    [BASH_TOOL, READ_TOOL, WRITE_TOOL, LOG_IMPROVEMENT_TOOL],
+    tools,
     bus,
   )
+  parent.session = session
   sessions.set(sessionId, session)
   return session
 }
@@ -141,6 +256,16 @@ app.whenReady().then(() => {
   serveRenderer()
 
   ipcMain.handle(IPC_CHANNELS.ping, () => ({ ok: true, version: pkg.version }))
+
+  // The only way out of the window. `setWindowOpenHandler` denies everything and
+  // `will-navigate` is blocked, so a link is handed to the OS browser instead —
+  // and only ever an http(s) one, since `shell.openExternal` would otherwise
+  // launch whatever a `file:` or a custom scheme is registered to.
+  ipcMain.handle(IPC_CHANNELS.openExternal, async (_event: IpcMainInvokeEvent, url: string): Promise<void> => {
+    const target = new URL(url)
+    if (target.protocol !== 'https:' && target.protocol !== 'http:') throw new Error(`refusing to open ${target.protocol} link`)
+    await shell.openExternal(target.toString())
+  })
 
   ipcMain.handle(IPC_CHANNELS.configGet, (): Promise<ConfigStatus> => configStatus())
 
@@ -203,6 +328,27 @@ app.whenReady().then(() => {
     return workspaceStatus()
   })
 
+  // Switching agent keeps the transcript and retires the live session: its
+  // prompt and its tool list both belong to the role it was built with.
+  ipcMain.handle(IPC_CHANNELS.sessionSetRole, async (_event: IpcMainInvokeEvent, req: { sessionId: string; role: AgentRole }): Promise<SessionView> => {
+    if (!isAgentRole(req.role)) throw new Error(`unknown agent: ${String(req.role)}`)
+    sessions.delete(req.sessionId)
+    return setSessionRole(req.sessionId, req.role)
+  })
+
+  ipcMain.handle(
+    IPC_CHANNELS.agentsList,
+    (): AgentSummary[] =>
+      AGENT_ROLES.map(role => ({
+        role,
+        name: AGENTS[role].name,
+        purpose: AGENTS[role].purpose,
+        defaultEffort: AGENTS[role].defaultEffort,
+      })),
+  )
+
+  ipcMain.handle(IPC_CHANNELS.jobsList, (event: IpcMainInvokeEvent): JobView[] => jobsFor(event.sender).list())
+
   ipcMain.handle(IPC_CHANNELS.permissionRespond, (event: IpcMainInvokeEvent, req: { id: string; decision: PermissionDecision }) => {
     brokerFor(event.sender).resolve(req.id, req.decision)
   })
@@ -221,7 +367,7 @@ app.whenReady().then(() => {
     // answer is not a message, and a crash mid-turn should leave the session
     // exactly as it was before the message was sent.
     await saveTranscript(req.sessionId, session.transcript)
-    const updated = await noteTurn(req.sessionId, req.text)
+    const updated = await noteTurn(req.sessionId, req.text, usage)
 
     // One line per completed turn, so `nh usage` has something to read. A log
     // that cannot be written is worth a warning, never a failed turn.
