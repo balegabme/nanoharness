@@ -37,7 +37,6 @@ export interface AgentSummary {
   role: AgentRole
   name: string
   purpose: string
-  defaultEffort: Effort
 }
 
 export interface SessionSendRequest {

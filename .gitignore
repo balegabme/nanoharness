@@ -154,3 +154,6 @@ release/
 /skills/
 /.claude/
 /devlog/
+
+# graphify: derived state, rebuilt from the sources it was built from
+graphify-out/

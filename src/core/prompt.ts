@@ -50,6 +50,7 @@ export function buildSystemPrompt(env: PromptEnvironment): string {
     '- Every tool is scoped to the workspace. A path outside it stops the turn and asks the user, so do not reach outside unless the task needs it, and say why when you do.',
     '- Prefer paths relative to the workspace root.',
     '- Do the task that was asked. Do not explore the machine, install anything, or refactor code nobody mentioned.',
+    '- If the request leaves something open that would change what you do, ask. Do not invent work to fill the gap.',
     '- Read a file before you edit it. Check a command\'s output before acting on it.',
   )
 

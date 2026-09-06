@@ -6,7 +6,7 @@ import { AGENTS, agentPrompt } from './agents.js'
 import { EventBus } from './event-bus.js'
 import { JobRegistry } from './jobs.js'
 import { Session } from './session.js'
-import { createSpawnHost } from './spawn.js'
+import { cloneHistory, createSpawnHost } from './spawn.js'
 import { workspaceGate } from './scope.js'
 import { emptyUsage } from './types.js'
 import { BASH_TOOL, GUARDED_BASH_TOOL } from '../tools/bash.js'
@@ -27,6 +27,8 @@ import type { AppEvent, ChatChunk, ChatMessage } from './types.js'
  */
 
 const PARENT_PROMPT = 'You are the parent.'
+/** The session's own effort setting, which every subagent it starts inherits. */
+const PARENT_EFFORT = 'low'
 
 /**
  * Answers from a script keyed by the conversation's last user message: the
@@ -95,9 +97,11 @@ function harness(script: Record<string, ChatChunk[][]>, cwd: string): Harness {
       model: 'test-model',
       systemPrompt: PARENT_PROMPT,
       maxToolRounds: 4,
+      effort: PARENT_EFFORT,
       access,
       spawn: createSpawnHost({
         sessionId: 'parent',
+        role: 'builder',
         cwd,
         model: 'test-model',
         provider,
@@ -106,14 +110,19 @@ function harness(script: Record<string, ChatChunk[][]>, cwd: string): Harness {
         maxToolRounds: 4,
         setup: async (request, jobId) => {
           if (request.mode === 'clone') {
-            return { systemPrompt: PARENT_PROMPT, tools: PARENT_TOOLS, history: parent.session?.transcript ?? [] }
+            return {
+              systemPrompt: PARENT_PROMPT,
+              tools: PARENT_TOOLS,
+              history: cloneHistory(parent.session?.transcript ?? []),
+              effort: PARENT_EFFORT,
+            }
           }
           const shell = AGENTS[request.role].bash === 'guarded' ? GUARDED_BASH_TOOL : BASH_TOOL
           const writes = AGENTS[request.role].tools.includes('write') ? [WRITE_TOOL] : []
           return {
             systemPrompt: agentPrompt(request.role, env),
             tools: [shell, READ_TOOL, ...writes, ...(jobId === null ? [] : [JOB_UPDATE_TOOL])],
-            effort: AGENTS[request.role].defaultEffort,
+            effort: PARENT_EFFORT,
           }
         },
       }),
@@ -155,7 +164,9 @@ describe('spawn', () => {
       expect(child?.messages).toHaveLength(2)
       // The planner cannot write, and the tool list is where that is enforced.
       expect(child?.tools.map(tool => tool.name)).toEqual(['bash', 'read'])
-      expect(child?.effort).toBe(AGENTS.planner.defaultEffort)
+      // Effort is the session's setting, not the role's: the planner thinks as
+      // hard as the person at the keyboard asked this session to think.
+      expect(child?.effort).toBe(PARENT_EFFORT)
 
       const answer = session.transcript.find(message => message.role === 'tool')
       expect(answer?.content).toContain('start with the schema')
@@ -188,6 +199,42 @@ describe('spawn', () => {
       expect(child?.messages[0]?.content).toBe(first?.messages[0]?.content)
       expect(child?.tools).toEqual(first?.tools)
       expect(child?.messages.some(message => message.role === 'user' && message.content === 'rename the helper everywhere')).toBe(true)
+      // The parent is inside the `spawn` call while the clone runs, so its last
+      // message is an assistant turn whose tool call has no result yet. Handing
+      // that to a provider is a 400 ("an assistant message with 'tool_calls'
+      // must be followed by tool messages"), so the in-flight turn is cut.
+      const answers = new Set((child?.messages ?? []).flatMap(m => (m.role === 'tool' ? [m.toolCallId] : [])))
+      const dangling = (child?.messages ?? []).flatMap(m => (m.role === 'assistant' ? (m.toolCalls ?? []) : [])).filter(c => !answers.has(c.id))
+      expect(dangling).toEqual([])
+    } finally {
+      await rm(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('runs a clone asked for another role as that role instead, rather than relabelling itself', async () => {
+    const cwd = await workspace()
+    try {
+      const { session, provider } = harness(
+        {
+          'what breaks if we drop the cache?': [
+            call('spawn', { role: 'planner', mode: 'clone', task: 'find what depends on the cache' }),
+            say('the planner found three callers'),
+          ],
+          'find what depends on the cache': [say('three callers, all in core')],
+        },
+        cwd,
+      )
+
+      await session.run('what breaks if we drop the cache?')
+
+      // A clone is the parent's prompt and the parent's tools, so a clone "as a
+      // planner" would be a builder with a planner's name on the job. The mode
+      // gives way to the role, and the cost line says which one actually ran.
+      const child = provider.calls[1]
+      expect(child?.messages[0]?.content).toContain('You are the planner')
+      expect(child?.tools.map(tool => tool.name)).toEqual(['bash', 'read'])
+      const answer = session.transcript.find(message => message.role === 'tool')
+      expect(answer?.content).toContain('[planner/distinct:')
     } finally {
       await rm(cwd, { recursive: true, force: true })
     }

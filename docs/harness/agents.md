@@ -4,7 +4,7 @@ Three roles, one at a time in the window, and a way to hand a piece of work to
 a second agent without leaving the conversation. Plan §5.
 
 Files:
-- src/core/agents.ts — the role registry: tools, shell, default effort, brief
+- src/core/agents.ts — the role registry: tools, shell, brief
 - src/core/spawn.ts — the spawn host: how a subagent is built and run
 - src/core/jobs.ts — the job registry: what a background subagent reports through
 - src/tools/spawn.ts — the `spawn` tool the model calls
@@ -12,24 +12,26 @@ Files:
 
 ## The three roles
 
-A role is not a personality. It is the set of tools the agent gets, how hard it
-thinks by default, and the paragraph of context worth paying for on every
-request.
+A role is not a personality. It is the set of tools the agent gets and the
+paragraph of context worth paying for on every request.
 
-| role | may write | shell | default effort | extra context |
-|---|---|---|---|---|
-| Builder | yes | full | medium | none |
-| Planner | no | guarded | high | none |
-| Harness editor | yes | full | low | doc index and the ledger |
+| role | may write | shell | extra context |
+|---|---|---|---|
+| Builder | yes | full | none |
+| Planner | no | guarded | none |
+| Harness editor | yes | full | doc index and the ledger |
 
-The planner is the one role that cannot change a file, and that is why it is
-also the one worth paying thinking tokens for: its entire output is reasoning,
-so nothing is lost by making it reason harder. The harness editor is the other
-way round — it works from a ledger entry that already says what to do — but it
-is the only role that gets extra context, because "fix the thing" only becomes
-an edit in the right file if the agent knows which file that is. It is read
-from the workspace's own `doc-map.md`, so it is empty when the open folder is
-not NanoHarness; a stale index would be worse than none.
+The planner is the one role that cannot change a file. The harness editor is
+the only role that gets extra context, because "fix the thing" only becomes an
+edit in the right file if the agent knows which file that is. It is read from
+the workspace's own `doc-map.md`, so it is empty when the open folder is not
+NanoHarness; a stale index would be worse than none.
+
+Effort is not in that table, and used to be. Each role carried a default — the
+planner thought hard, the harness editor barely at all — and switching agent
+moved the effort chip under the user's hand. Two settings for one decision, and
+the visible one was not the one in charge. Now every agent, in the window or
+spawned, runs at the session's own effort.
 
 The registry is data rather than three subclasses. Three separate consumers —
 the session builder in `src/main/index.ts`, the `spawn` tool's JSON schema, and
@@ -61,8 +63,8 @@ Three ways to hand work to another agent, cheapest last:
 
 | mode | prompt | history | when it is worth it |
 |---|---|---|---|
-| `distinct` | the role's own | none | the isolation is the point |
-| `clone` | the parent's, byte for byte | the parent's | almost always |
+| `distinct` | the named role's own | none | the work needs another agent, or must not see this conversation |
+| `clone` | the parent's, byte for byte | the parent's | more of the work already in progress |
 | staying in this loop | — | — | sequential work |
 
 Staying in the loop is not a mode in the schema, because it is what happens
@@ -77,6 +79,21 @@ parent's exact tool array rather than a filtered one: dropping `spawn` from a
 clone's list would be tidier and would invalidate precisely the bytes the mode
 exists to reuse. `spawn` travels with the clone and refuses when it is called,
 which costs nothing unless the model tries it.
+
+A clone is the parent's prompt and the parent's tool list, so a clone is the
+parent's *role* — there is nothing else it could be. Asking to clone as another
+role used to be accepted and quietly ignored: the job appeared in the strip
+labelled `planner`, and a builder ran it. The host now resolves that pair
+itself, running the named role distinct and reporting the mode it actually
+used, so the label and the agent agree.
+
+The clone's history stops one message short of the parent's. The `spawn` call
+is the last thing in the parent's transcript and has no result yet — the parent
+is inside it — and a conversation that ends on an unanswered tool call is one a
+provider refuses outright (OpenAI: *an assistant message with `tool_calls` must
+be followed by tool messages*). `cloneHistory` cuts the in-flight turn instead
+of inventing a result for it, which leaves the clone starting from the user's
+own last message.
 
 Nothing nests. A subagent is built without a spawn host, so `spawn` inside one
 answers *a subagent cannot summon another one*. One level of delegation is
@@ -112,7 +129,7 @@ running in the list by a thrown error.
 
 ## What a role does not decide
 
-Model and provider. Both come from the active configuration, and a subagent
-runs on the same model as its parent — a role that silently switched models
-would make the cost of a turn unpredictable in the one place the user is not
-looking.
+Model, provider and effort. All three come from the active configuration, and a
+subagent runs on the same settings as its parent — a role that silently
+switched any of them would make the cost of a turn unpredictable in the one
+place the user is not looking.

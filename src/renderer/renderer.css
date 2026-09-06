@@ -1289,10 +1289,15 @@ details.block pre + pre {
 }
 
 /* Name dim, number bright: the numbers are what gets read, and the names are
-   only there to say which number is which. */
+   only there to say which number is which.
+
+   Centred, not baseline-aligned: `align-items: baseline` lines the number up
+   with its name and then parks the pair at the top of the 22px pill, which is
+   what left the text sitting high in its own box. Both parts carry the same
+   line-height so centring the row centres the text too. */
 .metric {
   display: inline-flex;
-  align-items: baseline;
+  align-items: center;
   gap: 4px;
   height: 22px;
   padding: 0 7px;
@@ -1300,13 +1305,14 @@ details.block pre + pre {
   background: var(--nh-bg-layer-1);
   color: var(--nh-label-caption);
   font-size: 10.5px;
+  line-height: 1;
   letter-spacing: 0.04em;
   white-space: nowrap;
 }
 
 .metric b {
   color: var(--nh-label-secondary);
-  font: 500 11.5px var(--nh-font-sans);
+  font: 500 11.5px/1 var(--nh-font-sans);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1425,12 +1431,17 @@ button {
   color: var(--nh-label-primary);
 }
 
+/* The delete button in a confirm sheet is the button that sheet exists for, so
+   it is filled like a primary rather than drawn as red text on nothing — red
+   text next to an outlined Cancel read as the weaker of the two, which is the
+   opposite of what it does. Same red as the stop button: same meaning. */
 .btn.danger {
-  color: var(--nh-state-error);
+  background: var(--nh-red-500);
+  color: #fff;
 }
 
 .btn.danger:hover:enabled {
-  background: var(--nh-hover-danger);
+  background: var(--nh-red-600);
 }
 
 .btn:disabled {
@@ -1921,6 +1932,13 @@ button.chip:hover:enabled,
   gap: var(--s2);
   flex-wrap: wrap;
   margin-top: var(--s3);
+}
+
+/* A yes/no sheet answers on the right, with the destructive one last: the
+   pointer travelling in from the sheet lands on Cancel, not on Delete. */
+.setup-actions.dialog-actions {
+  justify-content: flex-end;
+  margin-top: var(--s4);
 }
 
 .setup-note {

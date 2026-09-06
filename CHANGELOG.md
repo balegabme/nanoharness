@@ -197,3 +197,26 @@ Format based on Keep a Changelog; versioning follows SemVer.
   collapsed. When it tightens, `alerts` drops out first and the scope badge
   second — both repeat what the settings pane says — so the three selects keep
   their full labels instead of the model id collapsing to two characters.
+- Every agent thinks at the session's own effort. Each role used to carry a
+  default, and switching agent moved the effort chip under the user's hand —
+  two settings for one decision, with the visible one not in charge.
+- A spawn asking to clone into another role runs that role distinct instead. A
+  clone is the parent's prompt and the parent's tools, so a clone "as a
+  planner" was a builder with a planner's name on the job; the strip and the
+  cost line now report the mode that actually ran.
+- The destructive button in a confirm sheet is filled in the same red as the
+  stop button, and the sheet answers on the right with Cancel first. Red text
+  on nothing, beside an outlined Cancel, drew the weaker of the two controls as
+  the one the sheet exists for. The permission sheet's **Deny** refuses a
+  request rather than destroying anything, so it is an ordinary outlined button.
+
+### Fixed
+- A clone no longer inherits the parent's unanswered `spawn` call. The parent
+  is inside that call while the clone starts, so its transcript ended on an
+  assistant message with a tool call nothing had replied to, and every clone —
+  background job or not — died on `provider 400: an assistant message with
+  'tool_calls' must be followed by tool messages`. The in-flight turn is cut
+  from the clone's history rather than patched with an invented result.
+- The counters in the header sit in the middle of their pills. They were
+  baseline-aligned inside a fixed-height chip, which lines the number up with
+  its label and then parks the pair against the top edge.

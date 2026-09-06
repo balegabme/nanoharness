@@ -11,7 +11,7 @@ import { JOB_UPDATE_TOOL } from '../tools/job-update.js'
 import { AGENTS, AGENT_ROLES, agentPrompt, isAgentRole, roleContext } from '../core/agents.js'
 import { EventBus } from '../core/event-bus.js'
 import { JobRegistry } from '../core/jobs.js'
-import { createSpawnHost } from '../core/spawn.js'
+import { cloneHistory, createSpawnHost } from '../core/spawn.js'
 import { Session } from '../core/session.js'
 import { appendUsage } from '../core/usage-log.js'
 import { IPC_CHANNELS } from '../ipc/contract.js'
@@ -206,14 +206,17 @@ async function sessionFor(sender: WebContents, sessionId: string): Promise<Sessi
       return {
         systemPrompt,
         tools,
-        history: parent.session?.transcript ?? [],
-        ...(config.effort === undefined ? {} : { effort: config.effort }),
+        history: cloneHistory(parent.session?.transcript ?? []),
+        effort: config.effort,
       }
     }
+    // Every agent thinks as hard as the user asked this session to think. A
+    // per-role default would change the price of a turn from a chip the user
+    // can see to a table only the code knows.
     return {
       systemPrompt: agentPrompt(request.role, environment(root), await roleContext(request.role, root)),
       tools: toolsFor(request.role, { canSpawn: false, isJob }),
-      effort: AGENTS[request.role].defaultEffort,
+      effort: config.effort,
     }
   }
 
@@ -233,6 +236,7 @@ async function sessionFor(sender: WebContents, sessionId: string): Promise<Sessi
       ...(spent === null ? {} : { usage: spent }),
       spawn: createSpawnHost({
         sessionId,
+        role,
         cwd: root,
         model: config.model,
         provider,
@@ -343,7 +347,6 @@ app.whenReady().then(() => {
         role,
         name: AGENTS[role].name,
         purpose: AGENTS[role].purpose,
-        defaultEffort: AGENTS[role].defaultEffort,
       })),
   )
 

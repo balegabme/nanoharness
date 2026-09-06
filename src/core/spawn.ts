@@ -40,6 +40,8 @@ export interface SpawnRequest {
 
 export interface SpawnResult {
   summary: string
+  /** The mode it actually ran in, which is not always the one asked for. */
+  mode: SpawnMode
   usage: TurnUsage
 }
 
@@ -61,6 +63,8 @@ export interface SubagentSetup {
 export interface SpawnDeps {
   /** The session whose turn is spawning. Jobs are listed under it. */
   sessionId: string
+  /** The parent's own role, which is the only role a clone can have. */
+  role: AgentRole
   cwd: string
   model: string
   provider: ChatProvider
@@ -79,6 +83,18 @@ export interface SpawnDeps {
 const SUMMARY_CAP = 4000
 
 export function createSpawnHost(deps: SpawnDeps): SpawnHost {
+  /**
+   * A clone is the parent one message later: the parent's prompt, the parent's
+   * tool list. Cloning "as a planner" would therefore relabel the job and
+   * change nothing the agent can actually do — the clone would still be the
+   * parent's role, with the parent's tools. Asking for another role is asking
+   * for a distinct agent, so that is what it gets, under its own name.
+   */
+  function resolve(request: SpawnRequest): SpawnRequest {
+    if (request.mode !== 'clone' || request.role === deps.role) return request
+    return { ...request, mode: 'distinct' }
+  }
+
   async function execute(request: SpawnRequest, jobId: string | null): Promise<SpawnResult> {
     const setup = await deps.setup(request, jobId)
     // A subagent's own stream is not the parent's conversation: it gets a bus
@@ -105,13 +121,14 @@ export function createSpawnHost(deps: SpawnDeps): SpawnHost {
     )
 
     const usage = await child.run(request.task)
-    return { summary: lastAnswer(child.transcript), usage }
+    return { summary: lastAnswer(child.transcript), mode: request.mode, usage }
   }
 
   return {
-    run: request => execute(request, null),
+    run: request => execute(resolve(request), null),
 
-    background(request) {
+    background(raw) {
+      const request = resolve(raw)
       const job = deps.jobs.start({ sessionId: deps.sessionId, role: request.role, mode: request.mode, task: request.task })
       // Deliberately not awaited: the point of a background job is that the
       // parent's turn does not block on it. Every path ends in `finish`, so a
@@ -124,6 +141,27 @@ export function createSpawnHost(deps: SpawnDeps): SpawnHost {
       return job
     },
   }
+}
+
+/**
+ * The parent's history as a clone may see it: everything before the turn that
+ * is still in flight.
+ *
+ * The spawning assistant message is the last thing in the parent's transcript,
+ * and its tool calls have no results yet — the parent is inside one of them.
+ * A conversation that ends on an unanswered tool call is not a conversation a
+ * provider will take: OpenAI rejects it outright ("an assistant message with
+ * 'tool_calls' must be followed by tool messages"). So the in-flight turn is
+ * cut rather than patched with a fake result, which leaves the clone starting
+ * from the user's own last message — exactly what it is being asked about.
+ */
+export function cloneHistory(transcript: readonly ChatMessage[]): ChatMessage[] {
+  const answered = new Set<string>()
+  for (const message of transcript) if (message.role === 'tool') answered.add(message.toolCallId)
+  const cut = transcript.findIndex(
+    message => message.role === 'assistant' && (message.toolCalls ?? []).some(call => !answered.has(call.id)),
+  )
+  return [...(cut < 0 ? transcript : transcript.slice(0, cut))]
 }
 
 /** The subagent's last word, which is the whole of what the parent gets back. */

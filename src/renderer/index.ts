@@ -175,9 +175,8 @@ function renderAgents(): void {
 
 /**
  * Switching agent rebuilds the session's prompt and tool list on the next turn.
- * The effort chip follows the new role's default, because that default is the
- * whole reason a role has one — and it is a chip the user can move straight
- * back.
+ * The effort chip is left alone: how hard to think is the user's setting, and
+ * a role that moved it would overwrite an answer they had already given.
  */
 async function switchAgent(): Promise<void> {
   const sessionId = activeSessionId
@@ -187,11 +186,6 @@ async function switchAgent(): Promise<void> {
     await nh.setSessionRole(sessionId, role)
     setStatus(await nh.workspaces())
     select(sessionId)
-    const agent = agents.find(a => a.role === role)
-    if (agent !== undefined && effortSelect.value !== agent.defaultEffort) {
-      effortSelect.value = agent.defaultEffort
-      await switchActive()
-    }
     renderShell()
   } catch (err) {
     errorBlock(message(err))

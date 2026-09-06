@@ -38,9 +38,9 @@ export const SPAWN_TOOL = defineTool<SpawnArgs>({
       type: 'object',
       properties: {
         role: { type: 'string', enum: [...AGENT_ROLES], description: 'which agent does the work' },
-        mode: { type: 'string', enum: [...SPAWN_MODES], description: 'clone (default, cheap) or distinct (isolated)' },
+        mode: { type: 'string', enum: [...SPAWN_MODES], description: 'clone (default, cheap, you again) or distinct (the named role, from scratch)' },
         task: { type: 'string', description: 'the whole job, stated so it can be done without asking you anything' },
-        background: { type: 'boolean', description: 'do not wait for it' },
+        background: { type: 'boolean', description: 'do not wait for it; this is what "as a job" means' },
       },
       required: ['role', 'task'],
       additionalProperties: false,
@@ -55,12 +55,12 @@ export const SPAWN_TOOL = defineTool<SpawnArgs>({
 
     if (background) {
       const job = spawn.background({ role, mode, task })
-      const note = `started ${role} as background job ${job.id}. It reports in the window; do not wait for it.`
+      const note = `started ${job.role}/${job.mode} as background job ${job.id}. It reports in the window; do not wait for it.`
       return { ok: true, summary: note, content: note }
     }
 
     const result = await spawn.run({ role, mode, task })
-    const cost = `[${role}/${mode}: in ${result.usage.input}, out ${result.usage.output}, cached ${result.usage.cacheRead}]`
+    const cost = `[${role}/${result.mode}: in ${result.usage.input}, out ${result.usage.output}, cached ${result.usage.cacheRead}]`
     return { ok: true, summary: result.summary, content: `${result.summary}\n\n${cost}` }
   },
 })

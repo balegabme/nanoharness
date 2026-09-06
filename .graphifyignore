@@ -1,0 +1,10 @@
+# Exclude config & tooling files from graph
+pnpm-lock.yaml
+pnpm-workspace.yaml
+.claude/
+.github/
+tsconfig*.json
+eslint.config.js
+out/
+node_modules/
+docs/assets/

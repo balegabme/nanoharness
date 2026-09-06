@@ -170,8 +170,9 @@ A bare select sizes itself to its widest option, so one long model id used to
 push the whole row along and out from under the send button; with the label
 under our control the model chip is the one that gives way when the window
 narrows, and the rest keep their size. The agent chip switches the session's role
-and moves effort to that role's default, because the two travel together — a
-planner at `low` is a planner with its point removed (see `agents.md`).
+and leaves effort alone: how hard to think is an answer the user already gave,
+and a role that moved the chip under their hand was overwriting it (see
+`agents.md`).
 
 Still to come with the rest of step 5: the command palette, keyboard map,
 snippet picker, and the diff view. Plan §13 has the full list.
@@ -179,10 +180,17 @@ snippet picker, and the diff view. Plan §13 has the full list.
 ## Dialogs, pickers and the about pane
 
 Nothing the app opens is drawn by the browser. `confirm()` is replaced by a
-sheet in the app's own vocabulary (`confirm.ts`), Esc and a backdrop click both
-answer no, and the destructive button is the one that carries the danger colour.
-A native dialog in the middle of a themed window is the tell that a screen was
-assembled rather than designed, and it ignores the theme besides.
+sheet in the app's own vocabulary (`confirm.ts`), and Esc and a backdrop click
+both answer no. A native dialog in the middle of a themed window is the tell
+that a screen was assembled rather than designed, and it ignores the theme
+besides.
+
+The sheet answers on the right, Cancel first and the destructive button last,
+and that button is filled in the same red as the stop button. Red text on
+nothing beside an outlined Cancel drew the weaker of the two controls as the
+one the sheet exists for. `danger` is now kept for buttons that actually
+destroy something: the permission sheet's **Deny** refuses a request rather
+than deleting anything, so it is an ordinary outlined button.
 
 The `<select>` popups are ours too, through `appearance: base-select`: the list
 is a card on the app's surfaces, borders and shadow, with the accent on the

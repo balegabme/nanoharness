@@ -23,7 +23,9 @@ that does not exist.
 The rules that follow are short on purpose: every token is paid for on every
 request of every turn. Stay in the workspace and say why when you cannot. Prefer
 relative paths. Do the task that was asked, and do not explore the machine.
-Read before editing. Do not retry a failed call unchanged.
+Ask about a gap in the request rather than inventing work to fill it — an agent
+handed "spawn three subagents, one of them a weather job" will otherwise make
+the other two up. Read before editing. Do not retry a failed call unchanged.
 
 ## Stopping a turn
 
