@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "tavily": {
+      "command": "npx",
+      "args": ["-y", "tavily-mcp@latest"],
+      "envPassthrough": ["TAVILY_API_KEY"]
+    },
+    "internal-docs": {
+      "url": "https://mcp.example.com/mcp",
+      "tokenEnv": "EXAMPLE_MCP_TOKEN",
+      "enabled": false
+    }
+  }
+}

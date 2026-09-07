@@ -2,6 +2,7 @@
 // doc: docs/harness/cli.md
 import { createRequire } from 'node:module'
 import { docCheck } from './doc-check.js'
+import { runMcp } from './mcp.js'
 import { formatSummary, summarize } from './usage.js'
 import { readUsage, usageLogPath } from '../core/usage-log.js'
 
@@ -12,6 +13,7 @@ const HELP = `nh ${pkg.version}
 
   nh doc-check [dir]   verify the doc map: every source file linked, every doc backed
   nh usage [--json]    dump recorded token usage and cache hit rate
+  nh mcp <command>     list, add, remove or check MCP servers (nh mcp --help)
   nh --version         print the version
 `
 
@@ -23,6 +25,13 @@ async function main(argv: string[]): Promise<number> {
       return runDocCheck(rest[0] ?? process.cwd())
     case 'usage':
       return runUsage(rest.includes('--json'))
+    case 'mcp':
+      return runMcp(rest)
+    // `nh help mcp` is what gets typed when `nh mcp --help` has not occurred to
+    // the reader yet. Both work: a help command that has to be spelled the one
+    // right way is not help.
+    case 'help':
+      return runHelp(rest[0])
     case '--version':
     case '-v':
       process.stdout.write(`${pkg.version}\n`)
@@ -36,6 +45,12 @@ async function main(argv: string[]): Promise<number> {
       process.stderr.write(`nh: unknown command "${command}"\n${HELP}`)
       return 2
   }
+}
+
+async function runHelp(topic: string | undefined): Promise<number> {
+  if (topic === 'mcp') return runMcp(['--help'])
+  process.stdout.write(HELP)
+  return 0
 }
 
 async function runDocCheck(root: string): Promise<number> {
