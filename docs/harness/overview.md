@@ -36,10 +36,28 @@ ledger uses the same test — `isHarnessRepo(cwd)` decides between the repo's
 
 `Session.run(userText)` emits `session.started`, appends the user message,
 streams a provider turn, emits `usage`, and if the model called tools it
-executes them and repeats until no tool calls remain (bounded by
-`maxToolRounds`). The assistant message (with its tool calls) is always kept
-in history so later turns see it. Provider or harness failures emit
+executes them and repeats until no tool calls remain. The assistant message
+(with its tool calls) is kept in history so later turns see it, unless the
+round produced nothing at all — no text, no tool call, no thinking — which is
+not a message and is not written down. Provider or harness failures emit
 `session.error` and rethrow.
+
+There is no round budget. A cap is the harness deciding that a long task is a
+bug, and the failure it produces is the worst one available: a turn that ends
+mid-investigation with no answer and nothing on screen to say why. What is
+caught instead is a model going in circles, which is a different thing and is
+detectable — the *same* tool with the *same* arguments, over and over. The
+third identical call is not run (the answer is the one it already has) and the
+model is told so; if it keeps asking, the turn ends with a note that says
+exactly that happened. Five failed calls in a row appends a line to the result
+saying so, which is a nudge and not a stop: debugging is mostly failures.
+
+Every way a turn can end that is not an answer now says so in the window and in
+the session file. `Session.note(text)` emits `session.note` and records a
+`SessionNote`; a stop and an error record one without an event, because the
+window is already being told about those another way. `notes` is what gets
+persisted alongside the transcript, and `restoreNotes()` puts them back when the
+session is rebuilt — see `sessions.md`.
 
 ## Usage accounting
 

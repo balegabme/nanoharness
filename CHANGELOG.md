@@ -6,6 +6,45 @@ Format based on Keep a Changelog; versioning follows SemVer.
 ## [Unreleased]
 
 ### Added
+- `nh mcp list | add | remove | check` configures MCP servers from the terminal:
+  the entry is written through the same parser a session reads it with, and
+  `check` proves a server works by connecting to it, spawning it, doing the
+  handshake and reading its catalog through the client a session uses.
+- The harness editor's system prompt now names the harness itself — where its
+  source is, where the doc map is, and the exact command that runs its CLI,
+  including `nh mcp add` — and it is the only role told. Builder and planner
+  get none of it: an agent whose prompt never names the harness cannot wander
+  into its source, so a question about the harness has exactly one route.
+- Builder and planner hand anything about the harness — a change, a config
+  edit, or a question about how it behaves — to a harness-editor subagent,
+  unless the answer is already in the conversation. The subagent reports the
+  files it touched and the diff, and says that a change reaches the running app
+  only after a rebuild and a restart.
+- A session file now stores the notes beside the messages, so re-opening a
+  session shows what the window showed: an error, a stop, a turn that ended
+  without an answer, a refused repeat, a background job starting and finishing.
+  Each note is replayed between the two blocks it appeared between.
+- MCP client (step 4): stdio and Streamable HTTP transports, the spec's
+  handshake and version negotiation, a tool catalog read to the end of its
+  cursor when a session opens, per-request deadlines with advisory cancellation,
+  and JSON Schema narrowed to what a provider accepts. Server tools join a
+  session's tool list as `mcp__<server>__<tool>`.
+- MCP servers are configured in two files — `~/.nanoharness/mcp.json` for every
+  workspace and `.nanoharness/mcp.json` for one — where a project entry replaces
+  the global one by name and `"enabled": false` switches it off. Both name a
+  token's environment variable rather than holding the token, and no server is
+  configured by default.
+- The system prompt tells the agent which MCP servers the session connected to,
+  where the two config files are, and what an entry looks like, so the one role
+  that can write but not spawn — the harness editor — can add a server when the
+  work is handed to it. It also says outright that an unconfigured thing is
+  unconfigured rather than forbidden — a model with nothing in the prompt was
+  inventing a policy against MCP instead.
+- Skills: a workspace's `.nanoharness/skills/*/SKILL.md` files are listed in the
+  system prompt one line each - name, description, path - and the agent reads
+  the one it needs. The documents themselves never enter the prompt.
+- `examples/mcp.json` and `examples/skills/release-checklist/` as working
+  copies of both formats.
 - Initial repository scaffold: tooling, CI, OSS files (plan section 18, step 0).
 - Session loop, event bus, typed IPC, OpenAI-compatible streaming provider, and
   the bash, read, and write tools (step 1).
@@ -79,6 +118,17 @@ Format based on Keep a Changelog; versioning follows SemVer.
   running, what it was asked, and its last line.
 
 ### Changed
+- The MCP block in the system prompt now depends on who is reading it. An agent
+  that can spawn is told to hand a config change to a harness-editor; the
+  harness-editor gets the `nh mcp` commands, with the workspace already in them.
+  Both halves used to go to every writing role, and a builder asked to install a
+  server weighed the rule against the command and did the work itself.
+- The tool loop is no longer capped at eight rounds; there is no round budget at
+  all. A cap is the harness deciding a long task is a bug, and it ended turns
+  mid-investigation with nothing on screen to say why. What is caught instead is
+  a model going in circles: the third identical call is refused with an
+  explanation, the sixth ends the turn with a note, and five failed calls in a
+  row appends a line to the result saying so.
 - The window has no File/Edit/View menu bar any more.
 - Thinking is read from every spelling the OpenAI-compatible world uses
   (`reasoning_content` and `reasoning`), so servers that stream it now fill the
@@ -211,6 +261,23 @@ Format based on Keep a Changelog; versioning follows SemVer.
   request rather than destroying anything, so it is an ordinary outlined button.
 
 ### Fixed
+- `nh mcp --help`, `nh mcp add --help`, `nh mcp check -h` and `nh help mcp` all
+  print the help, and a wrong flag prints the message and the help rather than a
+  bare `unknown flag`. The old behaviour cost an agent two extra calls guessing
+  at a syntax it had asked for.
+- Git Bash paths work on Windows. `/c/project/file` — the spelling the shell
+  prints, and the one a model copies out of shell output — resolved to
+  `<drive>:\c\project\file` and came back as a missing file or an
+  out-of-scope refusal naming a path nobody meant. Both spellings now resolve to
+  the same file, and `/usr/bin` is left alone.
+- A turn that ends with no answer says so instead of leaving the flow looking
+  exactly like a finished turn.
+- An assistant message with no text, no tool call and no thinking is not stored:
+  it drew a blank block in the window and is a block some providers refuse to be
+  sent back.
+- The NanoHarness source is readable without a permission prompt when the app
+  runs from a checkout, so a question about the harness does not stop on a
+  prompt for the harness's own files. Writing to it still asks.
 - A clone no longer inherits the parent's unanswered `spawn` call. The parent
   is inside that call while the clone starts, so its transcript ended on an
   assistant message with a tool call nothing had replied to, and every clone —

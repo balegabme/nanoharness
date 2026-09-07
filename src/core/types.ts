@@ -63,12 +63,33 @@ export type AppEvent =
   | { type: 'session.error'; sessionId: string; turn: number; message: string; at: number }
   | { type: 'session.finished'; sessionId: string; turn: number; at: number }
   | { type: 'session.stopped'; sessionId: string; turn: number; at: number }
+  // Something about the run rather than about the conversation: a loop the
+  // harness broke, a turn that ended without an answer, a background job that
+  // reported back. A turn never ends without one of these or an answer.
+  | { type: 'session.note'; sessionId: string; turn: number; text: string; at: number }
   | { type: 'permission.request'; sessionId: string; id: string; intent: 'read' | 'write' | 'run'; paths: string[]; root: string; at: number }
   // A background subagent, which has no stream of its own in the window: these
   // three are everything the user sees of it (plan §5).
   | { type: 'job.started'; job: JobView; at: number }
   | { type: 'job.update'; jobId: string; note: string; at: number }
   | { type: 'job.finished'; job: JobView; at: number }
+
+/**
+ * A line the window showed that is not a message: an error, a stop, a note the
+ * harness wrote about the run. Stored with the transcript, because a re-opened
+ * session that shows only the messages is not what the user saw — a turn the
+ * harness cut short would come back looking like a turn that simply ended.
+ *
+ * `after` is how many messages had been written when it happened, which is what
+ * puts it back in the right place on replay.
+ */
+export interface SessionNote {
+  kind: 'error' | 'stopped' | 'note'
+  text: string
+  turn: number
+  after: number
+  at: number
+}
 
 export type ChatMessage =
   | { role: 'system' | 'user' | 'assistant'; content: string; toolCalls?: ToolCall[]; thinking?: ThinkingBlock[] }

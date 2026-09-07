@@ -19,13 +19,58 @@ paragraph of context worth paying for on every request.
 |---|---|---|---|
 | Builder | yes | full | none |
 | Planner | no | guarded | none |
-| Harness editor | yes | full | doc index and the ledger |
+| Harness editor | yes | full | where the harness is, plus the doc index and the ledger |
 
-The planner is the one role that cannot change a file. The harness editor is
-the only role that gets extra context, because "fix the thing" only becomes an
-edit in the right file if the agent knows which file that is. It is read from
-the workspace's own `doc-map.md`, so it is empty when the open folder is not
-NanoHarness; a stale index would be worse than none.
+The planner is the one role that cannot change a file. The harness editor gets
+the doc index on top, because "fix the thing" only becomes an edit in the right
+file if the agent knows which file that is. The index is read from the harness
+checkout's own `doc-map.md`, so it is empty when the app is running from a
+packaged install with no `docs/` beside it; a stale index would be worse than
+none.
+
+Only the harness editor is told the three facts about the harness itself: the
+folder its source is in, the path of the doc map, and the exact command that
+runs its CLI. Builder and planner are told none of them, and that exclusion is
+what keeps their handoff rule honest — an agent whose prompt never names the
+harness cannot wander into its source, so a question about the harness has
+exactly one route: the subagent. An earlier build told every role the location
+and let each one price delegation for itself; reading one file directly looked
+cheaper than a subagent, and the role went exploring mid-answer. The editor
+does keep the CLI fact, because it is the one that does the configuring: `nh
+mcp add` exists and can be run by the only agent that is ever asked to.
+
+### Harness work goes to a subagent
+
+Builder and planner both carry the same handoff rule, and it has no pricing in
+it. Anything about NanoHarness itself — changing it, configuring it, adding an
+MCP server or a skill, or a question about how it behaves — goes to a
+harness-editor subagent, spawned `distinct`.
+
+A question is answered directly only when the answer is already in the
+conversation. Anything else would mean reading the harness, and the parent's
+prompt does not say where it is — the subagent's does, along with the doc index
+that turns "how does X work" into one file opened instead of a search. The
+subagent also starts small, so it finishes in a couple of rounds where the
+parent would grind through the same reading on top of a long context it is
+paying for on every request.
+
+Writing to the harness is always the subagent's — no exception for the case
+where the parent has figured out the file and the path on its own, and none for
+the case where a single command would do it. That last clause is not
+hypothetical: the MCP block used to hand every writing role the `nh mcp add`
+line, a builder read that against the delegate rule, argued the two out in its
+own thinking and ran the command itself. Now the command only reaches an agent
+that cannot spawn, and the rule only reaches one that can, so there is nothing
+to weigh.
+
+The parent is told what to hand over rather than how to do it: which change,
+which file or scope, and whatever the user gave it quoted verbatim — a URL, a
+key, a command line — because a distinct subagent cannot see the conversation
+it was summoned from. And the subagent is asked to
+report the files it touched and the diff, because its last message is the whole
+of what the parent gets: a claim with no diff behind it is a claim. It also has
+to say that a harness change reaches the running app only after a rebuild and a
+restart, rather than reporting it as live.
 
 Effort is not in that table, and used to be. Each role carried a default — the
 planner thought hard, the harness editor barely at all — and switching agent
@@ -70,6 +115,28 @@ Three ways to hand work to another agent, cheapest last:
 Staying in the loop is not a mode in the schema, because it is what happens
 when nobody calls `spawn`. The tool's description says so outright: splitting
 sequential work across agents costs far more and finishes no sooner.
+
+### Choosing a mode
+
+`clone` is much cheaper, and a tool description that says only that gets one
+answer to every question. So the description names the work each mode is for
+rather than leaving the model to price it:
+
+- **clone** — the delegated piece carries on this conversation. Another pass
+  over the file both agents are looking at; a search whose terms only make
+  sense from what was just said; more of a job already under way.
+- **distinct** — this conversation would bias the answer, or is beside the
+  point. A fresh read of code the parent has already characterised, an
+  independent estimate, a question about a part of the repo this session has
+  not touched.
+
+The case that decides the rule is review. A clone asked to check the work of
+the turn that spawned it has read the reasoning behind that work, and it will
+agree with it — the one thing a check must not do. So a reviewer, verifier or
+critic is always `distinct`, and the description says that in as many words.
+The default stays `clone`, because most delegated work really does continue the
+conversation; what changed is that the expensive mode now has a stated job
+instead of only a price.
 
 The economics are the whole design. A provider's prompt cache answers a request
 whose leading bytes it has already seen, so a clone — same system prompt, same

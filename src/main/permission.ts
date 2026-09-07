@@ -1,7 +1,7 @@
 // doc: docs/harness/sessions.md
 import { randomUUID } from 'node:crypto'
 import { dirname } from 'node:path'
-import { containedIn, expandHome, outsideMessage, realResolve, resolveUnder } from '../core/scope.js'
+import { containedIn, normalizeTarget, outsideMessage, realResolve, resolveUnder } from '../core/scope.js'
 import type { AccessBatch, AccessCheck, AccessGate, AccessIntent } from '../core/scope.js'
 import type { PermissionAsk, PermissionDecision } from '../ipc/contract.js'
 
@@ -50,9 +50,20 @@ export interface PromptingGateOptions {
   root: string
   sessionId: string
   broker: PermissionBroker
+  /**
+   * Folders every session may read without being asked. There is exactly one:
+   * NanoHarness's own source, so an agent asked about the harness can go and
+   * look instead of asking for permission to answer a question about itself.
+   *
+   * Reading, not writing — a write outside the workspace still stops the turn,
+   * whichever folder it is. `run` counts as reading here, because a shell
+   * command is one string and the gate cannot tell `cat` from `rm`; the shell
+   * has never been a boundary, which `docs/harness/tools.md` says.
+   */
+  readable?: readonly string[]
 }
 
-export function promptingGate({ root, sessionId, broker }: PromptingGateOptions): AccessGate {
+export function promptingGate({ root, sessionId, broker, readable = [] }: PromptingGateOptions): AccessGate {
   // Paths the user allowed for the rest of this session, already resolved.
   const granted = new Set<string>()
   // Paths the user already refused. A model that is told no tends to try the
@@ -60,11 +71,12 @@ export function promptingGate({ root, sessionId, broker }: PromptingGateOptions)
   // is how a prompt stops being read.
   const denied = new Set<string>()
 
-  function alreadyAllowed(path: string): boolean {
+  function alreadyAllowed(path: string, intent: AccessIntent): boolean {
     for (const grant of granted) {
       if (containedIn(grant, path)) return true
     }
-    return false
+    if (intent === 'write') return false
+    return readable.some(dir => containedIn(dir, path))
   }
 
   function refusal(path: string, intent: AccessIntent): string {
@@ -81,8 +93,8 @@ export function promptingGate({ root, sessionId, broker }: PromptingGateOptions)
   const gate: AccessGate = {
     root,
     async check(target: string, intent: AccessIntent): Promise<AccessCheck> {
-      const { path, inside } = await resolveUnder(root, expandHome(target))
-      if (inside || alreadyAllowed(path)) return { ok: true, path }
+      const { path, inside } = await resolveUnder(root, normalizeTarget(target))
+      if (inside || alreadyAllowed(path, intent)) return { ok: true, path }
       if (denied.has(path)) return { ok: false, path, reason: refusal(path, intent) }
 
       const decision = await broker.request({ sessionId, intent, paths: [path], root })
@@ -97,8 +109,8 @@ export function promptingGate({ root, sessionId, broker }: PromptingGateOptions)
     async checkAll(targets: readonly string[], intent: AccessIntent): Promise<AccessBatch> {
       const outside: string[] = []
       for (const target of targets) {
-        const { path, inside } = await resolveUnder(root, expandHome(target))
-        if (inside || alreadyAllowed(path)) continue
+        const { path, inside } = await resolveUnder(root, normalizeTarget(target))
+        if (inside || alreadyAllowed(path, intent)) continue
         if (denied.has(path)) return { ok: false, reason: refusal(path, intent) }
         if (!outside.includes(path)) outside.push(path)
       }

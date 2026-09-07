@@ -3,7 +3,7 @@ import type { AgentRole } from '../core/agents.js'
 import type { ActiveSelection, Effort, ProviderKind, ProviderRecord } from '../core/config.js'
 import type { JobView } from '../core/jobs.js'
 import type { AccessIntent } from '../core/scope.js'
-import type { AppEvent, TurnUsage } from '../core/types.js'
+import type { AppEvent, SessionNote, TurnUsage } from '../core/types.js'
 
 export const IPC_CHANNELS = {
   ping: 'ipc:ping',
@@ -88,6 +88,11 @@ export interface SessionOpenResponse {
   session: SessionView
   workspace: WorkspaceView
   messages: TranscriptMessage[]
+  /**
+   * Errors, stops and harness notes, in the places they happened. Re-opening a
+   * session shows what the window showed, not a tidied version of it.
+   */
+  notes: SessionNote[]
 }
 
 /** A tool wants paths outside the session root, and is waiting on an answer. */

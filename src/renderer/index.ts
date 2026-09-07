@@ -217,7 +217,7 @@ async function openSession(id: string): Promise<void> {
     const opened = await nh.openSession(id)
     activeSessionId = id
     select(id)
-    renderTranscript(opened.messages)
+    renderTranscript(opened.messages, opened.notes)
     // What this session has already spent. Without it a re-opened session reads
     // as one that has cost nothing.
     showStoredUsage(opened.session.usage)

@@ -76,6 +76,32 @@ export function expandHome(token: string): string {
   return join(homedir(), token.slice(1))
 }
 
+const MSYS_ABSOLUTE = /^\/([a-zA-Z])(\/|$)/
+
+/**
+ * Git Bash spells `C:\` as `/c/`, and an agent that has just run a shell
+ * command writes the path it saw there into `read` a moment later. Resolved as
+ * given, `/c/project/file` becomes `<drive>:\c\project\file` — a path that does
+ * not exist, reported as if the file were missing. So a Windows session accepts
+ * both spellings and the tools stop disagreeing with the shell.
+ *
+ * Only `/<letter>/…` is touched: `/usr/bin` has a two-letter first segment and
+ * is left exactly as it was.
+ */
+export function nativePath(token: string, platform: NodeJS.Platform = process.platform): string {
+  if (platform !== 'win32') return token
+  const match = MSYS_ABSOLUTE.exec(token)
+  const drive = match?.[1]
+  if (drive === undefined) return token
+  const rest = token.slice(2)
+  return `${drive.toUpperCase()}:${rest === '' ? sep : rest}`
+}
+
+/** A path as written by a model, in the spelling this platform can resolve. */
+export function normalizeTarget(token: string): string {
+  return nativePath(expandHome(token))
+}
+
 export function outsideMessage(root: string, path: string, intent: AccessIntent): string {
   const verb = intent === 'run' ? 'run a command touching' : intent
   return `this session is scoped to ${root}, so it cannot ${verb} ${path}`
@@ -91,7 +117,7 @@ export function workspaceGate(root: string): AccessGate {
   const gate: AccessGate = {
     root,
     async check(target, intent) {
-      const { path, inside } = await resolveUnder(root, expandHome(target))
+      const { path, inside } = await resolveUnder(root, normalizeTarget(target))
       return inside ? { ok: true, path } : { ok: false, path, reason: outsideMessage(root, path, intent) }
     },
     async checkAll(targets, intent) {

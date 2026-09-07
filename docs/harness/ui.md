@@ -11,7 +11,7 @@ Files:
 - src/renderer/composer.ts — the composer in its two seats, and the height the flow clears
 - src/renderer/jobs.ts — the strip of background jobs under the session tree
 - src/renderer/sidebar.ts — folders and their sessions, search, add and delete
-- src/renderer/chat.ts — the message flow: streamed text, thinking, tool rows, replayed transcripts
+- src/renderer/chat.ts — the message flow: streamed text, thinking, tool rows, notes, replayed transcripts
 - src/renderer/settings.ts — the settings sheet: provider list, form, probe, model ticking
 - src/renderer/permission.ts — the modal a tool waits on when it reaches outside its folder
 - src/renderer/confirm.ts — the app's own yes/no sheet, in place of the browser's `confirm()`
@@ -110,10 +110,23 @@ about this machine's speakers rather than part of the harness configuration.
 The tone differs by outcome — rising for finished, falling for stopped, flat and
 low for an error — so a turn's ending is legible from the next room.
 
+**A note block says what the run did**, as its own rule across the flow, dim
+where an error block is red. The window uses it for anything that is about the
+run rather than about the conversation: a stop, a turn that came back with no
+answer at all, a call the harness refused because it was the third identical
+one, a background job starting and finishing. A turn that ends without an answer
+used to leave the flow exactly as a finished turn leaves it, which reads as the
+agent giving up; now it says so in a line.
+
 Re-opening a session replays its stored messages and tool calls, refusals
 included: a tool that was denied comes back marked failed rather than dressed
 up as a call that worked. Thinking replays too, folded away, where the provider
-signed it and it therefore had to be kept (see `providers.md`).
+signed it and it therefore had to be kept (see `providers.md`). The notes come
+back with them, each one drawn between the same two blocks it appeared between
+live — the session file records how many messages had been written when it
+happened, so the position is stored rather than guessed. A note is drawn once:
+the live path draws an error and a stop from their own events, and only the
+replay path draws them from the journal.
 
 The window has no menu bar. There are no menu commands to put in one, and the
 renderer handles its own text editing, so the File/Edit/View strip would have
@@ -247,12 +260,21 @@ writes retire the live ones; the stored transcript is what makes that lossless.
 ## Background jobs
 
 A subagent started with `background: true` has no stream of its own — it is not
-the conversation on screen — so the strip under the tree is the whole of what
-the user sees of it: which agent, what state it is in, and its last line. It
-hides itself when there is nothing running and nothing finished, which is most
-of the time. Job events fold into a list in `jobs.ts`; a reloaded window asks
-the main process for that list rather than starting empty and pretending.
-`agents.md` has what a job is.
+the conversation on screen — so the strip under the tree is where the user sees
+it: which agent, what state it is in, and two lines of its last word. It hides
+itself when there is nothing running and nothing finished, which is most of the
+time. Job events fold into a list in `jobs.ts`; a reloaded window asks the main
+process for that list rather than starting empty and pretending. `agents.md`
+has what a job is.
+
+Two lines are not the job, though, and the rest of it used to live in the row's
+`title` — a tooltip, which cannot be read at length, selected, copied, or
+reached from the keyboard at all. A row is a button now, and it opens a sheet
+with the whole of the job: the task as the parent phrased it, the full note or
+result or error, how long it has been going, and what it spent. The sheet
+redraws on every job event, so a job that finishes while it is open turns into
+its own result under the reader's eyes; the result carries a copy button,
+because a background job's answer is nowhere else in the window.
 
 ## Tokens
 

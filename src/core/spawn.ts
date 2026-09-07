@@ -71,7 +71,6 @@ export interface SpawnDeps {
   /** The parent's gate: a subagent is held to exactly the parent's boundary. */
   access: AccessGate
   jobs: JobRegistry
-  maxToolRounds: number
   /**
    * The subagent's prompt and tools. `jobId` is non-null for a background job,
    * so the caller can hand that child a `job_update` tool bound to it.
@@ -107,7 +106,6 @@ export function createSpawnHost(deps: SpawnDeps): SpawnHost {
         cwd: deps.cwd,
         model: deps.model,
         systemPrompt: setup.systemPrompt,
-        maxToolRounds: deps.maxToolRounds,
         access: deps.access,
         ...(setup.effort === undefined ? {} : { effort: setup.effort }),
         ...(setup.history === undefined ? {} : { history: setup.history }),

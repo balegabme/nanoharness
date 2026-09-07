@@ -23,6 +23,8 @@ function platformNote(platform: NodeJS.Platform): string {
     'This is a Windows machine. The bash tool runs Git Bash, not WSL:',
     'there is no /mnt/c and no /proc. Paths are either relative to the',
     'workspace root or Windows paths such as C:/Users/you/thing.',
+    'Git Bash prints its own spelling, /c/Users/you/thing, and every tool',
+    'here takes either — so a path copied out of shell output works as it is.',
   ].join(' ')
 }
 
@@ -49,9 +51,12 @@ export function buildSystemPrompt(env: PromptEnvironment): string {
     'Rules:',
     '- Every tool is scoped to the workspace. A path outside it stops the turn and asks the user, so do not reach outside unless the task needs it, and say why when you do.',
     '- Prefer paths relative to the workspace root.',
-    '- Do the task that was asked. Do not explore the machine, install anything, or refactor code nobody mentioned.',
+    '- Do the task that was asked: no unasked-for exploring, dependency installs, or refactors.',
+    '- Never state a rule, a permission or a limit you were not given. Asked what you can do, answer from the tools and the configuration in this prompt: something that is not configured is not configured, which is not the same as forbidden, and you say which one it is.',
     '- If the request leaves something open that would change what you do, ask. Do not invent work to fill the gap.',
     '- Read a file before you edit it. Check a command\'s output before acting on it.',
+    '- Look around with `bash`. One command that lists, greps or cats what you need beats a stack of single-file calls: it costs one round trip instead of five, and the user can read it. `read` is for one file you know you want.',
+    '- Remove exactly what was named and nothing around it. Deleting the entry you were asked about does not license deleting the file it lived in, or the folder that held it. Then say what you removed, by path.',
   )
 
   return lines.join(EOL)

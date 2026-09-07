@@ -1,7 +1,7 @@
 // doc: docs/harness/ui.md
 import { el, must, pretty } from './dom.js'
 import type { TranscriptMessage } from '../ipc/contract.js'
-import type { AppEvent, ToolResult, TurnUsage } from '../core/types.js'
+import type { AppEvent, SessionNote, ToolResult, TurnUsage } from '../core/types.js'
 
 /**
  * The message flow. It is append-only and streams as the turn runs: thinking
@@ -222,7 +222,7 @@ export function usageText(usage: TurnUsage): string {
  * Replay a stored conversation. Only signed thinking survives a round trip, so
  * a replayed turn shows exactly the thinking the next request would send back.
  */
-export function renderTranscript(messages: TranscriptMessage[]): void {
+export function renderTranscript(messages: TranscriptMessage[], notes: readonly SessionNote[] = []): void {
   clearChat()
   // Replay appends, and appending is what takes the mark away.
   const results = new Map<string, { text: string; failed: boolean }>()
@@ -232,7 +232,23 @@ export function renderTranscript(messages: TranscriptMessage[]): void {
     }
   }
 
-  for (const message of messages) {
+  // A note sits where it happened: `after` is how many messages had been
+  // written at the time, so a stop or an error comes back between the same two
+  // blocks the user saw it between.
+  const pending = [...notes].sort((a, b) => a.after - b.after || a.at - b.at)
+  let next = 0
+  const drawNotes = (upto: number): void => {
+    for (;;) {
+      const note = pending[next]
+      if (note === undefined || note.after > upto) return
+      next += 1
+      if (note.kind === 'error') errorBlock(note.text)
+      else noteBlock(note.text)
+    }
+  }
+
+  for (const [index, message] of messages.entries()) {
+    drawNotes(index)
     if (message.role === 'tool') continue
     if (message.role === 'user') {
       userBlock(message.text)
@@ -251,6 +267,7 @@ export function renderTranscript(messages: TranscriptMessage[]): void {
       }
     }
   }
+  drawNotes(messages.length)
 }
 
 /** Live events for the session on screen. Anything else is dropped. */
@@ -297,6 +314,12 @@ export function handleEvent(event: AppEvent, activeSessionId: string | null): vo
     case 'session.stopped':
       if (thinkingCard !== null) thinkingCard.open = false
       noteBlock('Stopped.')
+      break
+    case 'session.note':
+      // Why a turn ended the way it did, in the flow rather than in a log
+      // nobody opens: a turn that stops for any reason but an answer says so
+      // here.
+      noteBlock(event.text)
       break
     case 'session.started':
     case 'session.finished':

@@ -27,6 +27,16 @@ Ask about a gap in the request rather than inventing work to fill it — an agen
 handed "spawn three subagents, one of them a weather job" will otherwise make
 the other two up. Read before editing. Do not retry a failed call unchanged.
 
+Two of them are there because of what a model does with silence. "Do not
+install anything" is scoped to dependencies and machine state, and says so,
+because an agent asked to add an MCP server read the unqualified version as
+covering a JSON file in its own workspace and refused. The rule after it is the
+general form: never state a rule, a permission or a limit you were not given —
+asked what it can do, an agent answers from its tools and its configuration, and
+something unconfigured is unconfigured rather than forbidden. A model with
+nothing to go on fills that gap from its training set, and a plausible invented
+policy is much harder to catch than an error.
+
 ## Stopping a turn
 
 Stop is cooperative. `Session.stop()` aborts the in-flight request through an
@@ -44,7 +54,7 @@ can be asked to continue.
 |---|---|---|
 | workspace | a folder on disk | `workspaces.json` |
 | session | a conversation started inside one folder | `workspaces.json` |
-| transcript | the messages of one session | `sessions/<id>.json` |
+| transcript | one session's messages, and the notes beside them | `sessions/<id>.json` |
 
 The index and the transcripts are deliberately separate files. The sidebar
 draws itself from the index alone, so opening the app reads one small file no
@@ -61,13 +71,24 @@ is the only automatic rename; later messages just move it up the list.
 
 Transcripts are written after a turn completes, not while it streams. A
 half-finished answer is not a message, and a crash mid-turn leaves the session
-exactly as it was before the message was sent. What is stored is the
-conversation the model sees — user text, assistant text, tool calls and their
-results. Thinking is not part of that, so a re-opened session shows no thinking
-blocks, only what was said and done.
+exactly as it was before the message was sent.
+
+The file holds two things, `{ messages, notes }`, because what the window showed
+is more than the conversation. The messages are what the model sees — user text,
+assistant text, tool calls and their results, plus the signed thinking blocks,
+which are stored because they are the only thinking the next request may send
+back. The notes are everything else the window drew: an error, a stop, a turn
+that ended without an answer, a repeated call the harness refused, a background
+job starting and finishing. Each note carries `after`, the number of messages
+written when it happened, so a re-opened session puts it back between the same
+two blocks the user saw it between. A file written before notes existed, or one
+whose notes are unreadable, opens as a conversation with none — never as an
+error.
 
 Re-opening a session rebuilds it with that transcript as history, so the model
-picks up the thread. The system prompt is not restored from the file; it is
+picks up the thread, and hands it back its notes so the window reads the way it
+did live: a turn that stopped looks stopped, a turn that failed looks failed,
+and neither looks like a turn that simply had nothing to say. The system prompt is not restored from the file; it is
 built fresh each launch, because a stored one would silently freeze whatever
 the harness said about itself the day the session started.
 
@@ -86,6 +107,15 @@ lives in `scope.ts` rather than in each tool:
   existing ancestor, resolves *that*, and re-appends the rest.
 
 Only after all of that is the path compared with the root.
+
+Windows has one more wrinkle. The shell is Git Bash, which prints `/c/project`
+where Windows writes `C:\project`, and a model that has just read a path out of
+shell output writes it straight into the next `read`. Taken literally,
+`/c/project/file` resolves against the current drive as `<drive>:\c\project\file`
+— a path that does not exist, reported as a missing file. So `normalizeTarget`
+accepts both spellings and every gate goes through it. Only `/<letter>/…` is
+translated: `/usr/bin` has a two-letter first segment and is left exactly as it
+is.
 
 The `read`, `write` and `log_improvement` tools ask the gate before they touch
 anything. `bash` is the awkward one: a command line is not a path list. Every
@@ -115,6 +145,14 @@ prompting per file is how people learn to click yes without reading.
 
 Grants live in memory. Closing the app forgets them; nothing on disk records
 that a session was ever allowed out of its folder.
+
+One directory is readable without a prompt: the NanoHarness checkout itself,
+when the app is running from source. The harness editor is the one role told in
+its prompt where the harness lives and what its doc map is, and a question
+about the harness that stops on a permission prompt for the harness's own
+source is a question that does not get answered. Reading it is allowed; writing
+to it still asks, and a workspace that *is* the checkout is unaffected either
+way.
 
 Two things cannot be answered, and both resolve to a denial rather than a hang:
 a prompt for a session that is not the one on screen, and a prompt whose window

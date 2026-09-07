@@ -43,6 +43,16 @@ export interface AgentDefinition {
   brief: readonly string[]
 }
 
+/**
+ * Prompt to instruct when and how to summon a harness editor subagent
+ */
+const HARNESS_HANDOFF: readonly string[] = [
+  'Anything about NanoHarness itself — changing it, configuring it, adding an MCP server or a skill, or a question about how it behaves — goes to a harness-editor subagent: `spawn` with role harness-editor and mode distinct.',
+  'Answer it yourself only when the answer is already in this conversation. Anything else means reading the harness, and this prompt does not tell you where it is: the subagent is told, knows its way around, and is back in a couple of calls.',
+  'Ask it to report the files it touched and the diff, and pass that on rather than a claim that it worked.',
+  'Say and quote to it what the user gave you verbatim — a URL, a key, a command line — because it cannot see this conversation.',
+]
+
 export const AGENTS: Record<AgentRole, AgentDefinition> = {
   builder: {
     role: 'builder',
@@ -53,6 +63,7 @@ export const AGENTS: Record<AgentRole, AgentDefinition> = {
     brief: [
       'You are the builder: you change code in this workspace.',
       'Read a file before you edit it, and keep the change the size of the request.',
+      ...HARNESS_HANDOFF,
     ],
   },
   planner: {
@@ -66,37 +77,66 @@ export const AGENTS: Record<AgentRole, AgentDefinition> = {
       'Your shell refuses the usual ways to write, so use it to look, not to edit.',
       'Answer with the plan itself — the files that matter, the order of the work,',
       'and what would make it fail — not with an offer to write the code.',
+      ...HARNESS_HANDOFF,
     ],
   },
   'harness-editor': {
     role: 'harness-editor',
     name: 'Harness editor',
-    purpose: 'edits NanoHarness itself, from the improvement ledger',
+    purpose: 'answers questions about NanoHarness and edits it',
     tools: ['bash', 'read', 'write', 'log_improvement', 'job_update'],
     bash: 'full',
     brief: [
-      'You are the harness editor: the workspace is NanoHarness itself.',
-      'Work from the improvement ledger. Every source file names the doc that',
-      'explains it and every doc lists its files back, so a code change that',
-      'adds or moves a file changes a doc too; `pnpm doc-check` is the gate.',
+      'You are the harness editor: you answer questions about NanoHarness and you change it.',
+      'You are the only role told where the harness lives, so those questions come to you. Answer them.',
+      'Do not wander. The doc map in your context says which file explains what: open that file, not a search. A couple of calls to an answer is the shape of your work.',
+      'Work from the improvement ledger. Every source file names the doc that explains it and every doc lists its files back, so a code change that adds or moves a file changes a doc too; `pnpm doc-check` is the gate.',
       'Never run git commit, git push or git tag. Suggest the commands instead.',
+      'End with what you actually changed: the files, and `git diff --stat` (or the diff itself) for them. Whoever asked sees your last message and nothing else, so a claim with no diff behind it is all they get.',
+      'A change to the harness reaches the running app when it is rebuilt and restarted. Say so; do not report it as live.',
     ],
   },
 }
 
 /**
- * The extra context a role is worth carrying. The harness editor gets the doc
- * index and the ledger, which is what turns "fix the thing" into an edit in
- * the right file; the other two get the environment block and nothing more.
- *
- * Read from the workspace, so it is empty when the folder is not the harness —
- * a stale index would be worse than none.
+ * Where NanoHarness's own code is on this machine, and how to run its CLI from
+ * anywhere. Both are facts the app knows and the agent cannot see, and both are
+ * the difference between answering a question about the harness and asking the
+ * user for permission to go and look.
  */
-export async function roleContext(role: AgentRole, root: string): Promise<string[]> {
+export interface HarnessFacts {
+  root: string
+  /** The whole command, ready to run: `"<node>" "<path>/cli/index.js"`. */
+  cli: string
+}
+
+/**
+ * The extra context a role is worth carrying.
+ *
+ * Where the harness lives is one role's fact. The harness editor alone is told
+ * the source root, the doc map and the CLI command; builder and planner get
+ * nothing, which is what keeps their handoff rule honest — an agent whose
+ * prompt never names the harness cannot go and read it, so the subagent is the
+ * only route an answer can take. The editor also gets the doc index and the
+ * ledger, which is what turns "fix the thing" into an edit in the right file.
+ *
+ * The index is read from the harness checkout when the facts are known, and
+ * from the workspace only as a fallback — the case where the app is packaged
+ * but the session is open on a checkout anyway.
+ */
+export async function roleContext(role: AgentRole, root: string, harness?: HarnessFacts): Promise<string[]> {
   if (role !== 'harness-editor') return []
-  const index = await docIndex(root)
-  if (index.length === 0) return []
-  return ['', 'The docs that explain this codebase, one line each:', ...index, '', 'The improvement ledger is docs/harness/improvements.md.']
+  const lines: string[] = []
+  if (harness !== undefined) {
+    lines.push(
+      '',
+      `NanoHarness — the harness you are running in — is source you can read at ${harness.root}. That folder is readable without asking, even from another workspace; ${join(harness.root, 'docs', 'harness', 'doc-map.md')} is the index of what explains what.`,
+      `Its CLI is ${harness.cli} — run it with a command such as \`nh mcp list\` appended, from any folder.`,
+    )
+  }
+  const index = await docIndex(harness?.root ?? root)
+  if (index.length === 0) return lines
+  return [...lines, '', 'The docs that explain this codebase, one line each:', ...index, '', 'The improvement ledger is docs/harness/improvements.md.']
 }
 
 /** The `## Index` bullets of the doc map: path plus one line, nothing else. */

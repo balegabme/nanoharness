@@ -1,6 +1,9 @@
 // doc: docs/harness/overview.md
 import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent, type WebContents } from 'electron'
+import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { createProvider } from '../providers/factory.js'
 import { BASH_TOOL, GUARDED_BASH_TOOL } from '../tools/bash.js'
 import { READ_TOOL } from '../tools/read.js'
@@ -12,6 +15,9 @@ import { AGENTS, AGENT_ROLES, agentPrompt, isAgentRole, roleContext } from '../c
 import { EventBus } from '../core/event-bus.js'
 import { JobRegistry } from '../core/jobs.js'
 import { cloneHistory, createSpawnHost } from '../core/spawn.js'
+import { McpHub, mcpBlock } from '../mcp/hub.js'
+import { loadSkills, skillsBlock } from '../core/skills.js'
+import { mcpPaths } from '../mcp/config.js'
 import { Session } from '../core/session.js'
 import { appendUsage } from '../core/usage-log.js'
 import { IPC_CHANNELS } from '../ipc/contract.js'
@@ -21,6 +27,7 @@ import {
   addWorkspace,
   createSession,
   deleteSession,
+  loadNotes,
   loadTranscript,
   noteTurn,
   removeWorkspace,
@@ -33,7 +40,7 @@ import {
   workspaceStatus,
 } from './workspace-store.js'
 import { createWindow, serveRenderer } from './window.js'
-import type { AgentRole } from '../core/agents.js'
+import type { AgentRole, HarnessFacts } from '../core/agents.js'
 import type { JobView } from '../core/jobs.js'
 import type { PromptEnvironment } from '../core/prompt.js'
 import type { SubagentSetup } from '../core/spawn.js'
@@ -66,13 +73,27 @@ const EVENT_TYPES: AppEvent['type'][] = [
   'session.error',
   'session.finished',
   'session.stopped',
+  'session.note',
   'permission.request',
   'job.started',
   'job.update',
   'job.finished',
 ]
 
-const MAX_TOOL_ROUNDS = 8
+/**
+ * Where this build's own source is, when it is on disk to be read — a packaged
+ * app without it says nothing rather than pointing at a folder that is not
+ * there. The session may read it without a prompt, and the harness editor is
+ * the one role told where it is, so harness work always arrives as a question
+ * for that subagent rather than as a path the parent goes off to explore.
+ */
+function harnessFacts(): HarnessFacts | undefined {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
+  if (!existsSync(join(root, 'docs', 'harness', 'doc-map.md'))) return undefined
+  return { root, cli: `node "${join(root, 'out', 'cli', 'index.js')}"` }
+}
+
+const HARNESS = harnessFacts()
 
 // Windows shows a toast under an application id. Without one set, a
 // notification from a dev-run Electron app is silently dropped.
@@ -85,6 +106,51 @@ function shellName(): string {
 // Live sessions, keyed the way the renderer addresses them. A session that was
 // never opened this launch is rebuilt from its stored transcript on first use.
 const sessions = new Map<string, Session>()
+
+// One hub per session, held apart from the session itself because it owns
+// subprocesses and sockets: retiring a session has to close them, and a Map
+// that only holds Sessions has nowhere to put that.
+const hubs = new Map<string, McpHub>()
+
+/** Sessions being built right now, so two messages cannot build one twice. */
+const building = new Map<string, Promise<Session>>()
+
+/**
+ * How many times a session has been retired. A build reads this when it starts
+ * and again once its servers are up: a different number means the settings it
+ * was built against are gone, so it closes what it opened instead of handing
+ * back a session nobody asked for. Without it, a save that lands mid-build
+ * retires a session that does not exist yet and the build then installs its
+ * hub over the top — a set of subprocesses with nothing holding them.
+ */
+const epochs = new Map<string, number>()
+
+function epochOf(sessionId: string): number {
+  return epochs.get(sessionId) ?? 0
+}
+
+/**
+ * Drop live sessions and close what they opened. Every settings write does
+ * this, so the next turn rebuilds against the new configuration; the stored
+ * transcript is what makes it lossless. Leaking an MCP subprocess per save
+ * would be a process pile-up nobody sees until the machine slows down.
+ *
+ * Resolves when every server has actually exited, which is what quitting needs;
+ * a settings write does not wait.
+ */
+async function retire(sessionId?: string): Promise<void> {
+  const ids = sessionId === undefined ? [...new Set([...hubs.keys(), ...building.keys()])] : [sessionId]
+  const closing: Promise<void>[] = []
+  for (const id of ids) {
+    epochs.set(id, epochOf(id) + 1)
+    const hub = hubs.get(id)
+    hubs.delete(id)
+    if (hub !== undefined) closing.push(hub.close())
+  }
+  if (sessionId === undefined) sessions.clear()
+  else sessions.delete(sessionId)
+  await Promise.all(closing)
+}
 // One broker per window: it is the thing that can put a modal in front of a
 // person, so it belongs to the window that has one.
 const brokers = new Map<number, PermissionBroker>()
@@ -119,6 +185,15 @@ function jobsFor(sender: WebContents): JobRegistry {
       if (!sender.isDestroyed()) sender.send(IPC_CHANNELS.sessionEvent, event)
     })
   }
+  // A background job is the one thing the user watches that the conversation
+  // knows nothing about: it starts inside a turn and answers after it. Both
+  // ends go into the session's own notes, so re-opening the session still says
+  // a job ran and how it went.
+  bus.on('job.started', event => sessions.get(event.job.sessionId)?.note(`Background ${event.job.role} started: ${event.job.task}`))
+  bus.on('job.finished', event => {
+    const first = event.job.note?.split('\n')[0] ?? ''
+    sessions.get(event.job.sessionId)?.note(`Background ${event.job.role} ${event.job.state}${first === '' ? '' : `: ${first}`}`)
+  })
   const registry = new JobRegistry(bus)
   jobRegistries.set(sender.id, registry)
   sender.once('destroyed', () => void jobRegistries.delete(sender.id))
@@ -163,10 +238,22 @@ function environment(root: string): PromptEnvironment {
 // No endpoint and no model are baked in: both come from the settings the user
 // saved, and an incomplete configuration is an error the setup screen handles,
 // never a silent default (plan §11).
-async function sessionFor(sender: WebContents, sessionId: string): Promise<Session> {
+function sessionFor(sender: WebContents, sessionId: string): Promise<Session> {
   const existing = sessions.get(sessionId)
-  if (existing) return existing
+  if (existing) return Promise.resolve(existing)
+  // Building a session now spawns MCP subprocesses, so two messages racing to
+  // open the same one would leave a set of servers with nothing holding them.
+  // The in-flight build is the thing that has to be shared, not just the
+  // session it ends with.
+  const started = building.get(sessionId)
+  if (started !== undefined) return started
+  const build = buildSession(sender, sessionId).finally(() => building.delete(sessionId))
+  building.set(sessionId, build)
+  return build
+}
 
+async function buildSession(sender: WebContents, sessionId: string): Promise<Session> {
+  const mine = epochOf(sessionId)
   const root = await sessionRoot(sessionId)
   if (root === null) throw new Error('that session is gone; start a new one from the sidebar')
 
@@ -180,12 +267,48 @@ async function sessionFor(sender: WebContents, sessionId: string): Promise<Sessi
   }
 
   const role = (await sessionRole(sessionId)) ?? 'builder'
-  const systemPrompt = agentPrompt(role, environment(root), await roleContext(role, root))
-  const tools = toolsFor(role, { canSpawn: true, isJob: false })
+
+  // Both of these are decided before the first request and never again inside
+  // a session, and for the same reason: the skills list sits in the system
+  // prompt and the MCP tools sit in the tool definitions, which is to say both
+  // are part of the cached prefix. Discovering either mid-session would move
+  // bytes the provider has already cached and cost the whole prefix.
+  const skills = await loadSkills(root)
+  const hub = await McpHub.connect(root)
+  if (epochOf(sessionId) !== mine) {
+    await hub.close()
+    throw new Error('the settings changed while this session was opening; send that again')
+  }
+  hubs.set(sessionId, hub)
+  for (const server of hub.status) {
+    if (!server.connected) console.warn(`mcp: ${server.name} is not connected: ${server.error ?? 'unknown reason'}`)
+  }
+
+  // What MCP the session actually has, told to the agent in its own words: a
+  // model with no such block answers "what tools do you have" from its training
+  // set, and invents a policy to explain a server it was never told about.
+  const paths = mcpPaths(root)
+  const context = [
+    ...(await roleContext(role, root, HARNESS)),
+    ...skillsBlock(skills),
+    ...mcpBlock(hub.status, paths, {
+      canWrite: AGENTS[role].tools.includes('write'),
+      canSpawn: AGENTS[role].tools.includes('spawn'),
+      root,
+      ...(HARNESS === undefined ? {} : { cli: HARNESS.cli }),
+    }),
+  ]
+  const systemPrompt = agentPrompt(role, environment(root), context)
+  const tools = [...toolsFor(role, { canSpawn: true, isJob: false }), ...hub.tools()]
   // A subagent is held to the parent's boundary, and to the same broker: an
   // "allow for this session" the user already gave covers the work they asked
   // for, whoever ends up doing it.
-  const access = promptingGate({ root, sessionId, broker: brokerFor(sender) })
+  const access = promptingGate({
+    root,
+    sessionId,
+    broker: brokerFor(sender),
+    ...(HARNESS === undefined ? {} : { readable: [HARNESS.root] }),
+  })
 
   // A clone is built from the parent's live transcript, and the parent does not
   // exist until the call below; the holder is what ties the two together.
@@ -214,8 +337,24 @@ async function sessionFor(sender: WebContents, sessionId: string): Promise<Sessi
     // per-role default would change the price of a turn from a chip the user
     // can see to a table only the code knows.
     return {
-      systemPrompt: agentPrompt(request.role, environment(root), await roleContext(request.role, root)),
-      tools: toolsFor(request.role, { canSpawn: false, isJob }),
+      systemPrompt: agentPrompt(request.role, environment(root), [
+        ...(await roleContext(request.role, root, HARNESS)),
+        ...skillsBlock(skills),
+        // A subagent cannot spawn, so it is the one that does the work: it gets
+        // the commands the session above it was told to delegate. The commands
+        // name the harness CLI, and the CLI names the harness root, so they go
+        // to the one role allowed to know either.
+        ...mcpBlock(hub.status, paths, {
+          canWrite: AGENTS[request.role].tools.includes('write'),
+          canSpawn: false,
+          root,
+          ...(request.role === 'harness-editor' && HARNESS !== undefined ? { cli: HARNESS.cli } : {}),
+        }),
+      ]),
+      // A distinct subagent reaches the same servers the session does. They are
+      // the session's connections, so nothing is spawned twice and nothing has
+      // to be shut down when the subagent finishes.
+      tools: [...toolsFor(request.role, { canSpawn: false, isJob }), ...hub.tools()],
       effort: config.effort,
     }
   }
@@ -230,7 +369,6 @@ async function sessionFor(sender: WebContents, sessionId: string): Promise<Sessi
       model: config.model,
       effort: config.effort,
       systemPrompt,
-      maxToolRounds: MAX_TOOL_ROUNDS,
       access,
       history: await loadTranscript(sessionId),
       ...(spent === null ? {} : { usage: spent }),
@@ -242,7 +380,6 @@ async function sessionFor(sender: WebContents, sessionId: string): Promise<Sessi
         provider,
         access,
         jobs: jobsFor(sender),
-        maxToolRounds: MAX_TOOL_ROUNDS,
         setup,
       }),
     },
@@ -251,8 +388,23 @@ async function sessionFor(sender: WebContents, sessionId: string): Promise<Sessi
     bus,
   )
   parent.session = session
+  session.restoreNotes(await loadNotes(sessionId))
   sessions.set(sessionId, session)
   return session
+}
+
+/**
+ * Quitting is the one path that has to wait: Electron tears the process down
+ * the moment this handler returns, and a `kill` that has been sent but not
+ * waited for leaves the server running with nothing to reap it.
+ */
+let quitting = false
+
+function quit(event: Electron.Event): void {
+  if (quitting) return
+  quitting = true
+  event.preventDefault()
+  void retire().finally(() => app.quit())
 }
 
 app.whenReady().then(() => {
@@ -280,19 +432,19 @@ app.whenReady().then(() => {
   // The stored transcript is what makes that lossless.
   ipcMain.handle(IPC_CHANNELS.configSaveProvider, async (_event: IpcMainInvokeEvent, req: ProviderSaveRequest): Promise<ConfigStatus> => {
     await saveProvider(req)
-    sessions.clear()
+    void retire()
     return configStatus()
   })
 
   ipcMain.handle(IPC_CHANNELS.configDeleteProvider, async (_event: IpcMainInvokeEvent, id: string): Promise<ConfigStatus> => {
     await deleteProvider(id)
-    sessions.clear()
+    void retire()
     return configStatus()
   })
 
   ipcMain.handle(IPC_CHANNELS.configSetActive, async (_event: IpcMainInvokeEvent, req: ActiveSetRequest): Promise<ConfigStatus> => {
     await setActive(req)
-    sessions.clear()
+    void retire()
     return configStatus()
   })
 
@@ -311,7 +463,7 @@ app.whenReady().then(() => {
 
   ipcMain.handle(IPC_CHANNELS.workspaceRemove, async (_event: IpcMainInvokeEvent, id: string): Promise<WorkspaceStatus> => {
     const status = await workspaceStatus()
-    for (const session of status.sessions.filter(s => s.workspaceId === id)) sessions.delete(session.id)
+    for (const session of status.sessions.filter(s => s.workspaceId === id)) void retire(session.id)
     await removeWorkspace(id)
     return workspaceStatus()
   })
@@ -323,11 +475,11 @@ app.whenReady().then(() => {
     const session = status.sessions.find(s => s.id === id)
     const workspace = status.workspaces.find(w => w.id === session?.workspaceId)
     if (session === undefined || workspace === undefined) throw new Error('that session is gone; start a new one from the sidebar')
-    return { session, workspace, messages: toTranscriptView(await loadTranscript(id)) }
+    return { session, workspace, messages: toTranscriptView(await loadTranscript(id)), notes: await loadNotes(id) }
   })
 
   ipcMain.handle(IPC_CHANNELS.sessionDelete, async (_event: IpcMainInvokeEvent, id: string): Promise<WorkspaceStatus> => {
-    sessions.delete(id)
+    void retire(id)
     await deleteSession(id)
     return workspaceStatus()
   })
@@ -336,7 +488,7 @@ app.whenReady().then(() => {
   // prompt and its tool list both belong to the role it was built with.
   ipcMain.handle(IPC_CHANNELS.sessionSetRole, async (_event: IpcMainInvokeEvent, req: { sessionId: string; role: AgentRole }): Promise<SessionView> => {
     if (!isAgentRole(req.role)) throw new Error(`unknown agent: ${String(req.role)}`)
-    sessions.delete(req.sessionId)
+    void retire(req.sessionId)
     return setSessionRole(req.sessionId, req.role)
   })
 
@@ -369,7 +521,7 @@ app.whenReady().then(() => {
     // The transcript is written after the turn, not during it: a half-streamed
     // answer is not a message, and a crash mid-turn should leave the session
     // exactly as it was before the message was sent.
-    await saveTranscript(req.sessionId, session.transcript)
+    await saveTranscript(req.sessionId, session.transcript, session.notes)
     const updated = await noteTurn(req.sessionId, req.text, usage)
 
     // One line per completed turn, so `nh usage` has something to read. A log
@@ -394,5 +546,10 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+  // An MCP server is a subprocess this app started, so quitting has to take
+  // them with it. `will-quit` rather than `window-all-closed`: closing the last
+  // window on macOS does not end the app.
+  app.on('will-quit', quit)
+
   app.on('window-all-closed', () => app.quit())
 })

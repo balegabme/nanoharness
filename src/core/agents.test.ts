@@ -96,7 +96,6 @@ function harness(script: Record<string, ChatChunk[][]>, cwd: string): Harness {
       cwd,
       model: 'test-model',
       systemPrompt: PARENT_PROMPT,
-      maxToolRounds: 4,
       effort: PARENT_EFFORT,
       access,
       spawn: createSpawnHost({
@@ -107,7 +106,6 @@ function harness(script: Record<string, ChatChunk[][]>, cwd: string): Harness {
         provider,
         access,
         jobs,
-        maxToolRounds: 4,
         setup: async (request, jobId) => {
           if (request.mode === 'clone') {
             return {

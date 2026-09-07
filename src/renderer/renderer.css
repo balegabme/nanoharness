@@ -650,12 +650,31 @@ body {
   gap: var(--s1);
 }
 
+/* A row is a button: the strip shows two lines, the sheet behind it shows the
+   whole job. A tooltip could not be read, copied or reached from the keyboard. */
 .job-row {
+  display: block;
+  width: 100%;
   padding: var(--s2);
   border: 1px solid var(--nh-border-l1);
   border-radius: var(--nh-radius-chip);
   background: var(--nh-bg-layer-1);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--nh-fast) var(--nh-ease), border-color var(--nh-fast) var(--nh-ease);
   animation: rise var(--nh-base) var(--nh-ease) backwards;
+}
+
+.job-row:hover {
+  border-color: var(--nh-border-l2);
+  background: var(--nh-bg-layer-2);
+}
+
+.job-row:focus-visible {
+  outline: 2px solid var(--nh-accent);
+  outline-offset: 1px;
 }
 
 .job-head {
@@ -696,13 +715,70 @@ body {
 
 .job-note {
   margin: 4px 0 0;
-  /* Two lines of the job's last word; the row's title holds the whole of it. */
+  /* Two lines of the job's last word; the sheet holds the whole of it. */
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   overflow: hidden;
   color: var(--nh-label-caption);
   font: 400 11px/1.45 var(--nh-font-sans);
+}
+
+/* The job sheet: everything the two-line row had to leave out. */
+
+/*
+ * A task and a result are both as long as they are, and the sheet's own
+ * `overflow: hidden` would put the Close button past the bottom of the screen
+ * with no way to reach it. The sheet scrolls; the two blocks inside it are
+ * capped so that neither one can push the other out of sight.
+ */
+.job-sheet {
+  overflow-y: auto;
+}
+
+.job-sheet-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.job-sheet-head h2 {
+  flex: 1;
+  margin: 0;
+}
+
+.job-sheet-head .job-state.running {
+  color: var(--nh-accent);
+}
+
+.job-sheet-head .job-state.done {
+  color: var(--nh-state-ok);
+}
+
+.job-sheet-head .job-state.failed {
+  color: var(--nh-state-error);
+}
+
+.job-sheet-label {
+  margin: var(--s4) 0 var(--s1);
+  color: var(--nh-label-caption);
+  font: 500 10px var(--nh-font-sans);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.job-sheet-block {
+  margin: 0;
+  max-height: 28vh;
+  overflow-y: auto;
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--nh-border-l1);
+  border-radius: var(--nh-radius-chip);
+  background: var(--nh-bg-code);
+  color: var(--nh-label-primary);
+  font: 400 12px/1.55 var(--nh-font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .side-foot {

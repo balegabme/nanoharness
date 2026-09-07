@@ -268,6 +268,22 @@
       </div>
     </dialog>
 
+    <dialog class="sheet small job-sheet" id="job-dialog" aria-label="Background job">
+      <div class="job-sheet-head">
+        <h2 id="job-dialog-title">Background job</h2>
+        <span class="job-state" id="job-dialog-state"></span>
+      </div>
+      <p class="hint" id="job-dialog-meta"></p>
+      <h3 class="job-sheet-label">Task</h3>
+      <pre class="job-sheet-block" id="job-dialog-task"></pre>
+      <h3 class="job-sheet-label" id="job-dialog-note-label">Last update</h3>
+      <pre class="job-sheet-block" id="job-dialog-note"></pre>
+      <div class="setup-actions dialog-actions">
+        <button class="btn sm outline" id="job-dialog-copy" type="button">Copy result</button>
+        <button class="btn sm primary" id="job-dialog-close" type="button">Close</button>
+      </div>
+    </dialog>
+
     <script type="module" src="./index.js"></script>
   </body>
 </html>

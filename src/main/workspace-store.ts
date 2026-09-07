@@ -6,7 +6,7 @@ import { isAgentRole } from '../core/agents.js'
 import { realResolve } from '../core/scope.js'
 import { userDataDir } from '../core/usage-log.js'
 import type { AgentRole } from '../core/agents.js'
-import type { ChatMessage, TurnUsage } from '../core/types.js'
+import type { ChatMessage, SessionNote, TurnUsage } from '../core/types.js'
 import type { SessionView, TranscriptMessage, WorkspaceStatus, WorkspaceView } from '../ipc/contract.js'
 
 /**
@@ -228,28 +228,54 @@ export async function noteTurn(id: string, firstText: string, usage?: TurnUsage)
   return session
 }
 
-export async function loadTranscript(id: string): Promise<ChatMessage[]> {
+async function readSession(id: string): Promise<{ messages: ChatMessage[]; notes: SessionNote[] }> {
   const text = await readFile(transcriptPath(id), 'utf8').catch(() => null)
-  if (text === null) return []
+  if (text === null) return { messages: [], notes: [] }
   try {
-    const parsed: unknown = JSON.parse(text)
-    const messages = (parsed as { messages?: unknown }).messages
-    return Array.isArray(messages) ? (messages as ChatMessage[]) : []
+    const parsed = JSON.parse(text) as { messages?: unknown; notes?: unknown }
+    return {
+      messages: Array.isArray(parsed.messages) ? (parsed.messages as ChatMessage[]) : [],
+      notes: Array.isArray(parsed.notes) ? parsed.notes.filter(isNote) : [],
+    }
   } catch {
-    return []
+    return { messages: [], notes: [] }
   }
 }
 
-export async function saveTranscript(id: string, messages: ChatMessage[]): Promise<void> {
-  const path = transcriptPath(id)
-  await mkdir(join(userDataDir(), 'sessions'), { recursive: true })
-  await writeFile(path, `${JSON.stringify({ messages }, null, 2)}\n`, 'utf8')
+const NOTE_KINDS: readonly string[] = ['error', 'stopped', 'note']
+
+/** A note from an older or a corrupt file is dropped rather than rendered raw. */
+function isNote(value: unknown): value is SessionNote {
+  if (typeof value !== 'object' || value === null) return false
+  const raw = value as Record<string, unknown>
+  return typeof raw.kind === 'string' && NOTE_KINDS.includes(raw.kind) && typeof raw.text === 'string' && typeof raw.after === 'number'
+}
+
+export async function loadTranscript(id: string): Promise<ChatMessage[]> {
+  return (await readSession(id)).messages
+}
+
+/** What the window showed that was not a message, for the session it belongs to. */
+export async function loadNotes(id: string): Promise<SessionNote[]> {
+  return (await readSession(id)).notes
 }
 
 /**
- * The transcript as the chat view wants it. Thinking is not stored — it is not
- * part of the conversation sent to the model — so a re-opened session shows the
- * messages and the tool calls, and no thinking blocks.
+ * The stored session: the conversation, and the lines the window showed
+ * alongside it. Both, because a file that holds only the messages re-opens as a
+ * session where a stopped turn, a failed one and a finished one all look the
+ * same.
+ */
+export async function saveTranscript(id: string, messages: ChatMessage[], notes: readonly SessionNote[] = []): Promise<void> {
+  const path = transcriptPath(id)
+  await mkdir(join(userDataDir(), 'sessions'), { recursive: true })
+  await writeFile(path, `${JSON.stringify({ messages, notes }, null, 2)}\n`, 'utf8')
+}
+
+/**
+ * The transcript as the chat view wants it: the messages, their tool calls and
+ * results, and the thinking the provider signed and handed back — the only
+ * thinking stored, because it is the only kind the next request may send.
  */
 export function toTranscriptView(messages: ChatMessage[]): TranscriptMessage[] {
   const out: TranscriptMessage[] = []
