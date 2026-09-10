@@ -17,9 +17,12 @@ import { JobRegistry } from '../core/jobs.js'
 import { cloneHistory, createSpawnHost } from '../core/spawn.js'
 import { McpHub, mcpBlock } from '../mcp/hub.js'
 import { loadSkills, skillsBlock } from '../core/skills.js'
-import { mcpPaths } from '../mcp/config.js'
+import { loadServers, mcpPaths } from '../mcp/config.js'
+import { hasUnknownSecret, secretsBlock } from '../core/secrets.js'
+import { flushSecrets, forgetSecret, secretList, secretVault } from './secret-store.js'
 import { Session } from '../core/session.js'
 import { appendUsage } from '../core/usage-log.js'
+import { emptyUsage } from '../core/types.js'
 import { IPC_CHANNELS } from '../ipc/contract.js'
 import { configStatus, deleteProvider, loadProviderConfig, probeProvider, saveProvider, setActive } from './config-store.js'
 import { PermissionBroker, promptingGate } from './permission.js'
@@ -28,35 +31,44 @@ import {
   createSession,
   deleteSession,
   loadNotes,
+  loadSubagent,
   loadTranscript,
   noteTurn,
   removeWorkspace,
+  renameSession,
+  saveSubagent,
   saveTranscript,
   sessionRole,
   sessionRoot,
   sessionUsage,
   setSessionRole,
+  setSessionUsage,
   toTranscriptView,
+  transcriptPath,
   workspaceStatus,
 } from './workspace-store.js'
 import { createWindow, serveRenderer } from './window.js'
 import type { AgentRole, HarnessFacts } from '../core/agents.js'
 import type { JobView } from '../core/jobs.js'
 import type { PromptEnvironment } from '../core/prompt.js'
-import type { SubagentSetup } from '../core/spawn.js'
+import type { SubagentSetup, SubagentSlot } from '../core/spawn.js'
 import type { Tool } from '../core/session.js'
-import type { AppEvent } from '../core/types.js'
+import type { AppEvent, McpServerStatus } from '../core/types.js'
 import type {
   ActiveSetRequest,
   AgentSummary,
   ConfigProbeRequest,
   ConfigProbeResult,
+  CaptureResult,
   ConfigStatus,
+  McpStatusView,
   PermissionDecision,
   ProviderSaveRequest,
   SessionOpenResponse,
   SessionSendRequest,
+  SecretView,
   SessionView,
+  SubagentOpenResponse,
   WorkspaceStatus,
 } from '../ipc/contract.js'
 
@@ -75,6 +87,7 @@ const EVENT_TYPES: AppEvent['type'][] = [
   'session.stopped',
   'session.note',
   'permission.request',
+  'mcp.status',
   'job.started',
   'job.update',
   'job.finished',
@@ -107,6 +120,12 @@ function shellName(): string {
 // never opened this launch is rebuilt from its stored transcript on first use.
 const sessions = new Map<string, Session>()
 
+// The secret names each live session's prompt was built with. A key captured
+// after that build — pasted into the composer, added in settings, written by a
+// tool — leaves the session holding a reference its prompt never explained, and
+// this is what notices.
+const promptSecrets = new Map<string, string[]>()
+
 // One hub per session, held apart from the session itself because it owns
 // subprocesses and sockets: retiring a session has to close them, and a Map
 // that only holds Sessions has nowhere to put that.
@@ -114,6 +133,42 @@ const hubs = new Map<string, McpHub>()
 
 /** Sessions being built right now, so two messages cannot build one twice. */
 const building = new Map<string, Promise<Session>>()
+
+/**
+ * Which subagent ids belong to which window, so a child's own stream reaches
+ * the window that asked for it and nowhere else. The id is the job id, which is
+ * also the child session's id — that is what lets the renderer tell a
+ * subagent's events apart from the conversation's.
+ */
+function subagentBus(sender: WebContents, parent: () => Session | undefined): (slot: SubagentSlot) => EventBus {
+  return slot => {
+    const bus = new EventBus()
+    for (const type of EVENT_TYPES) {
+      bus.on(type, event => {
+        if (!sender.isDestroyed()) sender.send(IPC_CHANNELS.sessionEvent, event)
+      })
+    }
+    // What the child has spent, as of the last usage event it emitted. A
+    // subagent's usage event carries its own running total, so what the parent
+    // is owed is the difference since the one before — added round by round
+    // rather than at the end, because a counter that jumps when a subagent
+    // finishes is not a counter of what is being spent right now.
+    let counted = emptyUsage()
+    bus.on('usage', event => {
+      if (event.sessionId !== slot.id) return
+      const total = event.usage
+      parent()?.addSubagentUsage({
+        input: total.input - counted.input,
+        output: total.output - counted.output,
+        cacheRead: total.cacheRead - counted.cacheRead,
+        cacheWrite: total.cacheWrite - counted.cacheWrite,
+        reasoning: total.reasoning - counted.reasoning,
+      })
+      counted = { ...total }
+    })
+    return bus
+  }
+}
 
 /**
  * How many times a session has been retired. A build reads this when it starts
@@ -145,10 +200,13 @@ async function retire(sessionId?: string): Promise<void> {
     epochs.set(id, epochOf(id) + 1)
     const hub = hubs.get(id)
     hubs.delete(id)
+    promptSecrets.delete(id)
     if (hub !== undefined) closing.push(hub.close())
   }
-  if (sessionId === undefined) sessions.clear()
-  else sessions.delete(sessionId)
+  if (sessionId === undefined) {
+    sessions.clear()
+    promptSecrets.clear()
+  } else sessions.delete(sessionId)
   await Promise.all(closing)
 }
 // One broker per window: it is the thing that can put a modal in front of a
@@ -189,10 +247,30 @@ function jobsFor(sender: WebContents): JobRegistry {
   // knows nothing about: it starts inside a turn and answers after it. Both
   // ends go into the session's own notes, so re-opening the session still says
   // a job ran and how it went.
-  bus.on('job.started', event => sessions.get(event.job.sessionId)?.note(`Background ${event.job.role} started: ${event.job.task}`))
+  // A foreground spawn is not one of these: the parent's turn is blocked on it
+  // and gets its answer as a tool result, so a note saying the same thing would
+  // be the same event told twice.
+  bus.on('job.started', event => {
+    if (event.job.background) sessions.get(event.job.sessionId)?.note(`Background ${event.job.role} started: ${event.job.task}`)
+  })
   bus.on('job.finished', event => {
+    const parent = sessions.get(event.job.sessionId)
+    // A background job outlives the turn that started it, so its tokens land on
+    // the parent's total with no turn left to write them down. Store the total
+    // as it now stands, or the window and the file disagree until the next
+    // message is sent.
+    if (parent !== undefined) {
+      void setSessionUsage(event.job.sessionId, parent.spent).catch((err: unknown) => {
+        process.stderr.write(`session usage: ${err instanceof Error ? err.message : String(err)}\n`)
+      })
+    }
+    if (!event.job.background) return
     const first = event.job.note?.split('\n')[0] ?? ''
-    sessions.get(event.job.sessionId)?.note(`Background ${event.job.role} ${event.job.state}${first === '' ? '' : `: ${first}`}`)
+    // The note names the subagent, so the parent's own transcript points at the
+    // conversation the subagent had rather than only at what it concluded.
+    parent?.note(
+      `Background ${event.job.role} ${event.job.state}${first === '' ? '' : `: ${first}`} [subagent:${event.job.id}]`,
+    )
   })
   const registry = new JobRegistry(bus)
   jobRegistries.set(sender.id, registry)
@@ -283,14 +361,20 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
   for (const server of hub.status) {
     if (!server.connected) console.warn(`mcp: ${server.name} is not connected: ${server.error ?? 'unknown reason'}`)
   }
+  // The window asked what MCP this session has before it had any — a session is
+  // only built on its first message, and nothing is dialled for one the user
+  // merely clicked on. This is the answer arriving late.
+  bus.emit({ type: 'mcp.status', sessionId, servers: [...hub.status], live: true, at: Date.now() })
 
   // What MCP the session actually has, told to the agent in its own words: a
   // model with no such block answers "what tools do you have" from its training
   // set, and invents a policy to explain a server it was never told about.
   const paths = mcpPaths(root)
+  const secrets = await secretVault()
   const context = [
     ...(await roleContext(role, root, HARNESS)),
     ...skillsBlock(skills),
+    ...secretsBlock(secrets.names()),
     ...mcpBlock(hub.status, paths, {
       canWrite: AGENTS[role].tools.includes('write'),
       canSpawn: AGENTS[role].tools.includes('spawn'),
@@ -316,8 +400,10 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
 
   const spent = await sessionUsage(sessionId)
 
-  const setup = async (request: { role: AgentRole; mode: string }, jobId: string | null): Promise<SubagentSetup> => {
-    const isJob = jobId !== null
+  const setup = async (request: { role: AgentRole; mode: string }, slot: SubagentSlot): Promise<SubagentSetup> => {
+    // Only a background child gets `job_update`: a foreground one is being
+    // waited on, so its report is the answer it comes back with.
+    const isJob = slot.background
     if (request.mode === 'clone') {
       // A clone is the parent, one message later: the same prompt, the same
       // tool list and the same history, so the provider's cache answers the
@@ -340,6 +426,7 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
       systemPrompt: agentPrompt(request.role, environment(root), [
         ...(await roleContext(request.role, root, HARNESS)),
         ...skillsBlock(skills),
+        ...secretsBlock(secrets.names()),
         // A subagent cannot spawn, so it is the one that does the work: it gets
         // the commands the session above it was told to delegate. The commands
         // name the harness CLI, and the CLI names the harness root, so they go
@@ -371,6 +458,7 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
       systemPrompt,
       access,
       history: await loadTranscript(sessionId),
+      secrets,
       ...(spent === null ? {} : { usage: spent }),
       spawn: createSpawnHost({
         sessionId,
@@ -380,7 +468,36 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
         provider,
         access,
         jobs: jobsFor(sender),
+        secrets,
         setup,
+        // A subagent's stream goes to the same window, under the job's id. That
+        // is the whole of what makes one watchable: the renderer already knows
+        // how to draw these events, and the id says which panel they belong in.
+        bus: subagentBus(sender, () => parent.session),
+        // The subagent's own conversation, stored beside the parent's and named
+        // by the id the tool result quotes. Reading back what another agent
+        // actually did is the difference between a debuggable harness and one
+        // that hands you a paragraph and asks you to trust it.
+        save: async (slot, record) => {
+          const job = jobsFor(sender).get(slot.id)
+          await saveSubagent({
+            id: slot.id,
+            sessionId,
+            role: record.request.role,
+            mode: record.request.mode,
+            task: record.request.task,
+            background: slot.background,
+            state: record.state,
+            note: record.note,
+            usage: record.usage,
+            startedAt: job?.startedAt ?? Date.now(),
+            endedAt: Date.now(),
+            messages: record.messages,
+            notes: record.notes,
+          }).catch((err: unknown) => {
+            process.stderr.write(`subagent transcript: ${err instanceof Error ? err.message : String(err)}\n`)
+          })
+        },
       }),
     },
     provider,
@@ -390,6 +507,7 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
   parent.session = session
   session.restoreNotes(await loadNotes(sessionId))
   sessions.set(sessionId, session)
+  promptSecrets.set(sessionId, secrets.names())
   return session
 }
 
@@ -404,7 +522,8 @@ function quit(event: Electron.Event): void {
   if (quitting) return
   quitting = true
   event.preventDefault()
-  void retire().finally(() => app.quit())
+  // A key captured in the last turn is still queued for the encrypted file.
+  void Promise.all([retire(), flushSecrets()]).finally(() => app.quit())
 }
 
 app.whenReady().then(() => {
@@ -478,6 +597,50 @@ app.whenReady().then(() => {
     return { session, workspace, messages: toTranscriptView(await loadTranscript(id)), notes: await loadNotes(id) }
   })
 
+  // A session's own name, once the user has given it one. `noteTurn` only ever
+  // writes a title over the placeholder, so a renamed session keeps its name.
+  ipcMain.handle(IPC_CHANNELS.sessionRename, async (_event: IpcMainInvokeEvent, req: { id: string; title: string }): Promise<WorkspaceStatus> => {
+    await renameSession(req.id, req.title)
+    return workspaceStatus()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.sessionTranscriptPath, (_event: IpcMainInvokeEvent, id: string): string => transcriptPath(id))
+
+  /**
+   * What MCP this session has. A session that has never run has no hub — it is
+   * built on the first message, and dialling servers for a session the user only
+   * clicked on would spawn subprocesses nobody asked for — so the answer before
+   * that is the configured list, marked as not yet dialled.
+   */
+  ipcMain.handle(IPC_CHANNELS.mcpStatus, async (_event: IpcMainInvokeEvent, sessionId: string): Promise<McpStatusView> => {
+    const hub = hubs.get(sessionId)
+    if (hub !== undefined) return { live: true, servers: [...hub.status] }
+    const root = await sessionRoot(sessionId)
+    if (root === null) return { live: false, servers: [] }
+    const loaded = await loadServers(root)
+    const servers: McpServerStatus[] = loaded.problems.map(problem => ({
+      name: 'mcp.json',
+      connected: false,
+      toolCount: 0,
+      error: problem,
+    }))
+    for (const server of loaded.servers) servers.push({ name: server.name, connected: false, toolCount: 0, pending: true })
+    return { live: false, servers }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.secretsList, (): Promise<SecretView[]> => secretList())
+
+  ipcMain.handle(IPC_CHANNELS.secretsForget, (_event: IpcMainInvokeEvent, name: string): Promise<SecretView[]> => forgetSecret(name))
+
+  /**
+   * The window's first call for every message it is about to draw. A key is
+   * taken out here, before anything renders and before anything is stored, so
+   * the raw value exists in exactly one place: the vault.
+   */
+  ipcMain.handle(IPC_CHANNELS.secretsCapture, async (_event: IpcMainInvokeEvent, text: string): Promise<CaptureResult> => {
+    return (await secretVault()).capture(text)
+  })
+
   ipcMain.handle(IPC_CHANNELS.sessionDelete, async (_event: IpcMainInvokeEvent, id: string): Promise<WorkspaceStatus> => {
     void retire(id)
     await deleteSession(id)
@@ -504,6 +667,20 @@ app.whenReady().then(() => {
 
   ipcMain.handle(IPC_CHANNELS.jobsList, (event: IpcMainInvokeEvent): JobView[] => jobsFor(event.sender).list())
 
+  /**
+   * One subagent's stored conversation. The window uses it for a subagent this
+   * launch never ran — a spawn from last week, opened from the tool call that
+   * started it — where there is no live stream to replay.
+   */
+  ipcMain.handle(
+    IPC_CHANNELS.subagentOpen,
+    async (_event: IpcMainInvokeEvent, req: { sessionId: string; id: string }): Promise<SubagentOpenResponse | null> => {
+      const stored = await loadSubagent(req.sessionId, req.id)
+      if (stored === null) return null
+      return { ...stored, messages: toTranscriptView(stored.messages) }
+    },
+  )
+
   ipcMain.handle(IPC_CHANNELS.permissionRespond, (event: IpcMainInvokeEvent, req: { id: string; decision: PermissionDecision }) => {
     brokerFor(event.sender).resolve(req.id, req.decision)
   })
@@ -515,14 +692,31 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle(IPC_CHANNELS.sessionSend, async (event: IpcMainInvokeEvent, req: SessionSendRequest) => {
+    // The window has already captured what it drew, and this is idempotent on
+    // text that has been through it. It runs again because this is the boundary
+    // that matters: a key must not reach the transcript whatever called send.
+    const vault = await secretVault()
+    const text = vault.capture(req.text).text
+    // A key captured after this session was built gives it a reference its
+    // system prompt has never heard of, and a model that reads
+    // `{{secret:name}}` with nothing explaining it asks for the key it already
+    // has. The session is retired so the next build names it. That costs one
+    // cache miss and a hub restart, once, the first time a key appears.
+    //
+    // The comparison is against what the prompt was built with, not against the
+    // vault a moment ago: the window captures the message before it draws it, so
+    // by here the name is already stored and a second capture is idempotent —
+    // measured that way, nothing ever looks new and the rebuild never happened.
+    const built = promptSecrets.get(req.sessionId)
+    if (built !== undefined && hasUnknownSecret(built, vault.names())) await retire(req.sessionId)
     const session = await sessionFor(event.sender, req.sessionId)
-    const usage = await session.run(req.text)
+    const usage = await session.run(text)
 
     // The transcript is written after the turn, not during it: a half-streamed
     // answer is not a message, and a crash mid-turn should leave the session
     // exactly as it was before the message was sent.
     await saveTranscript(req.sessionId, session.transcript, session.notes)
-    const updated = await noteTurn(req.sessionId, req.text, usage)
+    const updated = await noteTurn(req.sessionId, text, usage)
 
     // One line per completed turn, so `nh usage` has something to read. A log
     // that cannot be written is worth a warning, never a failed turn.

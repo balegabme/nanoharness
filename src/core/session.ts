@@ -5,6 +5,7 @@ import type { Effort } from './config.js'
 import { workspaceGate } from './scope.js'
 import type { AccessGate } from './scope.js'
 import { emptyUsage } from './types.js'
+import { SecretVault } from './secrets.js'
 import type { ChatMessage, SessionNote, ThinkingBlock, ToolCall, ToolInput, ToolResult, TurnUsage } from './types.js'
 import type { SpawnHost } from './spawn.js'
 import type { JobRegistry } from './jobs.js'
@@ -25,6 +26,16 @@ export interface ToolContext {
 
 export interface Tool {
   input: ToolInput
+  /**
+   * True for a tool whose arguments must reach it exactly as the model wrote
+   * them, `{{secret:name}}` and all. Every other tool gets the real values
+   * substituted in (`SecretVault.revealDeep`), because a tool is where a key is
+   * finally used — but `spawn` and `job_update` do not use their arguments,
+   * they turn them into text: a subagent's first message, a note in the
+   * window, a line in a transcript. Filling those in would put the key back on
+   * the wire and back on disk, which is the whole thing this avoids.
+   */
+  keepsPlaceholders?: boolean
   run(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult>
 }
 
@@ -32,6 +43,8 @@ export type ArgsParse<A> = { ok: true; args: A } | { ok: false; error: string }
 
 export interface ToolSpec<A> {
   input: ToolInput
+  /** See `Tool.keepsPlaceholders`. A tool that only turns its arguments into text. */
+  keepsPlaceholders?: boolean
   parse(args: Record<string, unknown>): ArgsParse<A>
   run(args: A, ctx: ToolContext): Promise<ToolResult>
 }
@@ -42,6 +55,7 @@ export interface ToolSpec<A> {
 export function defineTool<A>(spec: ToolSpec<A>): Tool {
   return {
     input: spec.input,
+    ...(spec.keepsPlaceholders === true ? { keepsPlaceholders: true } : {}),
     async run(raw, ctx) {
       const parsed = spec.parse(raw)
       if (parsed.ok) return spec.run(parsed.args, ctx)
@@ -88,11 +102,19 @@ export interface SessionOptions {
   job?: { id: string; jobs: JobRegistry }
   /** What this session had already spent before it was rebuilt. */
   usage?: TurnUsage
+  /**
+   * The keys the user pasted. The model holds placeholders for them; this is
+   * the only object that can turn one back into a value, and it does so for
+   * tool arguments alone. Left out, nothing is substituted and nothing is
+   * redacted, which is the right behaviour for a session with no secrets.
+   */
+  secrets?: SecretVault
 }
 
 export class Session {
   readonly bus: EventBus
   readonly access: AccessGate
+  private readonly secrets: SecretVault
   private readonly messages: ChatMessage[] = []
   private readonly journal: SessionNote[] = []
   private turn = 0
@@ -115,6 +137,7 @@ export class Session {
   ) {
     this.bus = bus ?? new EventBus()
     this.access = options.access ?? workspaceGate(options.cwd)
+    this.secrets = options.secrets ?? new SecretVault()
     this.messages.push({ role: 'system', content: options.systemPrompt })
     // A resumed session keeps its running total: the turns it is resuming from
     // were paid for, and a counter that restarts at zero says they were not.
@@ -145,8 +168,9 @@ export class Session {
    * thing the user saw the first time.
    */
   note(text: string): void {
-    this.record('note', text)
-    this.bus.emit({ type: 'session.note', sessionId: this.options.sessionId, turn: this.turn, text, at: Date.now() })
+    const safe = this.secrets.redact(text)
+    this.record('note', safe)
+    this.bus.emit({ type: 'session.note', sessionId: this.options.sessionId, turn: this.turn, text: safe, at: Date.now() })
   }
 
   /**
@@ -155,7 +179,10 @@ export class Session {
    * once live and once on replay, never twice.
    */
   private record(kind: SessionNote['kind'], text: string): void {
-    this.journal.push({ kind, text, turn: this.turn, after: this.transcript.length, at: Date.now() })
+    // The journal is written to disk, so it is a boundary like any other: an
+    // error quoting a request, or a note quoting a subagent, goes through the
+    // same scrub a tool result does.
+    this.journal.push({ kind, text: this.secrets.redact(text), turn: this.turn, after: this.transcript.length, at: Date.now() })
   }
 
   /** Notes from an earlier run of this session, replayed alongside the history. */
@@ -168,11 +195,47 @@ export class Session {
     return this.controller !== null
   }
 
-  /** End the turn now: abort the request in flight and stop the tool loop. */
+  /**
+   * End the turn now: abort the request in flight and stop the tool loop.
+   *
+   * Subagents go with it. A subagent is this session spending money under
+   * another name — a background one especially, since nothing else in the app
+   * can ever end it — so a stop that left them running would be a stop button
+   * that stops the part the user can see and none of the part they are paying
+   * for.
+   */
   stop(): void {
+    this.options.spawn?.stopAll()
     if (this.controller === null) return
     this.stopped = true
     this.controller.abort()
+  }
+
+  /** True when the last turn ended because it was stopped, not because it finished. */
+  get interrupted(): boolean {
+    return this.stopped
+  }
+
+  /** Everything this session has spent, its subagents included. */
+  get spent(): TurnUsage {
+    return { ...this.totalUsage }
+  }
+
+  /**
+   * Tokens a subagent of this session spent. A subagent is billed to whoever
+   * started it, so its usage lands in the same total and leaves by the same
+   * event: that is what puts a spawn's cost in the window's counter and its
+   * output in the throughput while it is still running, rather than never.
+   */
+  addSubagentUsage(delta: TurnUsage): void {
+    this.addUsage(delta)
+    this.bus.emit({
+      type: 'usage',
+      sessionId: this.options.sessionId,
+      turn: this.turn,
+      usage: { ...this.totalUsage },
+      at: Date.now(),
+    })
   }
 
   /** Number of the turn that ran most recently. */
@@ -197,7 +260,9 @@ export class Session {
     try {
       return await this.runRounds(sessionId)
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
+      // A tool that threw rather than returned can be quoting the arguments it
+      // was given, which by then held the real value.
+      const message = this.secrets.redact(err instanceof Error ? err.message : String(err))
       this.record('error', message)
       this.bus.emit({ type: 'session.error', sessionId, turn: this.turn, message, at: Date.now() })
       throw err
@@ -227,7 +292,11 @@ export class Session {
       if (text !== '' || toolCalls.length > 0 || thinking.length > 0) {
         this.messages.push({
           role: 'assistant',
-          content: text,
+          // The model's own words go through the same scrub a tool result does.
+          // It should never hold a key — everything it reads is redacted first
+          // — but "should never" is not a boundary, and this is where the whole
+          // string exists, so a value split across two deltas is caught here.
+          content: this.secrets.empty ? text : this.secrets.redact(text),
           ...(toolCalls.length > 0 ? { toolCalls } : {}),
           ...(thinking.length > 0 ? { thinking } : {}),
         })
@@ -289,13 +358,21 @@ export class Session {
         switch (chunk.kind) {
           case 'text':
             text += chunk.text
-            this.bus.emit({ type: 'text_delta', sessionId: this.options.sessionId, text: chunk.text, at: Date.now() })
+            this.bus.emit({ type: 'text_delta', sessionId: this.options.sessionId, text: this.safe(chunk.text), at: Date.now() })
             break
           case 'thinking':
-            this.bus.emit({ type: 'thinking_delta', sessionId: this.options.sessionId, text: chunk.text, at: Date.now() })
+            this.bus.emit({ type: 'thinking_delta', sessionId: this.options.sessionId, text: this.safe(chunk.text), at: Date.now() })
             break
           case 'thinking_block':
-            thinking.push(chunk.block)
+            // Kept in the transcript, so it is scrubbed like everything else
+            // that is written down. A signed block is left exactly as the
+            // provider signed it: editing it invalidates the signature, and it
+            // is the one thing that has to go back on the wire byte for byte.
+            thinking.push(
+              chunk.block.kind === 'thinking' && chunk.block.signature === undefined
+                ? { ...chunk.block, text: this.safe(chunk.block.text) }
+                : chunk.block,
+            )
             break
           case 'tool':
             toolCalls.push(chunk.tool)
@@ -330,7 +407,7 @@ export class Session {
   }
 
   private async executeTool(call: ToolCall): Promise<void> {
-    const result = await this.resultFor(call)
+    const result = this.scrub(await this.resultFor(call))
 
     this.failures = result.ok ? 0 : this.failures + 1
     // A run of failures is not a reason to end the turn — debugging is mostly
@@ -349,6 +426,26 @@ export class Session {
       toolCallId: call.id,
       ...(result.ok ? {} : { failed: true }),
     })
+  }
+
+  /**
+   * A key out of whatever the tool said. A shell that echoes its own command
+   * line, a config file read back, a curl that prints the request it made — all
+   * three would otherwise put the value the model must not see straight into
+   * the conversation, and from there into the stored transcript.
+   */
+  /** One delta on its way to the window, with any key taken out of it. */
+  private safe(text: string): string {
+    return this.secrets.empty ? text : this.secrets.redact(text)
+  }
+
+  private scrub(result: ToolResult): ToolResult {
+    if (this.secrets.empty) return result
+    return {
+      ...result,
+      summary: this.secrets.redact(result.summary),
+      ...(result.content === undefined ? {} : { content: this.secrets.redact(result.content) }),
+    }
   }
 
   /**
@@ -381,7 +478,12 @@ export class Session {
     if (!isJsonObject(parsed)) {
       return { ok: false, summary: `args must be a JSON object for ${tool.input.name}`, isError: true }
     }
-    return tool.run(parsed, {
+    // The one place a secret becomes itself again: the arguments of a call that
+    // is about to run. Everything upstream of here — the transcript, the
+    // request, the window — holds `{{secret:name}}` and nothing else, and a
+    // tool that only turns its arguments back into text is upstream too.
+    const args = tool.keepsPlaceholders === true ? parsed : (this.secrets.revealDeep(parsed) as Record<string, unknown>)
+    return tool.run(args, {
       cwd: this.options.cwd,
       access: this.access,
       ...(this.options.spawn === undefined ? {} : { spawn: this.options.spawn }),

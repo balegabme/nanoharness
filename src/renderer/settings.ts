@@ -1,7 +1,7 @@
 // doc: docs/harness/ui.md
 import { ask } from './confirm.js'
-import { el, GLYPH, icon, message, must } from './dom.js'
-import type { ConfigStatus, NanoBridge, ProviderSaveRequest, ProviderView } from '../ipc/contract.js'
+import { el, GLYPH, icon, message, must, relativeTime } from './dom.js'
+import type { ConfigStatus, NanoBridge, ProviderSaveRequest, ProviderView, SecretView } from '../ipc/contract.js'
 import type { ProviderKind } from '../core/config.js'
 
 /**
@@ -13,8 +13,12 @@ import type { ProviderKind } from '../core/config.js'
 const dialog = must<HTMLDialogElement>('settings-dialog')
 const closeButton = must<HTMLButtonElement>('settings-close')
 const navProviders = must<HTMLButtonElement>('pane-providers')
+const navSecrets = must<HTMLButtonElement>('pane-secrets')
 const navAbout = must<HTMLButtonElement>('pane-about')
 const providersPane = must<HTMLElement>('providers-pane')
+const secretsPane = must<HTMLElement>('secrets-pane')
+const secretList = must<HTMLElement>('secret-list')
+const secretsEmpty = must<HTMLElement>('secrets-empty')
 const aboutPane = must<HTMLElement>('about-pane')
 const aboutVersion = must<HTMLElement>('about-version')
 
@@ -53,21 +57,73 @@ export function latestConfig(): ConfigStatus | null {
   return lastStatus
 }
 
-export function openSettings(pane: 'providers' | 'about' = 'providers'): void {
+export function openSettings(pane: SettingsPane = 'providers'): void {
   showPane(pane)
   if (!dialog.open) dialog.showModal()
   if (pane === 'providers') setupBase.focus()
 }
 
+export type SettingsPane = 'providers' | 'secrets' | 'about'
+
 export function closeSettings(): void {
   if (dialog.open) dialog.close()
 }
 
-function showPane(pane: 'providers' | 'about'): void {
+function showPane(pane: SettingsPane): void {
   providersPane.hidden = pane !== 'providers'
+  secretsPane.hidden = pane !== 'secrets'
   aboutPane.hidden = pane !== 'about'
   navProviders.classList.toggle('current', pane === 'providers')
+  navSecrets.classList.toggle('current', pane === 'secrets')
   navAbout.classList.toggle('current', pane === 'about')
+  if (pane === 'secrets') void refreshSecrets()
+}
+
+/**
+ * What the vault holds. Names and vendors only: the value never crosses the
+ * bridge, not even here — there is nothing this pane could do with it that
+ * would not amount to putting the key back on screen.
+ *
+ * The pane exists because capture is automatic and pattern-based, which means
+ * it will occasionally take something that was not a key. Without a list, a
+ * user who watched that happen has no way to see it or undo it.
+ */
+async function refreshSecrets(): Promise<void> {
+  if (bridge === null) return
+  const held = await bridge.secrets().catch(() => [])
+  drawSecrets(held)
+}
+
+function drawSecrets(held: readonly SecretView[]): void {
+  secretList.replaceChildren()
+  secretsEmpty.hidden = held.length > 0
+  for (const secret of held) {
+    const row = el('div', 'secret-row')
+    const text = el('div', 'secret-text')
+    text.append(el('code', 'secret-name', `{{secret:${secret.name}}}`), el('span', 'secret-hint', `${secret.hint} · added ${relativeTime(secret.at)}`))
+
+    const forget = el('button', 'btn sm outline danger-text')
+    forget.type = 'button'
+    forget.textContent = 'Forget'
+    // A reference in an old transcript outlives the key it names, so say what
+    // forgetting actually costs before it happens rather than after.
+    forget.title = 'Drop the key. Messages that already reference it stop working.'
+    forget.addEventListener('click', () => void forgetSecret(secret.name))
+
+    row.append(text, forget)
+    secretList.append(row)
+  }
+}
+
+async function forgetSecret(name: string): Promise<void> {
+  if (bridge === null) return
+  const go = await ask({
+    title: `Forget ${name}?`,
+    detail: 'The key is deleted. Anything that already references it — this session, or an old one — will send the reference itself.',
+    confirmLabel: 'Forget',
+  })
+  if (!go) return
+  drawSecrets(await bridge.forgetSecret(name).catch(() => []))
 }
 
 /**
@@ -313,6 +369,7 @@ export function initSettings(handlers: SettingsHandlers): void {
   aboutVersion.textContent = `nanoharness v${handlers.version}`
 
   navProviders.addEventListener('click', () => showPane('providers'))
+  navSecrets.addEventListener('click', () => showPane('secrets'))
   navAbout.addEventListener('click', () => showPane('about'))
   closeButton.addEventListener('click', () => closeSettings())
   // Esc closes a <dialog> on its own, which would strand a user with no

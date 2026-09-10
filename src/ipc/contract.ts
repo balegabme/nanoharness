@@ -1,9 +1,10 @@
 // doc: docs/harness/overview.md
 import type { AgentRole } from '../core/agents.js'
 import type { ActiveSelection, Effort, ProviderKind, ProviderRecord } from '../core/config.js'
-import type { JobView } from '../core/jobs.js'
+import type { JobState, JobView } from '../core/jobs.js'
 import type { AccessIntent } from '../core/scope.js'
-import type { AppEvent, SessionNote, TurnUsage } from '../core/types.js'
+import type { SpawnMode } from '../core/spawn.js'
+import type { AppEvent, McpServerStatus, SessionNote, TurnUsage } from '../core/types.js'
 
 export const IPC_CHANNELS = {
   ping: 'ipc:ping',
@@ -21,10 +22,17 @@ export const IPC_CHANNELS = {
   sessionCreate: 'session:create',
   sessionOpen: 'session:open',
   sessionDelete: 'session:delete',
+  sessionRename: 'session:rename',
+  sessionTranscriptPath: 'session:transcript-path',
   permissionRespond: 'permission:respond',
   sessionSetRole: 'session:set-role',
   jobsList: 'jobs:list',
+  subagentOpen: 'subagent:open',
   agentsList: 'agents:list',
+  mcpStatus: 'mcp:status',
+  secretsList: 'secrets:list',
+  secretsForget: 'secrets:forget',
+  secretsCapture: 'secrets:capture',
   openExternal: 'shell:open-external',
 } as const
 
@@ -42,6 +50,33 @@ export interface AgentSummary {
 export interface SessionSendRequest {
   sessionId: string
   text: string
+}
+
+/** The MCP servers one session has, and whether anything has been dialled yet. */
+export interface McpStatusView {
+  /**
+   * True once the session's hub exists. Until the first message a session has
+   * no hub — nothing is spawned for a session the user only clicked on — so the
+   * list before that is what the config says, not what is running.
+   */
+  live: boolean
+  servers: McpServerStatus[]
+}
+
+/** One captured key, named but never valued: the value does not cross IPC. */
+export interface SecretView {
+  name: string
+  /** The vendor whose shape it matched, or `secret` when it was labelled. */
+  hint: string
+  at: number
+}
+
+/** What `capture` did to a message on its way into the conversation. */
+export interface CaptureResult {
+  /** The text with every key replaced by its placeholder. Safe to draw and store. */
+  text: string
+  /** The names now standing in for what was taken out. */
+  captured: string[]
 }
 
 /** A folder in the sidebar. Every session inside it is scoped to `root`. */
@@ -80,7 +115,7 @@ export interface TranscriptMessage {
   callId?: string
   /** The call this message answers came back an error. */
   failed?: boolean
-  /** What the model thought before this message, where the provider signs and returns it. */
+  /** What the model thought before this message, where the provider reports it. */
   thinking?: string
 }
 
@@ -92,6 +127,27 @@ export interface SessionOpenResponse {
    * Errors, stops and harness notes, in the places they happened. Re-opening a
    * session shows what the window showed, not a tidied version of it.
    */
+  notes: SessionNote[]
+}
+
+/**
+ * One subagent as the window replays it: the job's facts, and the conversation
+ * it actually had. The window draws it with the same blocks it draws the main
+ * agent with, so this is the same shape a session opens with plus the job.
+ */
+export interface SubagentOpenResponse {
+  id: string
+  sessionId: string
+  role: AgentRole
+  mode: SpawnMode
+  task: string
+  background: boolean
+  state: JobState
+  note: string
+  usage: TurnUsage
+  startedAt: number
+  endedAt: number
+  messages: TranscriptMessage[]
   notes: SessionNote[]
 }
 
@@ -190,13 +246,35 @@ export interface NanoBridge {
   createSession(workspaceId: string): Promise<SessionView>
   openSession(id: string): Promise<SessionOpenResponse>
   deleteSession(id: string): Promise<WorkspaceStatus>
+  /** Give a session a name of its own. The transcript is untouched. */
+  renameSession(id: string, title: string): Promise<WorkspaceStatus>
+  /** Where this session's transcript file is, for the context menu's copy item. */
+  transcriptPath(id: string): Promise<string>
   respondToPermission(id: string, decision: PermissionDecision): Promise<void>
   /** Switch the agent a session is talking to. The transcript is kept. */
   setSessionRole(sessionId: string, role: AgentRole): Promise<SessionView>
   /** Background subagents, newest first. In-memory: empty after a restart. */
   jobs(): Promise<JobView[]>
+  /**
+   * One subagent's stored conversation, or null when it was never written —
+   * which is the case for one that is still running in this launch, and whose
+   * stream the window already has.
+   */
+  subagent(sessionId: string, id: string): Promise<SubagentOpenResponse | null>
   /** The three agents, for the role chip. */
   agents(): Promise<AgentSummary[]>
+  /** Which MCP servers this session has, live if it has been built. */
+  mcpStatus(sessionId: string): Promise<McpStatusView>
+  /** The captured keys, by name. Never their values. */
+  secrets(): Promise<SecretView[]>
+  /** Drop one key. A placeholder naming it stops resolving from here on. */
+  forgetSecret(name: string): Promise<SecretView[]>
+  /**
+   * Take every key out of a message before it is drawn or sent. The window
+   * calls this first and shows what comes back, so a pasted key is never on
+   * screen — not even for the frame between typing and sending.
+   */
+  captureSecrets(text: string): Promise<CaptureResult>
   config(): Promise<ConfigStatus>
   saveProvider(request: ProviderSaveRequest): Promise<ConfigStatus>
   deleteProvider(id: string): Promise<ConfigStatus>

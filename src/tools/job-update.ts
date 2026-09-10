@@ -30,6 +30,8 @@ export const JOB_UPDATE_TOOL = defineTool<JobUpdateArgs>({
     },
   },
   parse: parseArgs,
+  // The note is text for the window and the parent's journal, never a request.
+  keepsPlaceholders: true,
   async run({ note }, { job }): Promise<ToolResult> {
     if (job === undefined) {
       const no = 'job_update only works inside a background job; say it in your answer instead'
