@@ -69,7 +69,7 @@ export async function resolveUnder(root: string, target: string): Promise<{ path
 
 /**
  * `~` is the shell's spelling of the home directory, and resolving it as a
- * relative path would put it *inside* the root — the opposite of the truth.
+ * relative path would put it *inside* the root, the opposite of the truth.
  */
 export function expandHome(token: string): string {
   if (token !== '~' && !token.startsWith('~/') && !token.startsWith('~\\')) return token
@@ -81,7 +81,7 @@ const MSYS_ABSOLUTE = /^\/([a-zA-Z])(\/|$)/
 /**
  * Git Bash spells `C:\` as `/c/`, and an agent that has just run a shell
  * command writes the path it saw there into `read` a moment later. Resolved as
- * given, `/c/project/file` becomes `<drive>:\c\project\file` — a path that does
+ * given, `/c/project/file` becomes `<drive>:\c\project\file`, a path that does
  * not exist, reported as if the file were missing. So a Windows session accepts
  * both spellings and the tools stop disagreeing with the shell.
  *
@@ -142,19 +142,105 @@ function isDeviceNode(token: string): boolean {
   return token === '/dev' || token.startsWith('/dev/') || token.toUpperCase() === 'NUL'
 }
 
+const WORD_BREAK = /[\s;|&()<>]/
+
+/** The escapes bash honours inside double quotes. A `\b` stays a `\b`. */
+const DOUBLE_QUOTE_ESCAPES = '$`"\\\n'
+
+/**
+ * A command line, split the way the shell splits it. Quoting is the whole
+ * point: a `node -e "…"` script body is one word rather than forty, and a path
+ * with a space in it is one word rather than two halves of nothing.
+ *
+ * Only what this file needs is modelled: word breaks, the two quote styles,
+ * and the escapes above, so that `"C:\project\src"` keeps its separators.
+ */
+function shellWords(command: string): string[] {
+  const words: string[] = []
+  let word = ''
+  let quote: "'" | '"' | null = null
+  let started = false
+  const push = (): void => {
+    if (started) words.push(word)
+    word = ''
+    started = false
+  }
+  for (let i = 0; i < command.length; i += 1) {
+    const ch = command[i] ?? ''
+    if (quote !== null) {
+      if (ch === quote) {
+        quote = null
+      } else if (quote === '"' && ch === '\\' && DOUBLE_QUOTE_ESCAPES.includes(command[i + 1] ?? '')) {
+        i += 1
+        word += command[i]
+        started = true
+      } else {
+        word += ch
+        started = true
+      }
+      continue
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch
+      started = true
+    } else if (WORD_BREAK.test(ch)) {
+      push()
+    } else {
+      word += ch
+      started = true
+    }
+  }
+  push()
+  return words
+}
+
+/**
+ * Characters a path we would ask about does not carry. A word holding one is
+ * code, whether a script body, a JSON payload or a shell assignment, and
+ * reading it as a path is how the `.exec(s)` at the end of a regex literal
+ * became a question about `C:\.exec`. Spaces are deliberately not on this
+ * list: `C:\Program
+ * Files` is a path, and quoting has already kept it in one piece.
+ */
+const NOT_IN_PATH = /[;=$*?<>|"'`\n]/
+
+/** A URL is not a local path, and its `/` segments must not read as one. */
+const URL_LIKE = /\b[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\s'"`]+/g
+
+/**
+ * A path named inside a word that is otherwise code. Only shapes with no
+ * second reading count: a drive letter, or two or more `/` segments whose
+ * first does not begin with a dot. One segment is not enough, since that is
+ * what a regex literal looks like, and a leading dot is the tail of something
+ * joined to a base the code computed (`homedir() + '/.nanoharness/mcp.json'`),
+ * where naming the fragment as an absolute path would point the question at a
+ * file that does not exist.
+ */
+const EMBEDDED = [/[a-zA-Z]:[\\/][^\s'"`;=$*?<>|,]+/g, /(?<![\w.~-])(?:~|\/[\w$-][\w.$-]*)(?:\/[\w.$-]+)+/g]
+
 /**
  * Paths a shell command appears to reach for. A command line is not a path
  * list, so this is a filter and not a parser: absolute paths, `~`, and
  * anything walking through `..` are the forms that can leave the root, and
- * each one found is checked like any other path. Quotes and separators are
- * stripped; a command that hides its target behind a variable is not caught,
- * which is why the ledger still wants a real sandbox here.
+ * each one found is checked like any other path.
+ *
+ * The words are the shell's words, so a quoted script body stays whole rather
+ * than being sliced into fragments that only look like paths. Such a word is
+ * searched for the two shapes that can be nothing else, and nothing is made of
+ * the rest: a path assembled at runtime out of variables is not caught, which
+ * is why the ledger still wants a real sandbox here.
  */
 export function suspectPaths(command: string): string[] {
   const out = new Set<string>()
-  for (const raw of command.split(/[\s;|&()<>]+/)) {
-    const token = raw.replace(/^['"]+|['"]+$/g, '')
+  for (const token of shellWords(command.replace(URL_LIKE, ' '))) {
     if (token === '' || isDeviceNode(token)) continue
+    if (NOT_IN_PATH.test(token)) {
+      for (const shape of EMBEDDED) {
+        shape.lastIndex = 0
+        for (let match = shape.exec(token); match !== null; match = shape.exec(token)) out.add(match[0])
+      }
+      continue
+    }
     if (token.startsWith('~')) {
       out.add(token)
       continue

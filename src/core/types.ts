@@ -39,6 +39,24 @@ export interface ToolResult {
   isError?: boolean
 }
 
+/**
+ * One MCP server as the window shows it. It lives here rather than in the MCP
+ * layer because an event carries it, and `AppEvent` is the one shape both the
+ * main process and the renderer agree on.
+ */
+export interface McpServerStatus {
+  name: string
+  connected: boolean
+  toolCount: number
+  /** Why it is not connected, in the words the user needs to fix it. */
+  error?: string
+  /**
+   * Read from the config rather than from a live connection: the session has
+   * not been built yet, so nothing has been dialled.
+   */
+  pending?: boolean
+}
+
 export function emptyUsage(): TurnUsage {
   return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0 }
 }
@@ -68,8 +86,13 @@ export type AppEvent =
   // reported back. A turn never ends without one of these or an answer.
   | { type: 'session.note'; sessionId: string; turn: number; text: string; at: number }
   | { type: 'permission.request'; sessionId: string; id: string; intent: 'read' | 'write' | 'run'; paths: string[]; root: string; at: number }
-  // A background subagent, which has no stream of its own in the window: these
-  // three are everything the user sees of it (plan §5).
+  // Which MCP servers this session ended up with, once its hub has finished
+  // dialling. The window asks for the same thing when a session is opened; this
+  // is the push for the case where the answer arrives after the question.
+  | { type: 'mcp.status'; sessionId: string; servers: McpServerStatus[]; live: boolean; at: number }
+  // A subagent, background or foreground. Its own stream events are the ones
+  // above, emitted under `sessionId` = the job's id, so the window can show a
+  // subagent working with the same blocks it draws the main agent with.
   | { type: 'job.started'; job: JobView; at: number }
   | { type: 'job.update'; jobId: string; note: string; at: number }
   | { type: 'job.finished'; job: JobView; at: number }
@@ -77,7 +100,7 @@ export type AppEvent =
 /**
  * A line the window showed that is not a message: an error, a stop, a note the
  * harness wrote about the run. Stored with the transcript, because a re-opened
- * session that shows only the messages is not what the user saw — a turn the
+ * session that shows only the messages is not what the user saw: a turn the
  * harness cut short would come back looking like a turn that simply ended.
  *
  * `after` is how many messages had been written when it happened, which is what
@@ -98,8 +121,9 @@ export type ChatMessage =
 export type ChatChunk =
   | { kind: 'text'; text: string }
   | { kind: 'thinking'; text: string }
-  // The finished, signed block - emitted once the model closes it, so the
-  // conversation can hand it back on the next request.
+  // The finished block, emitted once the model closes it. Anthropic signs it,
+  // and a signed one is handed back on the next request; an OpenAI-wire one
+  // carries no signature and is kept for the window and the transcript only.
   | { kind: 'thinking_block'; block: ThinkingBlock }
   | { kind: 'tool'; tool: ToolCall }
   | { kind: 'done'; usage: TurnUsage }
