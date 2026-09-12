@@ -1,6 +1,8 @@
 // doc: docs/harness/ui.md
-import { ask } from './confirm.js'
+import { ask, askText } from './confirm.js'
 import { el, GLYPH, icon, message, must, relativeTime } from './dom.js'
+import { openMenu } from './menu.js'
+import type { MenuItem } from './menu.js'
 import type { NanoBridge, SessionView, WorkspaceStatus, WorkspaceView } from '../ipc/contract.js'
 
 /**
@@ -104,6 +106,10 @@ function render(): void {
       selectedWorkspace = workspace.id
       render()
     })
+    head.addEventListener('contextmenu', event => {
+      event.preventDefault()
+      openMenu(event.clientX, event.clientY, workspaceMenu(workspace))
+    })
 
     const remove = el('button', 'icon-btn tiny row-action')
     remove.type = 'button'
@@ -137,6 +143,12 @@ function sessionRow(session: SessionView): HTMLElement {
   open.title = session.title
   open.append(el('span', 'session-title', session.title), el('span', 'session-time', relativeTime(session.updatedAt)))
   open.addEventListener('click', () => void handlers?.openSession(session.id))
+  // The row already carries a delete button; everything else a session can be
+  // asked for lives here rather than as four more icons crowding a 24px row.
+  row.addEventListener('contextmenu', event => {
+    event.preventDefault()
+    openMenu(event.clientX, event.clientY, sessionMenu(session))
+  })
 
   const remove = el('button', 'icon-btn tiny row-action danger')
   remove.type = 'button'
@@ -147,6 +159,64 @@ function sessionRow(session: SessionView): HTMLElement {
 
   row.append(open, remove)
   return row
+}
+
+function sessionMenu(session: SessionView): MenuItem[] {
+  return [
+    { label: 'Open', run: () => void handlers?.openSession(session.id) },
+    { label: 'Rename…', run: () => rename(session) },
+    { label: 'Copy session ID', run: () => copy(session.id) },
+    { label: 'Copy transcript path', run: () => copyTranscriptPath(session) },
+    { label: 'Delete', danger: true, run: () => deleteSession(session) },
+  ]
+}
+
+function workspaceMenu(workspace: WorkspaceView): MenuItem[] {
+  return [
+    {
+      label: 'New session here',
+      run: () => {
+        selectedWorkspace = workspace.id
+        return startSession()
+      },
+    },
+    { label: 'Copy folder path', run: () => copy(workspace.root) },
+    { label: 'Remove from sidebar', danger: true, run: () => removeWorkspace(workspace) },
+  ]
+}
+
+/**
+ * A copy that worked says nothing: the clipboard is the confirmation, and a
+ * line in the flow for every copy would be noise. A refused one has to speak,
+ * because the alternative is a menu item that silently does nothing.
+ */
+async function copy(text: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text)
+  } catch (err) {
+    handlers?.report(message(err))
+  }
+}
+
+async function copyTranscriptPath(session: SessionView): Promise<void> {
+  if (handlers === null) return
+  try {
+    await copy(await handlers.bridge.transcriptPath(session.id))
+  } catch (err) {
+    handlers.report(message(err))
+  }
+}
+
+async function rename(session: SessionView): Promise<void> {
+  if (handlers === null) return
+  const title = await askText({ title: 'Rename session', value: session.title })
+  if (title === null || title.trim() === '' || title === session.title) return
+  try {
+    setStatus(await handlers.bridge.renameSession(session.id, title))
+    handlers.changed(status)
+  } catch (err) {
+    handlers.report(message(err))
+  }
 }
 
 async function removeWorkspace(workspace: WorkspaceView): Promise<void> {

@@ -49,11 +49,6 @@
 
         <nav class="tree wide-only" id="tree" aria-label="Sessions"></nav>
 
-        <section class="jobs wide-only" id="jobs" aria-label="Background jobs" hidden>
-          <span class="side-label">Background</span>
-          <div class="job-list" id="job-list"></div>
-        </section>
-
         <div class="side-foot">
           <button class="foot-item" id="settings" type="button" title="Settings">
             <!-- Sliders, not a cogwheel: a 24-grid gear turns to mush at 16px. -->
@@ -69,8 +64,21 @@
 
       <main class="main">
         <header class="topbar">
+          <!-- Shown only while a subagent is open: the conversation is one step
+               behind it, not a separate place to navigate to. -->
+          <button class="icon-btn back" id="back" type="button" title="Back to the conversation" aria-label="Back to the conversation" hidden>
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M15 5l-7 7 7 7" />
+            </svg>
+          </button>
           <span class="title" id="session-title">No session</span>
           <span class="chip scope" id="scope-chip" hidden></span>
+          <!-- How many MCP servers answered. Green is connected, red is not. -->
+          <span class="chip mcp" id="mcp-chip" hidden>
+            <span class="mcp-dot ok"></span><span id="mcp-ok">0</span>
+            <span class="mcp-dot bad"></span><span id="mcp-bad">0</span>
+            <span class="mcp-word">MCP</span>
+          </span>
           <span class="spacer"></span>
           <span class="usage-line" id="usage-line" title="This session, every turn added up" hidden></span>
           <span class="chip" id="status" hidden></span>
@@ -81,6 +89,26 @@
             <img class="stream-mark" id="stream-mark" src="./logo.svg" alt="" width="180" height="180" hidden />
             <div class="stream-tail" id="stream-tail"></div>
           </section>
+
+          <!--
+            A subagent, in the same place and drawn by the same code as the
+            agent that started it: a head with what it was asked to do, then its
+            own flow of thinking, tool calls and answer.
+          -->
+          <div class="sub-view" id="sub-view" hidden>
+            <header class="sub-head">
+              <span class="job-mode" id="sub-kind"></span>
+              <span class="job-state" id="sub-state"></span>
+              <span class="spacer"></span>
+              <span class="usage-line" id="sub-usage" title="What this subagent has spent" hidden></span>
+              <button class="btn sm outline" id="sub-copy" type="button" hidden>Copy result</button>
+            </header>
+            <p class="hint" id="sub-meta"></p>
+            <pre class="sub-task" id="sub-task"></pre>
+            <section class="stream sub-stream" id="sub-stream">
+              <div class="sub-tail" id="sub-tail"></div>
+            </section>
+          </div>
 
           <section class="hero" id="hero">
             <img class="hero-mark" src="./logo.svg" alt="" width="96" height="96" />
@@ -171,6 +199,7 @@
       <nav class="sheet-nav">
         <span class="sheet-title">Settings</span>
         <button class="nav-item" id="pane-providers" type="button">Providers</button>
+        <button class="nav-item" id="pane-secrets" type="button">Secrets</button>
         <button class="nav-item" id="pane-about" type="button">About</button>
         <span class="spacer"></span>
         <button class="icon-btn" id="settings-close" type="button" title="Close" aria-label="Close">
@@ -228,6 +257,16 @@
         </div>
       </section>
 
+      <section class="sheet-pane" id="secrets-pane" hidden>
+        <h2>Secrets</h2>
+        <p class="hint">
+          A key pasted into the chat is taken out of the message and kept here, encrypted. The model never sees the value: it
+          works with the reference, and the harness fills the real key in when a tool runs.
+        </p>
+        <div class="secret-list" id="secret-list"></div>
+        <p class="hint" id="secrets-empty">Nothing held. Paste a key into a message and it lands here.</p>
+      </section>
+
       <section class="sheet-pane about" id="about-pane" hidden>
         <img class="about-mark" src="./logo.svg" alt="" width="72" height="72" />
         <p class="about-line">
@@ -268,21 +307,17 @@
       </div>
     </dialog>
 
-    <dialog class="sheet small job-sheet" id="job-dialog" aria-label="Background job">
-      <div class="job-sheet-head">
-        <h2 id="job-dialog-title">Background job</h2>
-        <span class="job-state" id="job-dialog-state"></span>
-      </div>
-      <p class="hint" id="job-dialog-meta"></p>
-      <h3 class="job-sheet-label">Task</h3>
-      <pre class="job-sheet-block" id="job-dialog-task"></pre>
-      <h3 class="job-sheet-label" id="job-dialog-note-label">Last update</h3>
-      <pre class="job-sheet-block" id="job-dialog-note"></pre>
-      <div class="setup-actions dialog-actions">
-        <button class="btn sm outline" id="job-dialog-copy" type="button">Copy result</button>
-        <button class="btn sm primary" id="job-dialog-close" type="button">Close</button>
-      </div>
+    <dialog class="sheet small" id="prompt-dialog" aria-label="Rename">
+      <form id="prompt-form" method="dialog">
+        <h2 id="prompt-title">Rename</h2>
+        <input id="prompt-input" type="text" spellcheck="false" />
+        <div class="setup-actions dialog-actions">
+          <button class="btn sm outline" id="prompt-cancel" type="button">Cancel</button>
+          <button class="btn sm primary" id="prompt-ok" type="submit">Save</button>
+        </div>
+      </form>
     </dialog>
+
 
     <script type="module" src="./index.js"></script>
   </body>

@@ -13,6 +13,12 @@ const detail = must<HTMLElement>('confirm-detail')
 const yes = must<HTMLButtonElement>('confirm-yes')
 const no = must<HTMLButtonElement>('confirm-no')
 
+const promptDialog = must<HTMLDialogElement>('prompt-dialog')
+const promptForm = must<HTMLFormElement>('prompt-form')
+const promptTitle = must<HTMLElement>('prompt-title')
+const promptInput = must<HTMLInputElement>('prompt-input')
+const promptCancel = must<HTMLButtonElement>('prompt-cancel')
+
 export interface ConfirmRequest {
   title: string
   detail?: string
@@ -44,5 +50,53 @@ export async function ask(request: ConfirmRequest): Promise<boolean> {
     no.addEventListener('click', onNo)
     dialog.addEventListener('close', onClose)
     no.focus()
+  })
+}
+
+export interface PromptRequest {
+  title: string
+  /** What the field starts as, pre-selected so typing replaces it. */
+  value?: string
+}
+
+/**
+ * One line of text, asked for in the app's own sheet. Resolves to null when the
+ * user backs out with Esc, the backdrop or Cancel, which has to be
+ * distinguishable from an empty answer.
+ */
+export async function askText(request: PromptRequest): Promise<string | null> {
+  // `showModal()` on an open dialog throws, and the throw would leave the first
+  // question unanswered forever. Two at once is a double-click on Rename.
+  if (promptDialog.open) return null
+  promptTitle.textContent = request.title
+  promptInput.value = request.value ?? ''
+
+  promptDialog.showModal()
+  promptInput.focus()
+  promptInput.select()
+
+  return new Promise<string | null>(resolve => {
+    let answer: string | null = null
+    const finish = (): void => {
+      promptForm.removeEventListener('submit', onSubmit)
+      promptCancel.removeEventListener('click', onCancel)
+      promptDialog.removeEventListener('close', onClose)
+      resolve(answer)
+    }
+    const onSubmit = (event: Event): void => {
+      event.preventDefault()
+      answer = promptInput.value
+      if (promptDialog.open) promptDialog.close()
+      else finish()
+    }
+    const onCancel = (): void => {
+      answer = null
+      if (promptDialog.open) promptDialog.close()
+      else finish()
+    }
+    const onClose = (): void => finish()
+    promptForm.addEventListener('submit', onSubmit)
+    promptCancel.addEventListener('click', onCancel)
+    promptDialog.addEventListener('close', onClose)
   })
 }

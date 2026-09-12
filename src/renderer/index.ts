@@ -1,8 +1,19 @@
 // doc: docs/harness/ui.md
-import { clearChat, errorBlock, handleEvent, renderTranscript, setActivity, showStoredUsage, startTurn, userBlock } from './chat.js'
-import { autoGrow, initComposer, seat } from './composer.js'
-import { message, must } from './dom.js'
-import { handleJobEvent, initJobs } from './jobs.js'
+import { ChatView } from './chat.js'
+import { autoGrow, initComposer, seat, showDock } from './composer.js'
+import { message, must, relativeTime } from './dom.js'
+import {
+  bufferOf,
+  forget,
+  handleJobEvent,
+  handleSubagentEvent,
+  identity,
+  initJobs,
+  isSubagent,
+  jobById,
+  spendingOf,
+  stateLabel,
+} from './jobs.js'
 import { announce, initNotify } from './notify.js'
 import { enqueue, initPermission } from './permission.js'
 import { applyConfig, initSettings, latestConfig, openSettings, refreshConfig } from './settings.js'
@@ -18,6 +29,8 @@ import {
   workspaceOf,
 } from './sidebar.js'
 import type { AgentSummary, ConfigStatus, NanoBridge } from '../ipc/contract.js'
+import type { JobView } from '../core/jobs.js'
+import type { McpServerStatus } from '../core/types.js'
 import type { AgentRole } from '../core/agents.js'
 import type { Effort } from '../core/config.js'
 
@@ -48,10 +61,205 @@ const statusChip = must<HTMLElement>('status')
 const titleLabel = must<HTMLElement>('session-title')
 const scopeChip = must<HTMLElement>('scope-chip')
 const settingsButton = must<HTMLButtonElement>('settings')
+const mcpChip = must<HTMLElement>('mcp-chip')
+const mcpOk = must<HTMLElement>('mcp-ok')
+const mcpBad = must<HTMLElement>('mcp-bad')
+const backButton = must<HTMLButtonElement>('back')
+const subView = must<HTMLElement>('sub-view')
+const subKind = must<HTMLElement>('sub-kind')
+const subState = must<HTMLElement>('sub-state')
+const subMeta = must<HTMLElement>('sub-meta')
+const subTask = must<HTMLElement>('sub-task')
+const subCopy = must<HTMLButtonElement>('sub-copy')
 
 let activeSessionId: string | null = null
 let busy = false
 let agents: AgentSummary[] = []
+/** The subagent on screen, or null when the conversation itself is. */
+let viewing: string | null = null
+
+/**
+ * The conversation, and the subagent the user opened. Two views of the same
+ * kind, because a subagent is an agent: it thinks, calls tools and answers, and
+ * a second, smaller way of drawing that was a second thing to keep right.
+ */
+const chat = new ChatView({
+  stream,
+  tail: must<HTMLElement>('stream-tail'),
+  mark: must<HTMLElement>('stream-mark'),
+  usageLine: must<HTMLElement>('usage-line'),
+  openSubagent: id => void openSubagent(id),
+})
+
+const sub = new ChatView({
+  stream: must<HTMLElement>('sub-stream'),
+  tail: must<HTMLElement>('sub-tail'),
+  usageLine: must<HTMLElement>('sub-usage'),
+})
+
+/**
+ * The MCP chip: how many servers this session is actually talking to, and how
+ * many are configured but not answering. Two numbers, because "MCP is on" and
+ * "MCP works" are different claims and only the second one matters when a tool
+ * is missing.
+ *
+ * A session's servers are dialled on its first message, so before that the
+ * counts are what the config asks for rather than what is up, which the tooltip
+ * says outright instead of showing a red count for something nobody tried yet.
+ */
+function renderMcp(status: { live: boolean; servers: McpServerStatus[] } | null): void {
+  mcpChip.hidden = status === null || status.servers.length === 0
+  if (status === null || status.servers.length === 0) return
+
+  const connected = status.servers.filter(server => server.connected)
+  const failed = status.servers.filter(server => !server.connected)
+  mcpChip.classList.toggle('pending', !status.live)
+  // Nothing has been dialled, so there is no split to draw: every server counts
+  // as "not connected" until the first message, and showing that as a failure
+  // count beside a nought made a session that has not started yet look broken.
+  // One number, the one that is true: how many this folder is configured for.
+  mcpOk.textContent = String(status.live ? connected.length : status.servers.length)
+  mcpBad.textContent = String(failed.length)
+  // A red nought is not good news drawn in red, it is a colour the eye stops on
+  // for nothing. Nothing failed, so nothing is shown.
+  mcpChip.classList.toggle('all-well', status.live && failed.length === 0)
+
+  const lines = status.servers.map(server => {
+    if (!status.live) return `${server.name}: not started yet`
+    if (server.connected) return `${server.name}: ${server.toolCount} tool${server.toolCount === 1 ? '' : 's'}`
+    return `${server.name}: ${server.error ?? 'not connected'}`
+  })
+  const head = status.live
+    ? `${connected.length} connected, ${failed.length} not`
+    : 'Configured for this folder. Servers start with the first message.'
+  mcpChip.title = [head, ...lines].join('\n')
+}
+
+/** The open session's MCP state, asked for rather than waited for. */
+async function refreshMcp(sessionId: string | null): Promise<void> {
+  if (sessionId === null) {
+    renderMcp(null)
+    return
+  }
+  const status = await nh.mcpStatus(sessionId).catch(() => null)
+  // A slow answer for a session the user has already left is not an answer.
+  if (sessionId === activeSessionId) renderMcp(status)
+}
+
+/**
+ * One subagent as the head above its flow draws it. A live one comes from the
+ * job registry and a finished one from its stored transcript, and the two carry
+ * the same facts, which is the point: opening a subagent from a turn that ran
+ * last week looks exactly like opening one that is running now.
+ */
+interface SubagentHead {
+  id: string
+  role: JobView['role']
+  mode: JobView['mode']
+  task: string
+  background: boolean
+  state: JobView['state']
+  note: string
+  startedAt: number
+  endedAt?: number
+}
+
+let subHead: SubagentHead | null = null
+/** Ticks the elapsed time while a running subagent is on screen. */
+let subClock: number | null = null
+/** Set while the copy button is showing what happened, so a redraw leaves it alone. */
+let copied = false
+
+function ran(head: SubagentHead): string {
+  const end = head.endedAt ?? Date.now()
+  const seconds = Math.max(0, Math.round((end - head.startedAt) / 1000))
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+}
+
+/** The head is redrawn in place, so a subagent that finishes under the reader's
+ * eyes turns into its own result rather than going stale. */
+function drawSubHead(head: SubagentHead): void {
+  subHead = head
+  subKind.textContent = identity(head)
+  subState.textContent = stateLabel(head.state)
+  subState.className = `job-state ${head.state}`
+  const parts = [
+    head.background ? 'background' : 'the parent turn is waiting',
+    `started ${relativeTime(head.startedAt)}`,
+    `${head.state === 'running' ? 'running for' : 'ran'} ${ran(head)}`,
+  ]
+  subMeta.textContent = parts.join(' · ')
+  subTask.textContent = head.task
+  subCopy.hidden = head.state === 'running'
+  if (!copied) subCopy.textContent = head.state === 'failed' ? 'Copy error' : 'Copy result'
+  titleLabel.textContent = `${identity(head)} subagent`
+
+  // A stopped clock beside something that is still working reads as something
+  // that has stalled.
+  if (head.state === 'running' && subClock === null) {
+    subClock = window.setInterval(() => {
+      if (subHead !== null) drawSubHead(subHead)
+    }, 1000)
+  }
+  if (head.state !== 'running' && subClock !== null) {
+    window.clearInterval(subClock)
+    subClock = null
+  }
+}
+
+/**
+ * Show one subagent's own conversation in the place the main agent's is drawn.
+ *
+ * Live, it is replayed from the events this window has been keeping and then
+ * followed as they arrive; finished and gone from this launch's job list, it is
+ * read back from the transcript the main process stored beside the session's.
+ */
+async function openSubagent(id: string): Promise<void> {
+  copied = false
+  const live = jobById(id)
+  if (live !== undefined) {
+    viewing = id
+    sub.clear()
+    for (const event of bufferOf(id)) sub.handleEvent(event)
+    // Replayed usage events would time a rate against the replay rather than
+    // against the model, so the totals are re-seated and the rate starts over.
+    sub.showStoredUsage(spendingOf(id))
+    sub.setActivity(live.state === 'running')
+    drawSubHead(live)
+    renderShell()
+    return
+  }
+
+  const sessionId = activeSessionId
+  if (sessionId === null) return
+  const stored = await nh.subagent(sessionId, id).catch(() => null)
+  if (stored === null) {
+    chat.noteBlock('That subagent ran in an earlier launch and its transcript is gone.')
+    return
+  }
+  viewing = id
+  sub.renderTranscript(stored.messages, stored.notes)
+  sub.showStoredUsage(stored.usage)
+  sub.setActivity(false)
+  drawSubHead({ ...stored, endedAt: stored.endedAt })
+  renderShell()
+}
+
+/** Back to the conversation that started it. The subagent keeps running. */
+function closeSubagent(): void {
+  // A subagent that finished while it was on screen was held back from being
+  // forgotten so it would not vanish under the reader. It can go now: opening
+  // it again reads its transcript.
+  if (viewing !== null) forget(viewing)
+  viewing = null
+  subHead = null
+  if (subClock !== null) {
+    window.clearInterval(subClock)
+    subClock = null
+  }
+  sub.setActivity(false)
+  renderShell()
+}
 
 /**
  * A native select sizes itself to its widest option, so the chips used to shove
@@ -95,15 +303,28 @@ function renderActive(status: ConfigStatus): void {
 }
 
 /**
- * Either a session is open, or the window is the hero that starts one — and the
+ * Either a session is open, or the window is the hero that starts one. The
  * composer is the same element in both, so a message written on the hero is
  * still there once the session it started exists.
  */
 function renderShell(): void {
   const open = activeSessionId !== null
-  stream.hidden = !open
+  const sideways = open && viewing !== null
+  stream.hidden = !open || sideways
+  subView.hidden = !sideways
   hero.hidden = open
   seat(open)
+  // A subagent cannot be messaged: it was given its whole task when it started
+  // and it answers once. Leaving the composer over its flow would offer to send
+  // a message the subagent would never see.
+  showDock(!sideways)
+  backButton.hidden = !sideways
+
+  if (sideways) {
+    const job = subHead
+    titleLabel.textContent = job === null ? 'Subagent' : `${identity(job)} subagent`
+    return
+  }
 
   if (!open) {
     const status = currentStatus()
@@ -169,7 +390,7 @@ function renderAgents(): void {
   agentSelect.value = session?.role ?? 'builder'
   agentSelect.disabled = session === undefined
   const current = agents.find(a => a.role === agentSelect.value)
-  agentSelect.title = current === undefined ? 'Agent' : `${current.name} — ${current.purpose}`
+  agentSelect.title = current === undefined ? 'Agent' : `${current.name}: ${current.purpose}`
   syncChips()
 }
 
@@ -188,14 +409,14 @@ async function switchAgent(): Promise<void> {
     select(sessionId)
     renderShell()
   } catch (err) {
-    errorBlock(message(err))
+    chat.errorBlock(message(err))
     renderAgents()
   }
 }
 
 function setBusy(next: boolean): void {
   busy = next
-  setActivity(next)
+  chat.setActivity(next)
   renderShell()
   if (!next) input.focus()
 }
@@ -206,7 +427,7 @@ function stop(): void {
   if (!busy || sessionId === null) return
   sendButton.disabled = true
   nh.stop(sessionId)
-    .catch((err: unknown) => errorBlock(message(err)))
+    .catch((err: unknown) => chat.errorBlock(message(err)))
     .finally(() => {
       sendButton.disabled = false
     })
@@ -217,19 +438,25 @@ async function openSession(id: string): Promise<void> {
     const opened = await nh.openSession(id)
     activeSessionId = id
     select(id)
-    renderTranscript(opened.messages, opened.notes)
+    // A subagent belongs to the session that started it, so opening another
+    // session is leaving it.
+    closeSubagent()
+    chat.renderTranscript(opened.messages, opened.notes)
+    renderMcp(null)
+    void refreshMcp(id)
     // What this session has already spent. Without it a re-opened session reads
     // as one that has cost nothing.
-    showStoredUsage(opened.session.usage)
+    chat.showStoredUsage(opened.session.usage)
     renderShell()
     input.focus()
   } catch (err) {
     // The session went away underneath us (deleted, or its folder removed).
     // Fall back to the hero rather than a composer that cannot send.
     activeSessionId = null
+    renderMcp(null)
     await refreshSidebar()
     renderShell()
-    errorBlock(message(err))
+    chat.errorBlock(message(err))
   }
 }
 
@@ -240,7 +467,7 @@ async function switchActive(): Promise<void> {
   try {
     applyConfig(await nh.setActive({ providerId: active.providerId, model: modelSelect.value, effort: effortSelect.value as Effort }))
   } catch (err) {
-    errorBlock(message(err))
+    chat.errorBlock(message(err))
     await refreshConfig()
   }
 }
@@ -258,19 +485,34 @@ async function send(): Promise<void> {
   const sessionId = activeSessionId
   if (sessionId === null) return
 
-  userBlock(text)
+  // A key pasted into the composer is taken out of the message here, before the
+  // window draws it: from this point on the text carries a `{{secret:name}}`
+  // reference, and the real value lives only in the main process. The same swap
+  // happens again in the main process, so nothing depends on this call for the
+  // secret to be caught. This is what keeps it off the screen.
+  const captured = await nh.captureSecrets(text).catch(() => ({ text, captured: [] }))
+  const safe = captured.text
+
+  chat.userBlock(safe)
+  if (captured.captured.length > 0) {
+    const names = captured.captured.map(name => `{{secret:${name}}}`).join(', ')
+    chat.noteBlock(`Kept out of the transcript: ${names}. Tools get the real value; the model never sees it.`)
+  }
   input.value = ''
   autoGrow()
-  startTurn()
+  chat.startTurn()
   setBusy(true)
 
   try {
-    const result = await nh.send(sessionId, text)
+    const result = await nh.send(sessionId, safe)
     // The first message names the session, so the sidebar has to be re-read.
     setStatus(await nh.workspaces())
     select(result.session.id)
+    // The hub is dialled on the first message, so this is when there is
+    // something real to show.
+    void refreshMcp(sessionId)
   } catch (err) {
-    errorBlock(message(err))
+    chat.errorBlock(message(err))
     // The settings may have gone stale mid-session (a key that no longer
     // decrypts, a config file edited underneath). Re-check, and reopen settings
     // if that is the cause.
@@ -307,12 +549,24 @@ composer.addEventListener('click', () => {
 modelSelect.addEventListener('change', () => void switchActive())
 effortSelect.addEventListener('change', () => void switchActive())
 agentSelect.addEventListener('change', () => void switchAgent())
+backButton.addEventListener('click', () => closeSubagent())
+subCopy.addEventListener('click', () => {
+  copied = true
+  void navigator.clipboard
+    .writeText(subHead?.note ?? '')
+    .then(() => {
+      subCopy.textContent = 'Copied'
+    })
+    .catch(() => {
+      subCopy.textContent = 'Copy failed'
+    })
+})
 settingsButton.addEventListener('click', () => openSettings('providers'))
 heroSettings.addEventListener('click', () => openSettings('providers'))
 
 initComposer()
 initNotify()
-initPermission({ bridge: nh, report: errorBlock })
+initPermission({ bridge: nh, report: text => chat.errorBlock(text) })
 initSidebar({
   bridge: nh,
   openSession,
@@ -320,22 +574,42 @@ initSidebar({
     // A folder or session just went away; the open one may have been it.
     if (activeSessionId !== null && sessionById(activeSessionId) === undefined) {
       activeSessionId = null
-      clearChat()
+      chat.clear()
+      renderMcp(null)
     }
     renderShell()
   },
-  report: errorBlock,
+  report: text => chat.errorBlock(text),
 })
 
 nh.onEvent(event => {
+  if (event.type === 'job.started' || event.type === 'job.update' || event.type === 'job.finished') {
+    handleJobEvent(event)
+    // A foreground subagent has no note of its own, since its answer arrives
+    // as the spawn tool's result, so the card for that call is where it is
+    // opened from while it runs.
+    if (event.type === 'job.started' && !event.job.background && event.job.sessionId === activeSessionId) {
+      chat.liveSubagent(event.job.id)
+    }
+    if (event.type === 'job.finished') announce(event.job.state === 'done' ? 'finished' : 'error', `${event.job.role} job`)
+    return
+  }
+  if (event.type === 'mcp.status') {
+    if (event.sessionId === activeSessionId) renderMcp({ live: event.live, servers: event.servers })
+    return
+  }
+  // A subagent's stream comes in under its own session id, which is its job id.
+  // It belongs in that subagent's view, not in the conversation on screen, and
+  // it is checked before anything announces, or a turn with three subagents in
+  // it would ring the bell four times, three of them for a session nobody
+  // opened.
+  if (isSubagent(event.sessionId)) {
+    handleSubagentEvent(event)
+    return
+  }
   if (event.type === 'session.finished' || event.type === 'session.stopped' || event.type === 'session.error') {
     const outcome = event.type === 'session.finished' ? 'finished' : event.type === 'session.stopped' ? 'stopped' : 'error'
     announce(outcome, sessionById(event.sessionId)?.title ?? 'Session')
-  }
-  if (event.type === 'job.started' || event.type === 'job.update' || event.type === 'job.finished') {
-    handleJobEvent(event)
-    if (event.type === 'job.finished') announce(event.job.state === 'done' ? 'finished' : 'error', `${event.job.role} job`)
-    return
   }
   if (event.type === 'permission.request') {
     if (event.sessionId === activeSessionId) enqueue(event)
@@ -344,7 +618,7 @@ nh.onEvent(event => {
     else void nh.respondToPermission(event.id, 'deny')
     return
   }
-  handleEvent(event, activeSessionId)
+  if (!('sessionId' in event) || event.sessionId === activeSessionId) chat.handleEvent(event)
 })
 
 async function boot(): Promise<void> {
@@ -361,7 +635,20 @@ async function boot(): Promise<void> {
   initSettings({ bridge: nh, onConfig: renderActive, version })
   agents = await nh.agents().catch(() => [])
   renderAgents()
-  await initJobs(nh)
+  await initJobs(nh, {
+    viewing: id => viewing === id,
+    // The events a subagent streams reach its view only while it is the one on
+    // screen; the rest of the time they go into its buffer and are replayed the
+    // moment it is opened.
+    event: streamed => {
+      if (viewing === streamed.sessionId) sub.handleEvent(streamed)
+    },
+    changed: job => {
+      if (viewing !== job.id) return
+      drawSubHead(job)
+      sub.setActivity(job.state === 'running')
+    },
+  })
   await refreshConfig()
   await refreshSidebar()
 

@@ -631,68 +631,8 @@ body {
   opacity: 1;
 }
 
-/* Background jobs: a strip above the foot, and nothing at all when no job has
-   run. A job with no window of its own gets three lines here instead. */
-.jobs {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s1);
-  flex: none;
-  max-height: 34%;
-  overflow-y: auto;
-  padding-top: var(--s2);
-  border-top: 1px solid var(--nh-border-l1);
-}
-
-.job-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s1);
-}
-
-/* A row is a button: the strip shows two lines, the sheet behind it shows the
-   whole job. A tooltip could not be read, copied or reached from the keyboard. */
-.job-row {
-  display: block;
-  width: 100%;
-  padding: var(--s2);
-  border: 1px solid var(--nh-border-l1);
-  border-radius: var(--nh-radius-chip);
-  background: var(--nh-bg-layer-1);
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: background var(--nh-fast) var(--nh-ease), border-color var(--nh-fast) var(--nh-ease);
-  animation: rise var(--nh-base) var(--nh-ease) backwards;
-}
-
-.job-row:hover {
-  border-color: var(--nh-border-l2);
-  background: var(--nh-bg-layer-2);
-}
-
-.job-row:focus-visible {
-  outline: 2px solid var(--nh-accent);
-  outline-offset: 1px;
-}
-
-.job-head {
-  display: flex;
-  align-items: center;
-  gap: var(--s2);
-}
-
-.job-role {
-  flex: 1;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  color: var(--nh-label-primary);
-  font: 500 11px var(--nh-font-sans);
-}
-
-/* The state is the only colour in the row, so a glance answers "is it done?" */
+/* The subagent's state, the only colour in its head: a glance answers
+   "is it still going?" */
 .job-state {
   flex: none;
   color: var(--nh-label-caption);
@@ -701,84 +641,116 @@ body {
   text-transform: uppercase;
 }
 
-.job-row.running .job-state {
-  color: var(--nh-accent);
-}
-
-.job-row.done .job-state {
-  color: var(--nh-state-ok);
-}
-
-.job-row.failed .job-state {
-  color: var(--nh-state-error);
-}
-
-.job-note {
-  margin: 4px 0 0;
-  /* Two lines of the job's last word; the sheet holds the whole of it. */
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-  color: var(--nh-label-caption);
-  font: 400 11px/1.45 var(--nh-font-sans);
-}
-
-/* The job sheet: everything the two-line row had to leave out. */
-
 /*
- * A task and a result are both as long as they are, and the sheet's own
- * `overflow: hidden` would put the Close button past the bottom of the screen
- * with no way to reach it. The sheet scrolls; the two blocks inside it are
- * capped so that neither one can push the other out of sight.
+ * A subagent, opened. It takes the conversation's place rather than sitting
+ * beside it: a subagent is an agent, and half a window is not enough to read
+ * one in. The head says what it was asked and what it has spent; below it is
+ * the same flow the main agent draws, from the same events.
  */
-.job-sheet {
-  overflow-y: auto;
+.sub-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: var(--s3) var(--s6) 0;
+  animation: rise var(--nh-base) var(--nh-ease);
 }
 
-.job-sheet-head {
+.sub-head {
   display: flex;
   align-items: center;
   gap: var(--s2);
+  flex: none;
 }
 
-.job-sheet-head h2 {
-  flex: 1;
-  margin: 0;
-}
-
-.job-sheet-head .job-state.running {
+.sub-head .job-state.running {
   color: var(--nh-accent);
 }
 
-.job-sheet-head .job-state.done {
+.sub-head .job-state.done {
   color: var(--nh-state-ok);
 }
 
-.job-sheet-head .job-state.failed {
+.sub-head .job-state.failed {
   color: var(--nh-state-error);
 }
 
-.job-sheet-label {
-  margin: var(--s4) 0 var(--s1);
-  color: var(--nh-label-caption);
-  font: 500 10px var(--nh-font-sans);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+/* Stopped is neither a success nor a fault: the user asked for it. */
+.sub-head .job-state.stopped {
+  color: var(--nh-label-tertiary);
 }
 
-.job-sheet-block {
+.sub-view .hint {
+  flex: none;
+  margin: 2px 0 var(--s2);
+}
+
+/* What it was asked to do, verbatim. It is the one thing in the view that is
+   not in the flow, and it is what everything below it is an answer to. */
+.sub-task {
+  flex: none;
   margin: 0;
-  max-height: 28vh;
+  max-height: 22vh;
   overflow-y: auto;
   padding: var(--s2) var(--s3);
   border: 1px solid var(--nh-border-l1);
   border-radius: var(--nh-radius-chip);
   background: var(--nh-bg-code);
-  color: var(--nh-label-primary);
+  color: var(--nh-label-secondary);
   font: 400 12px/1.55 var(--nh-font-mono);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* The flow itself. Nothing floats over it here, because there is no composer to
+   talk to a subagent with, so it needs the gutter it has and no clearance. */
+.sub-stream {
+  padding: var(--s3) 0 var(--s4);
+}
+
+.sub-tail {
+  height: var(--s4);
+  flex: none;
+}
+
+/* The thread from "an agent did something here" to the conversation it had.
+   It sits in a tool card's own row and in the note a background job leaves,
+   so it is sized to a row rather than to the page. */
+.open-subagent {
+  flex: none;
+  margin-left: var(--s2);
+  padding: 2px 8px;
+  border: 1px solid var(--nh-border-l1);
+  border-radius: var(--nh-radius-pill);
+  background: transparent;
+  color: var(--nh-accent);
+  font: 500 10px var(--nh-font-sans);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    background var(--nh-fast) var(--nh-ease),
+    border-color var(--nh-fast) var(--nh-ease);
+}
+
+.open-subagent:hover {
+  border-color: var(--nh-accent);
+  background: var(--nh-hover);
+}
+
+/* A spawn card opens its subagent rather than folding open: the whole head is
+   the target, and it says so on hover instead of leaving the button as the one
+   part of the row that does anything. */
+.block.tool[data-subagent] > summary {
+  cursor: pointer;
+}
+
+.block.tool[data-subagent] > summary:hover {
+  background: var(--nh-hover);
+}
+
+.block.tool[data-subagent] > summary:hover .open-subagent {
+  border-color: var(--nh-accent);
 }
 
 .side-foot {
@@ -991,6 +963,49 @@ body {
   }
 }
 
+/* The right-click menu. Drawn by the app, so it matches the window it is over
+   and can be styled; an OS menu here would be the one system-drawn thing left. */
+.context-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 176px;
+  padding: 4px;
+  border: 1px solid var(--nh-border-l2);
+  border-radius: var(--nh-radius-card);
+  background: var(--nh-bg-layer-2);
+  box-shadow: var(--nh-shadow-lv2);
+  animation: rise var(--nh-fast) var(--nh-ease) backwards;
+}
+
+.context-item {
+  display: block;
+  width: 100%;
+  padding: 6px var(--s2);
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--nh-label-primary);
+  font: 400 12px var(--nh-font-sans);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.context-item:hover,
+.context-item:focus-visible {
+  outline: none;
+  background: var(--nh-hover);
+}
+
+.context-item.danger {
+  color: var(--nh-state-error);
+}
+
+.context-item.danger:hover,
+.context-item.danger:focus-visible {
+  background: var(--nh-hover-danger);
+}
+
 /* ── 8. message flow ─────────────────────────────────────────────────── */
 
 .block {
@@ -1033,6 +1048,24 @@ body {
   color: var(--nh-label-primary);
 }
 
+/*
+ * The answer, as opposed to everything the turn said on its way to one. A turn
+ * is mostly tool cards and half-sentences between them, and the thing that was
+ * actually asked for used to be drawn exactly like the commentary around it.
+ */
+.block.final .body {
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--nh-border-l1);
+  border-left: 2px solid var(--nh-accent);
+  border-radius: var(--nh-radius-card);
+  background: var(--nh-bg-layer-1);
+  color: var(--nh-label-primary);
+}
+
+.block.final > .label {
+  color: var(--nh-accent);
+}
+
 .block.error .body {
   padding: var(--s2) var(--s3);
   border-radius: var(--nh-radius-card);
@@ -1062,7 +1095,7 @@ body {
   background: var(--nh-border-l1);
 }
 
-/* Disclosure rows — tool calls and thinking. Closed they are one line; the
+/* Disclosure rows: tool calls and thinking. Closed they are one line; the
    whole row is the hit target. */
 details.block {
   padding: 0;
@@ -1202,7 +1235,7 @@ details.block pre + pre {
 
 /* The turn indicator. It lives in the flow rather than in the topbar: what the
    eye is already on is the conversation, and a word in the corner was read by
-   nobody. Nothing is drawn at all when no turn is running — a permanent "idle"
+   nobody. Nothing is drawn at all when no turn is running: a permanent "idle"
    is a light that says the fuse is not blown. */
 .activity {
   display: flex;
@@ -1508,7 +1541,7 @@ button {
 }
 
 /* The delete button in a confirm sheet is the button that sheet exists for, so
-   it is filled like a primary rather than drawn as red text on nothing — red
+   it is filled like a primary rather than drawn as red text on nothing. Red
    text next to an outlined Cancel read as the weaker of the two, which is the
    opposite of what it does. Same red as the stop button: same meaning. */
 .btn.danger {
@@ -1598,6 +1631,57 @@ button.chip:hover:enabled,
 .chip-select:hover {
   background: var(--nh-hover);
   color: var(--nh-label-primary);
+}
+
+/* Two counts, because "MCP is configured" and "MCP is up" are different claims
+   and only the second one explains a tool that is not there. */
+.chip.mcp {
+  gap: 4px;
+  color: var(--nh-label-secondary);
+  cursor: default;
+}
+
+.mcp-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.mcp-dot.ok {
+  background: var(--nh-state-ok);
+}
+
+.mcp-dot.bad {
+  margin-left: 6px;
+  background: var(--nh-state-error);
+}
+
+/* Every server answered: the failure count is a nought in red, which is a
+   colour the eye stops on for nothing. */
+.chip.mcp.all-well .mcp-dot.bad,
+.chip.mcp.all-well #mcp-bad {
+  display: none;
+}
+
+.mcp-word {
+  margin-left: 4px;
+  color: var(--nh-label-caption);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* Nothing has been dialled yet, so there is no verdict to draw: one grey dot
+   and the number of servers this folder is configured for. A second count
+   beside it would be a failure count for something nobody has tried. */
+.chip.mcp.pending .mcp-dot {
+  background: var(--nh-label-caption);
+}
+
+.chip.mcp.pending .mcp-dot.bad,
+.chip.mcp.pending #mcp-bad {
+  display: none;
 }
 
 .chip.icon {
@@ -1988,6 +2072,12 @@ button.chip:hover:enabled,
   border-color: var(--nh-accent-line);
 }
 
+/* One field and two buttons: the field is the sheet, so it takes the width. */
+#prompt-input {
+  width: 100%;
+  margin-top: var(--s3);
+}
+
 .perm-path {
   margin: 0;
   padding: var(--s2) var(--s3);
@@ -2071,6 +2161,48 @@ button.chip:hover:enabled,
   flex-direction: column;
   gap: var(--s2);
   margin-bottom: var(--s2);
+}
+
+/* What the vault holds. Names, never values: there is nothing this list could
+   do with a key that would not amount to putting it back on screen. */
+.secret-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  margin-top: var(--s3);
+}
+
+.secret-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--nh-border-l2);
+  border-radius: var(--nh-radius-card);
+  background: var(--nh-bg-layer-2);
+}
+
+.secret-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.secret-name {
+  color: var(--nh-label-primary);
+  font: 400 12px var(--nh-font-mono);
+  overflow-wrap: anywhere;
+}
+
+.secret-hint {
+  color: var(--nh-label-caption);
+  font: 400 11px var(--nh-font-sans);
+}
+
+.btn.danger-text {
+  color: var(--nh-state-error);
 }
 
 .provider-list {

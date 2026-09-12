@@ -5,7 +5,7 @@ import { must } from './dom.js'
  * The composer is one element in two seats. Before a session exists it sits in
  * the middle of the hero; once one is open it moves into the dock that floats
  * over the bottom of the flow. Moving the node rather than mounting a second
- * copy is what keeps a half-written message — and the caret — across the move.
+ * copy is what keeps a half-written message, and the caret, across the move.
  */
 
 const composer = must<HTMLFormElement>('composer')
@@ -42,6 +42,16 @@ export function seat(docked: boolean): void {
   if (composer.parentElement !== target) target.append(composer)
   dock.hidden = !docked
   measure()
+}
+
+/**
+ * Hide the docked card without unseating it. A subagent's view is the one place
+ * a session is open and there is nothing to type into: the subagent was given
+ * its whole task when it started and answers once.
+ */
+export function showDock(visible: boolean): void {
+  if (composer.parentElement !== dock) return
+  dock.hidden = !visible
 }
 
 export function initComposer(): void {
