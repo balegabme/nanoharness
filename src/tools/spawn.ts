@@ -34,9 +34,10 @@ export const SPAWN_TOOL = defineTool<SpawnArgs>({
       'distinct starts the agent from its own prompt with no history: it costs more, and that isolation is what you are buying.',
       'Pick by what the work needs, not by price. clone for work that continues this conversation: another pass over the file you are both looking at, a search whose terms only make sense from what was said here, more of a job already under way.',
       'distinct whenever this conversation would bias the answer or is beside the point: reviewing or verifying work done in this turn, a fresh read of code you have already described, an independent estimate, a question from a different part of the repo entirely.',
-      'A reviewer, verifier or critic is always distinct — a clone has read your reasoning and will agree with it, which is the one thing a check must not do.',
+      'A reviewer, verifier or critic is always distinct: a clone has read your reasoning and will agree with it, which is the one thing a check must not do.',
       'Sequential work belongs in this loop, not in a subagent: splitting it up costs far more and finishes no sooner.',
-      'background: true returns a job id immediately and reports in the window while this turn carries on.',
+      'State the task as the outcome you want, with anything the user gave you quoted verbatim. For work you have not done yourself, do not prescribe the mechanism (the file, the field names, the format, the command): the agent doing it can see what you cannot, and a guess in the task becomes a requirement it has to satisfy or disprove.',
+      'background: true returns a job id immediately and lets this turn carry on. You do not have to poll it or go looking for its output: when it finishes, what it answered is delivered into this conversation as a message, in full. That may be later in this turn or at the start of the next one, so start the ones you need early and use them when they land.',
     ].join(' '),
     inputSchema: {
       type: 'object',
@@ -46,16 +47,19 @@ export const SPAWN_TOOL = defineTool<SpawnArgs>({
           type: 'string',
           enum: [...SPAWN_MODES],
           description:
-            'clone (default, cheap, you again with this history) or distinct (the named role, from scratch, blind to this conversation — what a review or verification needs)',
+            'clone (default, cheap, you again with this history) or distinct (the named role, from scratch, blind to this conversation, which is what a review or verification needs)',
         },
-        task: { type: 'string', description: 'the whole job, stated so it can be done without asking you anything' },
-        background: { type: 'boolean', description: 'do not wait for it; this is what "as a job" means' },
+        task: { type: 'string', description: 'the outcome you want, stated so it can be reached without asking you anything, plus anything the user gave you verbatim. Leave out the file, fields or commands you guess it needs' },
+        background: { type: 'boolean', description: 'do not wait for it; this is what "as a job" means. Its answer is delivered to you in full when it finishes' },
       },
       required: ['role', 'task'],
       additionalProperties: false,
     },
   },
   parse: parseArgs,
+  // The task becomes a subagent's first message, so it must stay as written: a
+  // key substituted in here would be sent to the provider by the child.
+  keepsPlaceholders: true,
   async run({ role, mode, task, background }, { spawn }): Promise<ToolResult> {
     if (spawn === undefined) {
       const no = 'spawn is not available here: a subagent cannot summon another one'
@@ -64,12 +68,16 @@ export const SPAWN_TOOL = defineTool<SpawnArgs>({
 
     if (background) {
       const job = spawn.background({ role, mode, task })
-      const note = `started ${job.role}/${job.mode} as background job ${job.id}. It reports in the window; do not wait for it.`
+      // The marker is how the window finds the subagent behind a tool call, in
+      // a live turn and in a transcript re-opened a week later: it is stored
+      // with the result, so the conversation itself points at the subagent's
+      // own conversation.
+      const note = `started ${job.role}/${job.mode} as background job ${job.id}. Do not wait for it and do not go looking for its output: when it finishes, what it answered arrives here as a message. [subagent:${job.id}]`
       return { ok: true, summary: note, content: note }
     }
 
     const result = await spawn.run({ role, mode, task })
-    const cost = `[${role}/${result.mode}: in ${result.usage.input}, out ${result.usage.output}, cached ${result.usage.cacheRead}]`
+    const cost = `[${role}/${result.mode}: in ${result.usage.input}, out ${result.usage.output}, cached ${result.usage.cacheRead}] [subagent:${result.id}]`
     return { ok: true, summary: result.summary, content: `${result.summary}\n\n${cost}` }
   },
 })

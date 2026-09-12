@@ -1,52 +1,77 @@
 # Sessions, folders and scope
 
 A session belongs to a folder. You add a folder to the sidebar, start a session
-inside it, and that folder is the session's root for as long as it exists —
-its working directory and the boundary every tool is held to.
+inside it, and that folder is the session's root for as long as it exists: its
+working directory and the boundary every tool is held to.
 
 Files:
-- src/core/scope.ts — path containment: `..`, absolute paths, symlinks, `~`
+- src/core/scope.ts — path containment, `..`, absolute paths, symlinks, `~`
 - src/main/workspace-store.ts — folders, sessions and transcripts on disk
 - src/main/permission.ts — the prompt a tool waits on when it reaches outside
-- src/core/prompt.ts — the system prompt: where the session stands, and the rules
+- src/core/prompt.ts — the system prompt, where the session stands and the rules
 
 ## What the agent is told
 
-A session's system prompt is built per session (`buildSystemPrompt`), not
-hard-coded, and it names the four things the model cannot see and will otherwise
-invent: the workspace root, the platform, the shell, and today's date. On
-Windows it says outright that `bash` is Git Bash and not WSL — there is no
-`/mnt/c` and no `/proc` — because a model without that line reasons from its
+A session's system prompt is built per session (`buildSystemPrompt`) instead of
+being hard-coded, and it names the four things the model cannot see and will
+otherwise invent: the workspace root, the platform, the shell, and today's date.
+On Windows it says outright that `bash` is Git Bash and not WSL, with no
+`/mnt/c` and no `/proc`, because a model without that line reasons from its
 training set, decides it is on Linux, and spends a turn probing a filesystem
 that does not exist.
 
 The rules that follow are short on purpose: every token is paid for on every
 request of every turn. Stay in the workspace and say why when you cannot. Prefer
-relative paths. Do the task that was asked, and do not explore the machine.
-Ask about a gap in the request rather than inventing work to fill it — an agent
-handed "spawn three subagents, one of them a weather job" will otherwise make
-the other two up. Read before editing. Do not retry a failed call unchanged.
+relative paths. Do the task that was asked, and do not explore the machine. Ask
+about a gap in the request instead of inventing work to fill it, because an
+agent handed "spawn three subagents, one of them a weather job" will otherwise
+make the other two up. Read before editing. Do not retry a failed call
+unchanged.
 
-Two of them are there because of what a model does with silence. "Do not
-install anything" is scoped to dependencies and machine state, and says so,
-because an agent asked to add an MCP server read the unqualified version as
-covering a JSON file in its own workspace and refused. The rule after it is the
-general form: never state a rule, a permission or a limit you were not given —
-asked what it can do, an agent answers from its tools and its configuration, and
-something unconfigured is unconfigured rather than forbidden. A model with
-nothing to go on fills that gap from its training set, and a plausible invented
-policy is much harder to catch than an error.
+Three of them are there because of what a model does when it is *nearly* sure.
+"Do not invent a fact about this machine or this project", meaning a path, a
+config field, a flag, a format or a convention, because a model that has almost
+read something states it as read, and a plausible invented field name is the
+most expensive kind of wrong: the next agent treats it as a requirement. "Use
+what the project already has", because a repo with a CLI or a task runner has
+one command for the job the agent is about to hand-write, and `--help` on it is
+one call against the five or ten it takes to derive a file format from the
+source that parses it. "Stop when the outcome is done and checked", because an
+agent that has finished the task and keeps reading is answering a question
+nobody asked. All three came out of one turn: an editor asked to add an MCP
+server spent fifteen rounds and 130k tokens deriving the config layout from
+`src/`, with the doc that says "neither file has to be hand-written" already
+open in its context.
+
+Two more are there because of what a model does with silence. "Do not install
+anything" is scoped to dependencies and machine state, and says so, because an
+agent asked to add an MCP server read the unqualified version as covering a JSON
+file in its own workspace and refused. The rule after it is the general form:
+never state a rule, a permission or a limit you were not given. Asked what it
+can do, an agent answers from its tools and its configuration, and something
+unconfigured is unconfigured rather than forbidden. A model with nothing to go
+on fills that gap from its training set, and a plausible invented policy is much
+harder to catch than an error.
 
 ## Stopping a turn
 
 Stop is cooperative. `Session.stop()` aborts the in-flight request through an
 `AbortController` that is handed to the provider as `fetch`'s `signal`; the
-abort ends the stream, and the loop winds down at the next boundary rather than
+abort ends the stream, and the loop winds down at the next boundary instead of
 being killed mid-write. Whatever arrived before the abort is kept, and any tool
-call the stop landed on top of gets a tool message saying it never ran —
-otherwise the next request would carry a `tool_use` block nothing ever answered,
+call the stop landed on top of gets a tool message saying it never ran.
+Otherwise the next request would carry a `tool_use` block nothing ever answered,
 which both APIs reject. The turn ends with `session.stopped`, and the session
 can be asked to continue.
+
+Stop reaches the subagents too. `stop()` calls `spawn.stopAll()` first, which
+stops every subagent this session still has running, foreground and background
+alike, before aborting the parent's own stream. Aborting the parent's request
+alone would leave the child spending, and a background child would go on
+spending after the turn it belonged to was over. A subagent that was stopped
+rather than finished ends as state `stopped`, which is neither a result nor a
+fault: its note says `Stopped.`, and whatever it had written to disk before then
+is kept.
 
 ## The sidebar model
 
@@ -55,53 +80,70 @@ can be asked to continue.
 | workspace | a folder on disk | `workspaces.json` |
 | session | a conversation started inside one folder | `workspaces.json` |
 | transcript | one session's messages, and the notes beside them | `sessions/<id>.json` |
+| subagent transcript | one subagent's whole conversation | `sessions/<id>/subagents/<job id>.json` |
 
-The index and the transcripts are deliberately separate files. The sidebar
-draws itself from the index alone, so opening the app reads one small file no
-matter how much has been said in how many sessions.
+The index and the transcripts are deliberately separate files. The sidebar draws
+itself from the index alone, so opening the app reads one small file no matter
+how much has been said in how many sessions.
 
-A workspace is a directory the user picked, resolved through symlinks, and
-never stored twice: adding the same folder again returns the entry that is
-already there rather than splitting its sessions across two identical groups.
-Removing a folder removes its sessions and their transcripts, and touches
-nothing on disk inside it.
+A workspace is a directory the user picked, resolved through symlinks, and never
+stored twice: adding the same folder again returns the entry that is already
+there instead of splitting its sessions across two identical groups. Removing a
+folder removes its sessions, their transcripts and their subagents' transcripts,
+and touches nothing on disk inside it.
 
 A session is named after the first thing asked of it, trimmed to one line. That
 is the only automatic rename; later messages just move it up the list.
 
-Transcripts are written after a turn completes, not while it streams. A
+Transcripts are written after a turn completes, and never while it streams. A
 half-finished answer is not a message, and a crash mid-turn leaves the session
 exactly as it was before the message was sent.
 
 The file holds two things, `{ messages, notes }`, because what the window showed
-is more than the conversation. The messages are what the model sees — user text,
-assistant text, tool calls and their results, plus the signed thinking blocks,
-which are stored because they are the only thinking the next request may send
-back. The notes are everything else the window drew: an error, a stop, a turn
+is more than the conversation. The messages are what the model sees: user text,
+assistant text, tool calls and their results, plus the thinking blocks, which
+are stored because they are what explains the turn. Anthropic signs its blocks
+and they go back on the next request. An OpenAI-wire one carries no signature,
+so it is kept for the window and the file and never sent; a session that
+reasoned for twelve thousand tokens and stored none of it is a transcript with
+the explanation cut out, which is exactly the part you want when the turn went
+wrong. The notes are everything else the window drew: an error, a stop, a turn
 that ended without an answer, a repeated call the harness refused, a background
 job starting and finishing. Each note carries `after`, the number of messages
 written when it happened, so a re-opened session puts it back between the same
 two blocks the user saw it between. A file written before notes existed, or one
-whose notes are unreadable, opens as a conversation with none — never as an
-error.
+whose notes are unreadable, opens as a conversation with no notes and no error.
+
+A subagent keeps its own transcript, referenced from the parent's. The parent's
+history holds the subagent's final answer as a tool result and nothing more, so
+without a transcript of its own there is no evidence anywhere about what went
+wrong inside it. Every spawn writes its whole conversation, messages and notes
+both, to `sessions/<parent id>/subagents/<job id>.json` the moment it ends,
+whether it finished, failed or was stopped. The parent's own transcript carries
+a `[subagent:<job id>]` marker in the tool result and in the background job's
+note, which is what the window follows to open the child's conversation (see
+`ui.md`) and what a person reading the file by hand follows to the right file.
+It is written for the case where something has already gone wrong, so it is
+written even when the subagent throws.
 
 Re-opening a session rebuilds it with that transcript as history, so the model
 picks up the thread, and hands it back its notes so the window reads the way it
 did live: a turn that stopped looks stopped, a turn that failed looks failed,
-and neither looks like a turn that simply had nothing to say. The system prompt is not restored from the file; it is
-built fresh each launch, because a stored one would silently freeze whatever
-the harness said about itself the day the session started.
+and neither looks like a turn that simply had nothing to say. The system prompt
+is built fresh each launch rather than restored from the file, because a stored
+one would silently freeze whatever the harness said about itself the day the
+session started.
 
 ## Scope
 
 The rule is one sentence: a tool may touch the session's folder and nothing
 else. Enforcing it takes a little more than a `startsWith`, which is why it
-lives in `scope.ts` rather than in each tool:
+lives in `scope.ts` instead of in each tool:
 
 - a relative path can walk out with `..`;
 - an absolute path ignores the root entirely;
 - `~` is the home directory, and resolving it as a relative path would put it
-  *inside* the root — the opposite of the truth;
+  *inside* the root, which is the opposite of the truth;
 - a symlink inside the root can point anywhere on disk, and a file that does
   not exist yet cannot be resolved at all, so the check walks up to the deepest
   existing ancestor, resolves *that*, and re-appends the rest.
@@ -111,18 +153,33 @@ Only after all of that is the path compared with the root.
 Windows has one more wrinkle. The shell is Git Bash, which prints `/c/project`
 where Windows writes `C:\project`, and a model that has just read a path out of
 shell output writes it straight into the next `read`. Taken literally,
-`/c/project/file` resolves against the current drive as `<drive>:\c\project\file`
-— a path that does not exist, reported as a missing file. So `normalizeTarget`
-accepts both spellings and every gate goes through it. Only `/<letter>/…` is
-translated: `/usr/bin` has a two-letter first segment and is left exactly as it
-is.
+`/c/project/file` resolves against the current drive as
+`<drive>:\c\project\file`, a path that does not exist, reported as a missing
+file. So `normalizeTarget` accepts both spellings and every gate goes through
+it. Only `/<letter>/…` is translated: `/usr/bin` has a two-letter first segment
+and is left exactly as it is.
 
 The `read`, `write` and `log_improvement` tools ask the gate before they touch
-anything. `bash` is the awkward one: a command line is not a path list. Every
-path-shaped token in the command is checked — absolute paths, `~`, anything
-walking through `..` — and the command runs with the root as its working
-directory, but a path built at runtime out of variables will not be caught.
-That is a screen, not a sandbox, and the ledger says so.
+anything. `bash` is the awkward one, because a command line is not a path list.
+Every path-shaped token in the command is checked, absolute paths and `~` and
+anything walking through `..`, and the command runs with the root as its working
+directory, but a path built at runtime out of variables will not be caught. That
+is a screen and not a sandbox, and the ledger says so.
+
+The command is split into words the way the shell splits it, quotes included,
+and that matters. Splitting on whitespace alone cut the inside of a quoted
+script into fragments, and the fragments looked like paths: the `.exec` at the
+end of a regex literal became a permission prompt for `C:\.exec`, a `node -e`
+one-liner raised three questions about paths that do not exist, and one of them
+was the whole of `C:\`. Nobody reads the fourth prompt of that kind, and a
+screen that trains the click is worse than no screen at all.
+
+So a word that carries what a path cannot, such as `;`, `=`, `$`, a quote or a
+newline, is treated as code, and only two shapes are pulled out of it: a drive
+letter, or two or more `/` segments. A URL is removed before any of it, because
+its `/mcp/` is a route on someone else's server and not a folder here. The cost
+is a real path hidden inside a script body, spelled out of pieces, which the old
+splitter caught by accident when it caught everything.
 
 ## Asking
 

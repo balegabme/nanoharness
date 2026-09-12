@@ -6,13 +6,15 @@ import { isAgentRole } from '../core/agents.js'
 import { realResolve } from '../core/scope.js'
 import { userDataDir } from '../core/usage-log.js'
 import type { AgentRole } from '../core/agents.js'
+import type { JobState } from '../core/jobs.js'
+import type { SpawnMode } from '../core/spawn.js'
 import type { ChatMessage, SessionNote, TurnUsage } from '../core/types.js'
 import type { SessionView, TranscriptMessage, WorkspaceStatus, WorkspaceView } from '../ipc/contract.js'
 
 /**
  * Sessions belong to folders. A workspace *is* a folder on disk, a session is
  * started inside one, and the folder is the session's root for the rest of its
- * life — that root is what the scope guard enforces (`src/core/scope.ts`).
+ * life, and that root is what the scope guard enforces (`src/core/scope.ts`).
  *
  * The index (which workspaces, which sessions, what they are called) is one
  * small JSON file; a transcript is a file per session, because transcripts grow
@@ -45,8 +47,66 @@ export function workspacesPath(): string {
   return join(userDataDir(), 'workspaces.json')
 }
 
-function transcriptPath(id: string): string {
+const TITLE_MAX = 60
+
+export function transcriptPath(id: string): string {
   return join(userDataDir(), 'sessions', `${id}.json`)
+}
+
+/**
+ * Where a session's subagents keep their own conversations: one folder beside
+ * the session's file, one file per subagent, named by the job id the tool
+ * result quotes back to the model.
+ *
+ * A subagent is a second conversation, not a stretch of the first, so it is
+ * stored as one. Folding its rounds into the parent's transcript would make
+ * the parent's file unreadable and its replay wrong. Leaving it unwritten
+ * leaves the only trace of a minute's work by another agent as the paragraph
+ * it chose to end with.
+ */
+export function subagentDir(sessionId: string): string {
+  return join(userDataDir(), 'sessions', sessionId, 'subagents')
+}
+
+export function subagentPath(sessionId: string, jobId: string): string {
+  return join(subagentDir(sessionId), `${jobId}.json`)
+}
+
+/** One subagent as it is stored: the job's facts, and its whole conversation. */
+export interface StoredSubagent {
+  id: string
+  /** The session whose turn started it. */
+  sessionId: string
+  role: AgentRole
+  mode: SpawnMode
+  task: string
+  background: boolean
+  state: JobState
+  note: string
+  usage: TurnUsage
+  startedAt: number
+  endedAt: number
+  messages: ChatMessage[]
+  notes: SessionNote[]
+}
+
+export async function saveSubagent(record: StoredSubagent): Promise<string> {
+  const path = subagentPath(record.sessionId, record.id)
+  await mkdir(subagentDir(record.sessionId), { recursive: true })
+  await writeFile(path, `${JSON.stringify(record, null, 2)}\n`, 'utf8')
+  return path
+}
+
+/** A stored subagent, or null when this launch is the first to look for it. */
+export async function loadSubagent(sessionId: string, jobId: string): Promise<StoredSubagent | null> {
+  const text = await readFile(subagentPath(sessionId, jobId), 'utf8').catch(() => null)
+  if (text === null) return null
+  try {
+    const parsed = JSON.parse(text) as StoredSubagent
+    return typeof parsed.id === 'string' && Array.isArray(parsed.messages) ? parsed : null
+  } catch {
+    return null
+  }
 }
 
 function str(value: unknown): string | null {
@@ -130,9 +190,9 @@ export async function workspaceStatus(): Promise<WorkspaceStatus> {
 }
 
 /**
- * Adopt a folder. The same folder is never added twice — two entries pointing
- * at one directory would split its sessions across two sidebar groups for no
- * reason — so an existing one is returned instead.
+ * Adopt a folder. The same folder is never added twice, because two entries
+ * pointing at one directory would split its sessions across two sidebar groups
+ * for no reason, so an existing one is returned instead.
  */
 export async function addWorkspace(dir: string): Promise<WorkspaceView> {
   const root = await realResolve(dir)
@@ -156,7 +216,13 @@ export async function removeWorkspace(id: string): Promise<void> {
   const orphans = state.sessions.filter(s => s.workspaceId === id)
   state.sessions = state.sessions.filter(s => s.workspaceId !== id)
   await writeState(state)
-  for (const session of orphans) await rm(transcriptPath(session.id), { force: true })
+  for (const session of orphans) await forgetFiles(session.id)
+}
+
+/** A session's transcript and every subagent transcript underneath it. */
+async function forgetFiles(id: string): Promise<void> {
+  await rm(transcriptPath(id), { force: true })
+  await rm(join(userDataDir(), 'sessions', id), { recursive: true, force: true })
 }
 
 export async function createSession(workspaceId: string): Promise<SessionView> {
@@ -173,7 +239,24 @@ export async function deleteSession(id: string): Promise<void> {
   const state = await readState()
   state.sessions = state.sessions.filter(s => s.id !== id)
   await writeState(state)
-  await rm(transcriptPath(id), { force: true })
+  await forgetFiles(id)
+}
+
+/**
+ * Rename a session. The auto-title is the first thing that was asked, which is
+ * a good default and a bad name for a session that ran all afternoon. So the
+ * name becomes the user's once they set one, and `noteTurn` stops overwriting
+ * it the moment it stops saying "New session".
+ */
+export async function renameSession(id: string, title: string): Promise<SessionView> {
+  const name = title.trim().replace(/\s+/g, ' ')
+  if (name === '') throw new Error('a session needs a name')
+  const state = await readState()
+  const session = state.sessions.find(s => s.id === id)
+  if (session === undefined) throw new Error('that session is gone; start a new one from the sidebar')
+  session.title = name.length > TITLE_MAX ? `${name.slice(0, TITLE_MAX - 1)}…` : name
+  await writeState(state)
+  return session
 }
 
 /** Switch which agent a session talks to. The transcript is untouched. */
@@ -192,6 +275,21 @@ export async function sessionUsage(id: string): Promise<TurnUsage | null> {
   return state.sessions.find(s => s.id === id)?.usage ?? null
 }
 
+/**
+ * Write a session's running total without touching anything else about it.
+ *
+ * A background subagent finishes after the turn that started it, so its tokens
+ * land on the parent's counter with no turn left to store them: without this
+ * the window and the file disagree until the next message is sent.
+ */
+export async function setSessionUsage(id: string, usage: TurnUsage): Promise<void> {
+  const state = await readState()
+  const session = state.sessions.find(s => s.id === id)
+  if (session === undefined) return
+  session.usage = usage
+  await writeState(state)
+}
+
 /** Which agent a session is talking to, or null once the session is gone. */
 export async function sessionRole(id: string): Promise<AgentRole | null> {
   const state = await readState()
@@ -205,8 +303,6 @@ export async function sessionRoot(id: string): Promise<string | null> {
   if (session === undefined) return null
   return state.workspaces.find(w => w.id === session.workspaceId)?.root ?? null
 }
-
-const TITLE_MAX = 60
 
 /**
  * A session is named after the first thing asked of it, which is what the user
@@ -274,8 +370,8 @@ export async function saveTranscript(id: string, messages: ChatMessage[], notes:
 
 /**
  * The transcript as the chat view wants it: the messages, their tool calls and
- * results, and the thinking the provider signed and handed back — the only
- * thinking stored, because it is the only kind the next request may send.
+ * results, and the thinking the provider signed and handed back, which is the
+ * only thinking stored, because it is the only kind the next request may send.
  */
 export function toTranscriptView(messages: ChatMessage[]): TranscriptMessage[] {
   const out: TranscriptMessage[] = []
@@ -291,8 +387,9 @@ export function toTranscriptView(messages: ChatMessage[]): TranscriptMessage[] {
     }
     if (message.role === 'system') continue
     const view: TranscriptMessage = { role: message.role, text: message.content }
-    // Only signed thinking survives a round trip, so only that is stored, and
-    // a re-opened session shows exactly what the next request would send.
+    // Signed or not, the thinking is what explains the turn, so a re-opened
+    // session shows it. Whether it goes back on the wire is the provider's
+    // business, not the transcript's.
     const thought = (message.thinking ?? [])
       .map(block => (block.kind === 'thinking' ? block.text : ''))
       .filter(text => text !== '')

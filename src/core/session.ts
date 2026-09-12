@@ -30,10 +30,10 @@ export interface Tool {
    * True for a tool whose arguments must reach it exactly as the model wrote
    * them, `{{secret:name}}` and all. Every other tool gets the real values
    * substituted in (`SecretVault.revealDeep`), because a tool is where a key is
-   * finally used — but `spawn` and `job_update` do not use their arguments,
-   * they turn them into text: a subagent's first message, a note in the
-   * window, a line in a transcript. Filling those in would put the key back on
-   * the wire and back on disk, which is the whole thing this avoids.
+   * finally used. `spawn` and `job_update` never use their arguments; they turn
+   * them into text: a subagent's first message, a note in the window, a line in
+   * a transcript. Filling those in would put the key back on the wire and back
+   * on disk, which is the whole thing this avoids.
    */
   keepsPlaceholders?: boolean
   run(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult>
@@ -71,14 +71,14 @@ function isJsonObject(value: unknown): value is Record<string, unknown> {
 
 /**
  * The tool loop is not capped. A cap is a harness deciding that a long task is
- * a bug, and the failure it produces is the worst one there is: a turn that
- * ends mid-investigation, with no answer and nothing on screen to say why.
+ * a bug, and it fails badly: the turn ends mid-investigation, with no answer
+ * and nothing on screen to say why.
  *
- * What is caught instead is a model going in circles, which is a different
- * thing and is detectable: the *same* tool with the *same* arguments, over and
- * over. The third identical call is not run — the answer would be the answer it
- * already has — and the model is told so; if it keeps asking after that, the
- * turn ends with a note that says exactly this happened.
+ * A model going in circles is detectable on its own terms: the *same* tool with
+ * the *same* arguments, over and over. The third identical call is not run,
+ * since the answer would be the answer it already has, and the model is told
+ * so. If it keeps asking after that, the turn ends with a note saying exactly
+ * this happened.
  */
 const REPEAT_REFUSE = 3
 const REPEAT_ABORT = 6
@@ -128,6 +128,14 @@ export class Session {
   // asked to continue from.
   private controller: AbortController | null = null
   private stopped = false
+  /**
+   * Answers from background subagents that have not been folded into the
+   * conversation yet. They arrive whenever the job happens to finish, which is
+   * usually in the middle of something: a message pushed between a tool call
+   * and its result is a request both providers refuse. So they wait here for a
+   * point where the transcript is balanced.
+   */
+  private readonly pending: string[] = []
 
   constructor(
     readonly options: SessionOptions,
@@ -174,9 +182,48 @@ export class Session {
   }
 
   /**
+   * The harness failed at its own job around the turn. A tool reporting a bad
+   * result is ordinary and goes through `note`.
+   *
+   * A note is drawn in the margin voice and read as commentary, which is too
+   * quiet for this. A fault is drawn as an error, in the flow where the user is
+   * already looking, and recorded as one so a re-opened session shows it the
+   * same way, without a click.
+   */
+  fault(text: string): void {
+    const safe = this.secrets.redact(text)
+    this.record('error', safe)
+    this.bus.emit({ type: 'session.error', sessionId: this.options.sessionId, turn: this.turn, message: safe, at: Date.now() })
+  }
+
+  /**
+   * Something the conversation should carry on from, arriving from outside the
+   * turn: the answer a background subagent finished with.
+   *
+   * It is queued, then folded in at the next point where the transcript is
+   * balanced: the top of a turn, or the end of a round. A background answer
+   * that lands mid-round therefore reaches the model in that same turn, which
+   * is what lets an agent start three jobs and use all three.
+   */
+  deliver(text: string): void {
+    this.pending.push(text)
+    // With no turn in flight there is no unanswered tool call to land in the
+    // middle of, so it goes straight in. Queueing it here would strand it:
+    // between turns nothing is coming that would drain the queue. The caller
+    // stores the transcript after this, so an answer that arrives while the
+    // user is away survives the app closing.
+    if (!this.running) this.flushPending()
+  }
+
+  private flushPending(): void {
+    if (this.pending.length === 0) return
+    for (const text of this.pending.splice(0)) this.messages.push({ role: 'user', content: this.safe(text) })
+  }
+
+  /**
    * The journal half of a line the window is already being told about another
-   * way — an error, a stop. Recorded without an event, so the renderer draws it
-   * once live and once on replay, never twice.
+   * way, such as an error or a stop. Recorded without an event, so the renderer
+   * draws it once live and once on replay, never twice.
    */
   private record(kind: SessionNote['kind'], text: string): void {
     // The journal is written to disk, so it is a boundary like any other: an
@@ -199,10 +246,9 @@ export class Session {
    * End the turn now: abort the request in flight and stop the tool loop.
    *
    * Subagents go with it. A subagent is this session spending money under
-   * another name — a background one especially, since nothing else in the app
-   * can ever end it — so a stop that left them running would be a stop button
-   * that stops the part the user can see and none of the part they are paying
-   * for.
+   * another name, and nothing else in the app can ever end a background one, so
+   * a stop that left them running would stop the part the user can see and none
+   * of the part they are paying for.
    */
   stop(): void {
     this.options.spawn?.stopAll()
@@ -224,8 +270,8 @@ export class Session {
   /**
    * Tokens a subagent of this session spent. A subagent is billed to whoever
    * started it, so its usage lands in the same total and leaves by the same
-   * event: that is what puts a spawn's cost in the window's counter and its
-   * output in the throughput while it is still running, rather than never.
+   * event. That is what puts a spawn's cost in the window's counter and its
+   * output in the throughput while the spawn is still running.
    */
   addSubagentUsage(delta: TurnUsage): void {
     this.addUsage(delta)
@@ -255,6 +301,9 @@ export class Session {
     this.controller = new AbortController()
     const sessionId = this.options.sessionId
     this.bus.emit({ type: 'session.started', sessionId, cwd: this.options.cwd, at: Date.now() })
+    // Anything a background job finished with between turns goes in first: it
+    // happened before this message, and the model should read it that way.
+    this.flushPending()
     this.messages.push({ role: 'user', content: userText })
 
     try {
@@ -268,6 +317,11 @@ export class Session {
       throw err
     } finally {
       this.controller = null
+      // A job that finished during the last round of the turn queued its answer
+      // and then found no round left to be folded into. The transcript is
+      // balanced here on every path out, and the caller writes it immediately
+      // after, so this is the last chance to keep it.
+      this.flushPending()
     }
   }
 
@@ -285,16 +339,16 @@ export class Session {
       this.addUsage(usage)
       this.bus.emit({ type: 'usage', sessionId, turn: this.turn, usage: { ...this.totalUsage }, at: Date.now() })
 
-      // An assistant message with no text, no tool calls and no thinking is not
-      // a message: it is a blank in the window and a block some providers
-      // refuse to be sent back. The round is still over — that is handled
-      // below — but nothing is written down.
+      // An assistant message with no text, no tool calls and no thinking draws
+      // a blank in the window, and some providers refuse to take it back. The
+      // round is still over, which the code below handles; nothing is written
+      // down for it.
       if (text !== '' || toolCalls.length > 0 || thinking.length > 0) {
         this.messages.push({
           role: 'assistant',
           // The model's own words go through the same scrub a tool result does.
-          // It should never hold a key — everything it reads is redacted first
-          // — but "should never" is not a boundary, and this is where the whole
+          // Everything it reads is redacted first, so it should never hold a
+          // key, and "should never" is not a boundary. This is where the whole
           // string exists, so a value split across two deltas is caught here.
           content: this.secrets.empty ? text : this.secrets.redact(text),
           ...(toolCalls.length > 0 ? { toolCalls } : {}),
@@ -324,6 +378,11 @@ export class Session {
         else await this.executeTool(call)
       }
 
+      // Every tool call now has its result, so the transcript is balanced and a
+      // background answer can be folded in. A job started earlier in this turn
+      // is therefore usable before the turn ends.
+      this.flushPending()
+
       if (this.stopped) {
         this.record('stopped', 'Stopped.')
         this.bus.emit({ type: 'session.stopped', sessionId, turn: this.turn, at: Date.now() })
@@ -331,7 +390,7 @@ export class Session {
       }
 
       if (this.repeat.count >= REPEAT_ABORT) {
-        const stuck = `The same tool call was asked for ${this.repeat.count} times in a row, so the turn was ended here. Nothing was cut for length — this one call was going round in circles.`
+        const stuck = `The same tool call was asked for ${this.repeat.count} times in a row, so the turn was ended here. Nothing was cut for length: this one call was going round in circles.`
         this.note(stuck)
         this.bus.emit({ type: 'session.finished', sessionId, turn: this.turn, at: Date.now() })
         return this.totalUsage
@@ -387,13 +446,13 @@ export class Session {
       }
     } catch (err) {
       // Stop aborts the request mid-stream, so the abort is the expected end of
-      // this round, not a failure: keep what arrived and let the loop wind down.
+      // this round. Keep what arrived and let the loop wind down.
       if (!this.stopped) throw err
     }
     return { text, toolCalls, usage, thinking }
   }
 
-  /** A tool call the stop landed on top of. The model gets told, not ignored. */
+  /** A tool call the stop landed on top of. The model is told it never ran. */
   private noteSkipped(call: ToolCall): void {
     const note = 'stopped by the user before this ran'
     this.bus.emit({
@@ -410,16 +469,16 @@ export class Session {
     const result = this.scrub(await this.resultFor(call))
 
     this.failures = result.ok ? 0 : this.failures + 1
-    // A run of failures is not a reason to end the turn — debugging is mostly
-    // failures — but it is worth saying out loud, because a model that cannot
-    // see the pattern will keep going the same way.
+    // Debugging is mostly failures, so a run of them does not end the turn. It
+    // is still worth saying out loud, because a model that cannot see the
+    // pattern will keep going the same way.
     if (this.failures === FAILURE_NUDGE) {
       result.content = `${result.content ?? result.summary}\n\n[harness: ${this.failures} tool calls in a row have failed. Change approach, or tell the user what is blocking you.]`
     }
 
     this.bus.emit({ type: 'tool_result', sessionId: this.options.sessionId, callId: call.id, result, at: Date.now() })
-    // The failure is stored, not only emitted: a re-opened session has to show
-    // a refused tool as refused rather than as a successful call.
+    // The failure is stored as well as emitted, so a re-opened session shows a
+    // refused tool as refused instead of as a successful call.
     this.messages.push({
       role: 'tool',
       content: result.content ?? result.summary ?? '',
@@ -428,17 +487,17 @@ export class Session {
     })
   }
 
-  /**
-   * A key out of whatever the tool said. A shell that echoes its own command
-   * line, a config file read back, a curl that prints the request it made — all
-   * three would otherwise put the value the model must not see straight into
-   * the conversation, and from there into the stored transcript.
-   */
   /** One delta on its way to the window, with any key taken out of it. */
   private safe(text: string): string {
     return this.secrets.empty ? text : this.secrets.redact(text)
   }
 
+  /**
+   * A key out of whatever the tool said. A shell that echoes its own command
+   * line, a config file read back, a curl that prints the request it made:
+   * each would otherwise put the value the model must not see straight into
+   * the conversation, and from there into the stored transcript.
+   */
   private scrub(result: ToolResult): ToolResult {
     if (this.secrets.empty) return result
     return {
@@ -450,9 +509,8 @@ export class Session {
 
   /**
    * The result of one call, or the harness's answer to a call it has already
-   * answered twice. The refusal is deliberately a tool result rather than an end
-   * to the turn: the model is told the loop it is in and given the round to get
-   * out of it.
+   * answered twice. The refusal comes back as a tool result, so the model is
+   * told which loop it is in and keeps the round to get out of it.
    */
   private async resultFor(call: ToolCall): Promise<ToolResult> {
     const key = `${call.name}\u0000${call.args}`
@@ -479,8 +537,8 @@ export class Session {
       return { ok: false, summary: `args must be a JSON object for ${tool.input.name}`, isError: true }
     }
     // The one place a secret becomes itself again: the arguments of a call that
-    // is about to run. Everything upstream of here — the transcript, the
-    // request, the window — holds `{{secret:name}}` and nothing else, and a
+    // is about to run. Everything upstream of here holds `{{secret:name}}` and
+    // nothing else, the transcript and the request and the window alike, and a
     // tool that only turns its arguments back into text is upstream too.
     const args = tool.keepsPlaceholders === true ? parsed : (this.secrets.revealDeep(parsed) as Record<string, unknown>)
     return tool.run(args, {

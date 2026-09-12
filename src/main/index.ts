@@ -94,11 +94,11 @@ const EVENT_TYPES: AppEvent['type'][] = [
 ]
 
 /**
- * Where this build's own source is, when it is on disk to be read — a packaged
- * app without it says nothing rather than pointing at a folder that is not
+ * Where this build's own source is, when it is on disk to be read. A packaged
+ * app without it says nothing, instead of pointing at a folder that is not
  * there. The session may read it without a prompt, and the harness editor is
- * the one role told where it is, so harness work always arrives as a question
- * for that subagent rather than as a path the parent goes off to explore.
+ * the one role told where it is, so harness work arrives as a question for that
+ * subagent instead of as a path the parent goes off to explore.
  */
 function harnessFacts(): HarnessFacts | undefined {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -121,9 +121,9 @@ function shellName(): string {
 const sessions = new Map<string, Session>()
 
 // The secret names each live session's prompt was built with. A key captured
-// after that build — pasted into the composer, added in settings, written by a
-// tool — leaves the session holding a reference its prompt never explained, and
-// this is what notices.
+// after that build, whether pasted into the composer, added in settings or
+// written by a tool, leaves the session holding a reference its prompt never
+// explained. This is what notices.
 const promptSecrets = new Map<string, string[]>()
 
 // One hub per session, held apart from the session itself because it owns
@@ -137,7 +137,7 @@ const building = new Map<string, Promise<Session>>()
 /**
  * Which subagent ids belong to which window, so a child's own stream reaches
  * the window that asked for it and nowhere else. The id is the job id, which is
- * also the child session's id — that is what lets the renderer tell a
+ * also the child session's id, and that is what lets the renderer tell a
  * subagent's events apart from the conversation's.
  */
 function subagentBus(sender: WebContents, parent: () => Session | undefined): (slot: SubagentSlot) => EventBus {
@@ -150,9 +150,9 @@ function subagentBus(sender: WebContents, parent: () => Session | undefined): (s
     }
     // What the child has spent, as of the last usage event it emitted. A
     // subagent's usage event carries its own running total, so what the parent
-    // is owed is the difference since the one before — added round by round
-    // rather than at the end, because a counter that jumps when a subagent
-    // finishes is not a counter of what is being spent right now.
+    // is owed is the difference since the one before. Adding it round by round
+    // keeps the counter showing what is being spent right now, instead of
+    // jumping once when the subagent finishes.
     let counted = emptyUsage()
     bus.on('usage', event => {
       if (event.sessionId !== slot.id) return
@@ -175,8 +175,8 @@ function subagentBus(sender: WebContents, parent: () => Session | undefined): (s
  * and again once its servers are up: a different number means the settings it
  * was built against are gone, so it closes what it opened instead of handing
  * back a session nobody asked for. Without it, a save that lands mid-build
- * retires a session that does not exist yet and the build then installs its
- * hub over the top — a set of subprocesses with nothing holding them.
+ * retires a session that does not exist yet, and the build then installs its
+ * hub over the top, leaving a set of subprocesses with nothing holding them.
  */
 const epochs = new Map<string, number>()
 
@@ -251,7 +251,13 @@ function jobsFor(sender: WebContents): JobRegistry {
   // and gets its answer as a tool result, so a note saying the same thing would
   // be the same event told twice.
   bus.on('job.started', event => {
-    if (event.job.background) sessions.get(event.job.sessionId)?.note(`Background ${event.job.role} started: ${event.job.task}`)
+    // The marker makes the note the way in while the job is still running: it
+    // is the only mention of the subagent until it answers.
+    if (event.job.background) {
+      sessions
+        .get(event.job.sessionId)
+        ?.note(`Background ${event.job.role} started: ${event.job.task} [subagent:${event.job.id}]`)
+    }
   })
   bus.on('job.finished', event => {
     const parent = sessions.get(event.job.sessionId)
@@ -288,9 +294,9 @@ const TOOLS: Record<string, Tool> = {
 }
 
 /**
- * The role's tools, minus the two that only make sense in one place: nothing
- * but a background job may report progress, and a subagent may not summon
- * another one — a tree of agents is a bill nobody asked for.
+ * The role's tools, minus the two that only make sense in one place: only a
+ * background job may report progress, and a subagent may not summon another
+ * one, since a tree of agents is a bill nobody asked for.
  */
 function toolsFor(role: AgentRole, options: { canSpawn: boolean; isJob: boolean }): Tool[] {
   const definition = AGENTS[role]
@@ -321,8 +327,7 @@ function sessionFor(sender: WebContents, sessionId: string): Promise<Session> {
   if (existing) return Promise.resolve(existing)
   // Building a session now spawns MCP subprocesses, so two messages racing to
   // open the same one would leave a set of servers with nothing holding them.
-  // The in-flight build is the thing that has to be shared, not just the
-  // session it ends with.
+  // So the in-flight build is shared, along with the session it ends with.
   const started = building.get(sessionId)
   if (started !== undefined) return started
   const build = buildSession(sender, sessionId).finally(() => building.delete(sessionId))
@@ -361,9 +366,9 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
   for (const server of hub.status) {
     if (!server.connected) console.warn(`mcp: ${server.name} is not connected: ${server.error ?? 'unknown reason'}`)
   }
-  // The window asked what MCP this session has before it had any — a session is
-  // only built on its first message, and nothing is dialled for one the user
-  // merely clicked on. This is the answer arriving late.
+  // The window asked what MCP this session has before it had any, because a
+  // session is only built on its first message and nothing is dialled for one
+  // the user merely clicked on. This is the answer arriving late.
   bus.emit({ type: 'mcp.status', sessionId, servers: [...hub.status], live: true, at: Date.now() })
 
   // What MCP the session actually has, told to the agent in its own words: a
@@ -407,11 +412,11 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
     if (request.mode === 'clone') {
       // A clone is the parent, one message later: the same prompt, the same
       // tool list and the same history, so the provider's cache answers the
-      // whole prefix. "The same tool list" is literal — the tool definitions
-      // sit in front of the messages, so dropping one would invalidate exactly
-      // the bytes the mode exists to reuse. `spawn` therefore stays in the
-      // list and refuses at the call, and a background clone has no
-      // `job_update`: it reports once, at the end.
+      // whole prefix. "The same tool list" is literal: the tool definitions sit
+      // in front of the messages, so dropping one would invalidate exactly the
+      // bytes the mode exists to reuse. `spawn` therefore stays in the list and
+      // refuses at the call, and a background clone has no `job_update`. It
+      // reports once, at the end.
       return {
         systemPrompt,
         tools,
@@ -494,9 +499,38 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
             endedAt: Date.now(),
             messages: record.messages,
             notes: record.notes,
-          }).catch((err: unknown) => {
-            process.stderr.write(`subagent transcript: ${err instanceof Error ? err.message : String(err)}\n`)
           })
+        },
+        // Sending a failed write to stderr would tell nobody, and by then the
+        // window has already drawn a card offering to open that conversation.
+        // So it is drawn as an error in the conversation itself, where the user
+        // is already looking and needs no click, and kept in the transcript
+        // beside the turn it belongs to.
+        problem: text => {
+          parent.session?.fault(text)
+        },
+        // A background job's answer, back into the conversation that started
+        // it. Without this the model is told a job finished and never told what
+        // it found: the answer lives in a file under the app's data directory,
+        // outside the workspace, which is exactly where the agent cannot read.
+        finished: (slot, outcome) => {
+          const live = parent.session
+          if (live === undefined) return
+          const head = `Background ${outcome.request.role} job ${slot.id} ${outcome.state}. It was asked: ${outcome.request.task}`
+          live.deliver(`${head}
+
+What it answered:
+${outcome.answer}`)
+          // A job usually outlives the turn that started it, so this is often
+          // the only moment the answer exists anywhere the model can reach.
+          // Between turns nothing else writes the transcript: the next message
+          // might never come, and saving settings retires the session. So it is
+          // written here.
+          if (!live.running) {
+            void saveTranscript(sessionId, live.transcript, live.notes).catch((err: unknown) => {
+              live.fault(`A background job's answer could not be stored: ${err instanceof Error ? err.message : String(err)}. It is in this conversation until the app closes.`)
+            })
+          }
         },
       }),
     },
@@ -532,9 +566,9 @@ app.whenReady().then(() => {
 
   ipcMain.handle(IPC_CHANNELS.ping, () => ({ ok: true, version: pkg.version }))
 
-  // The only way out of the window. `setWindowOpenHandler` denies everything and
-  // `will-navigate` is blocked, so a link is handed to the OS browser instead —
-  // and only ever an http(s) one, since `shell.openExternal` would otherwise
+  // The only way out of the window. `setWindowOpenHandler` denies everything
+  // and `will-navigate` is blocked, so a link is handed to the OS browser
+  // instead, and only ever an http(s) one: `shell.openExternal` would otherwise
   // launch whatever a `file:` or a custom scheme is registered to.
   ipcMain.handle(IPC_CHANNELS.openExternal, async (_event: IpcMainInvokeEvent, url: string): Promise<void> => {
     const target = new URL(url)
@@ -607,10 +641,10 @@ app.whenReady().then(() => {
   ipcMain.handle(IPC_CHANNELS.sessionTranscriptPath, (_event: IpcMainInvokeEvent, id: string): string => transcriptPath(id))
 
   /**
-   * What MCP this session has. A session that has never run has no hub — it is
-   * built on the first message, and dialling servers for a session the user only
-   * clicked on would spawn subprocesses nobody asked for — so the answer before
-   * that is the configured list, marked as not yet dialled.
+   * What MCP this session has. A session that has never run has no hub, since
+   * it is built on the first message and dialling servers for a session the
+   * user only clicked on would spawn subprocesses nobody asked for. Until then
+   * the answer is the configured list, marked as not yet dialled.
    */
   ipcMain.handle(IPC_CHANNELS.mcpStatus, async (_event: IpcMainInvokeEvent, sessionId: string): Promise<McpStatusView> => {
     const hub = hubs.get(sessionId)
@@ -669,8 +703,8 @@ app.whenReady().then(() => {
 
   /**
    * One subagent's stored conversation. The window uses it for a subagent this
-   * launch never ran — a spawn from last week, opened from the tool call that
-   * started it — where there is no live stream to replay.
+   * launch never ran, such as a spawn from last week opened from the tool call
+   * that started it, where there is no live stream to replay.
    */
   ipcMain.handle(
     IPC_CHANNELS.subagentOpen,
@@ -703,10 +737,10 @@ app.whenReady().then(() => {
     // has. The session is retired so the next build names it. That costs one
     // cache miss and a hub restart, once, the first time a key appears.
     //
-    // The comparison is against what the prompt was built with, not against the
-    // vault a moment ago: the window captures the message before it draws it, so
-    // by here the name is already stored and a second capture is idempotent —
-    // measured that way, nothing ever looks new and the rebuild never happened.
+    // The comparison is against what the prompt was built with. Comparing
+    // against the vault as it stood a moment ago would never fire: the window
+    // captures the message before it draws it, so by here the name is already
+    // stored and a second capture changes nothing.
     const built = promptSecrets.get(req.sessionId)
     if (built !== undefined && hasUnknownSecret(built, vault.names())) await retire(req.sessionId)
     const session = await sessionFor(event.sender, req.sessionId)
@@ -719,7 +753,7 @@ app.whenReady().then(() => {
     const updated = await noteTurn(req.sessionId, text, usage)
 
     // One line per completed turn, so `nh usage` has something to read. A log
-    // that cannot be written is worth a warning, never a failed turn.
+    // that cannot be written is worth a warning and no more than that.
     await appendUsage({
       at: Date.now(),
       sessionId: session.options.sessionId,

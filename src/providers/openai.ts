@@ -98,6 +98,13 @@ export function createOpenAIProvider(opts: OpenAIOptions): ChatProvider {
       let buffer = ''
       let usage: TurnUsage = emptyUsage()
       const pending = new Map<number, PendingTool>()
+      /**
+       * The round's reasoning, kept so the transcript has it. This wire carries
+       * no signature and `toWireMessage` never sends thinking back, so the block
+       * is for the window and the stored transcript alone, which is the only
+       * place the reasoning existed and was then thrown away.
+       */
+      let reasoning = ''
 
       try {
         for (;;) {
@@ -114,7 +121,10 @@ export function createOpenAIProvider(opts: OpenAIOptions): ChatProvider {
               const delta = event.delta
               if (delta?.content) yield { kind: 'text', text: delta.content }
               const thinking = delta?.reasoning_content ?? delta?.reasoning
-              if (thinking) yield { kind: 'thinking', text: thinking }
+              if (thinking) {
+                reasoning += thinking
+                yield { kind: 'thinking', text: thinking }
+              }
               if (delta?.tool_calls) {
                 for (const tc of delta.tool_calls) {
                   const entry = pending.get(tc.index) ?? { id: '', name: '', args: '' }
@@ -132,6 +142,8 @@ export function createOpenAIProvider(opts: OpenAIOptions): ChatProvider {
         reader.releaseLock()
       }
 
+      // Before the tool calls, in the order the model produced it.
+      if (reasoning !== '') yield { kind: 'thinking_block', block: { kind: 'thinking', text: reasoning } }
       for (const tc of pending.values()) {
         if (tc.name) yield { kind: 'tool', tool: { id: tc.id, name: tc.name, args: tc.args } }
       }
@@ -190,7 +202,7 @@ function usageFromWire(u: WireUsage): TurnUsage {
   }
 }
 /**
- * `GET {baseURL}/v1/models` — the setup screen's test call. It doubles as a
+ * `GET {baseURL}/v1/models`, the setup screen's test call. It doubles as a
  * connection check, because reaching it proves the endpoint answers and the key
  * is accepted. Not every OpenAI-compatible proxy implements it, so a 404 has to
  * read as "this server has no model list", not "your settings are wrong".

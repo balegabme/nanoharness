@@ -7,14 +7,19 @@ import type { AgentRole } from './agents.js'
 import type { SpawnMode } from './spawn.js'
 
 /**
- * A background job is a subagent nobody is waiting on. The turn that started it
- * returns immediately with a job id, and the job reports through events so the
- * window can show it running while the conversation carries on.
+ * The subagents that are running right now: what each was asked, and its last
+ * line. Background and foreground spawns both get an entry: a foreground spawn
+ * blocks the parent's turn, and the window has to be able to say what it is
+ * waiting for.
  *
- * The registry is deliberately in-memory: a job is a thing that is happening,
- * and a job that was happening when the app was killed is not resumable — its
- * subagent died with the process. What survives is whatever the job wrote to
- * disk before it stopped.
+ * A job's id is also the subagent's session id, which is how its stream events
+ * find the window (`src/core/spawn.ts`).
+ *
+ * An entry is dropped the moment its subagent finishes. By then the child's
+ * whole conversation has been written to disk, so the record is the transcript
+ * and this is only ever a list of what is in flight. That is also why nothing
+ * here is persisted: a job that was running when the app closed died with the
+ * process and cannot be resumed.
  */
 
 export type JobState = 'running' | 'done' | 'failed' | 'stopped'
@@ -27,6 +32,8 @@ export interface JobView {
   mode: SpawnMode
   /** What it was asked to do, as the parent phrased it. */
   task: string
+  /** False when the parent's turn is blocked waiting for this one. */
+  background: boolean
   state: JobState
   /** The job's own last word: a `job_update` note, or how it ended. */
   note: string
@@ -40,6 +47,7 @@ export interface JobStart {
   role: AgentRole
   mode: SpawnMode
   task: string
+  background: boolean
 }
 
 export interface JobEnd {
@@ -84,6 +92,9 @@ export class JobRegistry {
     if (end.usage !== undefined) job.usage = end.usage
     job.endedAt = Date.now()
     this.bus.emit({ type: 'job.finished', job: { ...job }, at: job.endedAt })
+    // The event carries everything the entry held, and the transcript on disk
+    // holds the rest. Keeping it here as well would be a list that only grows.
+    this.jobs.delete(id)
   }
 
   get(id: string): JobView | undefined {
@@ -91,7 +102,7 @@ export class JobRegistry {
     return job === undefined ? undefined : { ...job }
   }
 
-  /** Newest first, the way the window lists them. */
+  /** What is running, newest first: what a reloaded window asks for. */
   list(): JobView[] {
     return [...this.jobs.values()].sort((a, b) => b.startedAt - a.startedAt).map(job => ({ ...job }))
   }
