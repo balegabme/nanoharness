@@ -4,16 +4,17 @@ import { HttpTransport, StdioTransport } from './transport.js'
 import { loadServers } from './config.js'
 import { narrowInputSchema, toolName } from './schema.js'
 import { McpProtocolError } from './protocol.js'
+import type { McpCallResult } from './client.js'
 import type { McpServer } from './config.js'
 import type { Tool } from '../core/session.js'
-import type { ToolResult } from '../core/types.js'
+import type { McpServerStatus, ToolResult } from '../core/types.js'
 
 /**
  * Every MCP server a session talks to, and the tools they add to it.
  *
  * The hub is built once per session and connects every configured server up
  * front, because the tool definitions have to be in the first request of the
- * first turn — a tool discovered later would change the bytes in front of the
+ * first turn: a tool discovered later would change the bytes in front of the
  * conversation and cost the whole prompt cache.
  *
  * A server that will not start is not an error. It contributes no tools, its
@@ -21,19 +22,18 @@ import type { ToolResult } from '../core/types.js'
  * broken search server must not be the reason a coding session cannot open.
  */
 
-export interface ServerStatus {
-  name: string
-  connected: boolean
-  toolCount: number
-  /** Why it is not connected, in the words the user needs to fix it. */
-  error?: string
-}
+/**
+ * One server's state. The shape lives in `core/types.ts` because an event
+ * carries it to the window; this is the name the MCP layer knows it by.
+ */
+export type ServerStatus = McpServerStatus
 
 export class McpHub {
   private constructor(
     private readonly clients: McpClient[],
     private readonly built: Tool[],
     readonly status: ServerStatus[],
+    private readonly byServer: Map<string, McpClient>,
   ) {}
 
   static async connect(cwd: string, servers?: readonly McpServer[]): Promise<McpHub> {
@@ -42,6 +42,7 @@ export class McpHub {
     const clients: McpClient[] = []
     const tools: Tool[] = []
     const status: ServerStatus[] = []
+    const byServer = new Map<string, McpClient>()
     // An unreadable config is reported the same way an unreachable server is,
     // so whatever shows status has one list to show and nothing to special-case.
     for (const problem of loaded.problems) status.push({ name: 'mcp.json', connected: false, toolCount: 0, error: problem })
@@ -59,6 +60,7 @@ export class McpHub {
         const listed = await client.listTools()
         for (const tool of listed) tools.push(wrap(server.name, tool.name, tool.description, tool.inputSchema, client))
         clients.push(client)
+        byServer.set(server.name, client)
         status.push({ name: server.name, connected: true, toolCount: listed.length })
       } catch (err) {
         await client?.close().catch(() => undefined)
@@ -66,11 +68,26 @@ export class McpHub {
       }
     }
 
-    return new McpHub(clients, tools, status)
+    return new McpHub(clients, tools, status, byServer)
   }
 
   tools(): Tool[] {
     return [...this.built]
+  }
+
+  /**
+   * One real call to one server, for `nh mcp check`. A handshake is not proof
+   * of a credential: a server that takes its key in the URL answers
+   * `initialize` and `tools/list` to anyone and only refuses at the call, so
+   * "connected" alone would report a broken key as working. The catalog comes
+   * back with it, because the caller has to name a tool it actually has.
+   */
+  async probe(server: string, tool: string, args: Record<string, unknown>): Promise<{ result?: McpCallResult; tools: string[] }> {
+    const client = this.byServer.get(server)
+    if (client === undefined) return { tools: [] }
+    const listed = (await client.listTools()).map(entry => entry.name)
+    if (!listed.includes(tool)) return { tools: listed }
+    return { result: await client.callTool(tool, args), tools: listed }
   }
 
   async close(): Promise<void> {
@@ -82,8 +99,8 @@ export class McpHub {
  * What the agent is told about MCP, in the system prompt.
  *
  * It is there for two reasons. A model asked what tools it has will otherwise
- * answer from its training set — inventing a rule that forbids what it was
- * never told about is the failure this block exists to stop — and a model asked
+ * answer from its training set, and inventing a rule that forbids what it was
+ * never told about is the failure this block exists to stop. A model asked
  * to *add* a server can only do it if it knows the file, its shape and where it
  * lives. Both are a handful of lines, and they are the difference between "I
  * cannot install MCP servers" and a written config.
@@ -108,21 +125,31 @@ export function mcpBlock(
   for (const server of broken) lines.push(`${server.name} is configured but not connected: ${server.error ?? 'unknown reason'}.`)
   lines.push(
     `They are configured in two files: ${paths.global} for every workspace and ${paths.project} for this one, where a name in the project file wins.`,
-    'Both use the shape every MCP client uses: {"mcpServers": {"<name>": {...}}}. A stdio entry has command, args and envPassthrough (variable names, passed through from the environment); an HTTP entry has url and tokenEnv (the variable holding the bearer token). A token is never written in the file.',
   )
   // Who is being told this decides what they are told. An agent that can spawn
-  // is not the one who edits the config — that is the harness-editor's job, and
+  // is not the one who edits the config: that is the harness-editor's job, and
   // handing this agent the command alongside a rule telling it to delegate is
   // how one ended up doing the work itself and arguing with its own prompt on
   // the way. It gets the handoff. The editor gets the commands.
+  // An agent that delegates is given no entry shape at all. Hand it the fields,
+  // url and tokenEnv and "a token is never written in the file", and it does
+  // the only thing it can with them: writes them into the task as a
+  // requirement, for an endpoint whose key goes in the query string, where none
+  // of it was true. Schema it cannot check against the server is schema it will
+  // relay. It says which server and what the user gave it; the fields are the
+  // editor's business.
   if (options.canSpawn) {
     lines.push(
-      'Adding, removing or switching off a server edits one of those files, which is harness work: spawn a harness-editor (mode distinct) and say which server, which file, and what the user gave you. It has the commands; you do not run them. It is configuration, not an install.',
+      'Adding, removing or switching off a server edits one of those files, which is harness work: spawn a harness-editor (mode distinct) and say which server and what the user gave you, in their words. Do not say which file, which fields or which command: you have not read the harness and it has. It is configuration, not an install.',
     )
     return lines
   }
 
   if (!options.canWrite) return lines
+
+  lines.push(
+    'Both files use the shape every MCP client uses: {"mcpServers": {"<name>": {...}}}. A stdio entry has command, args and envPassthrough (variable names, passed through from the environment); an HTTP entry has url and, where the server takes a bearer token, tokenEnv, the name of the variable holding it, so that token is named rather than written. A server that authenticates through its own URL instead is a different case: that URL is stored as given, key and all.',
+  )
 
   if (options.cli === undefined) {
     lines.push('Adding a server is writing one of those files, which you can do when asked.')
@@ -136,7 +163,7 @@ export function mcpBlock(
     `  ${options.cli} mcp list --dir ${options.root}      what is configured, in both files`,
     `  ${options.cli} mcp check <name> --dir ${options.root}      connect for real and report what happened`,
     `  ${options.cli} mcp remove <name> [--global] --dir ${options.root}      take one entry out; the file stays`,
-    `Without \`--global\` the target is the workspace file, and \`--dir\` says which workspace — pass it, because your own folder may not be the one the user meant. \`${options.cli} mcp --help\` prints this list.`,
+    `Without \`--global\` the target is the workspace file, and \`--dir\` says which workspace. Pass it, because your own folder may not be the one the user meant. \`${options.cli} mcp --help\` prints this list.`,
     "The command parses and writes the entry with the harness's own code, so a hand-written JSON file and a hand-written script to check it are both work you do not have to do. An entry it refuses is one a session would have ignored.",
     'The new server is connected the next time a session is built, not inside this turn, and the user needs to be told that.',
   )

@@ -25,7 +25,7 @@ job.
 ## nh usage [--json]
 
 Reads the usage log and reports totals, the cache hit rate
-(`cacheRead / (cacheRead + input)` — plan §15's headline metric), and a
+(`cacheRead / (cacheRead + input)`, plan §15's headline metric), and a
 per-model breakdown. `--json` dumps the raw records instead, for piping
 somewhere else.
 
@@ -42,8 +42,8 @@ empty report rather than an error.
 The MCP config as commands rather than a file to hand-write. It exists because
 of what an agent did without it: wrote the JSON by hand, then wrote a throwaway
 script that re-implemented this project's own parser to check its work, and
-spent five rounds on a job that is one command — and a private copy of the
-parser can disagree with the real one, so the pass proved nothing either.
+spent five rounds on a job that is one command. A private copy of the parser can
+disagree with the real one, so the pass proved nothing either.
 
 ```
 nh mcp list [--json]              what is configured, in both files
@@ -51,13 +51,14 @@ nh mcp add <name> --command <cmd> [--arg A]... [--env VAR]... [-- args...]
 nh mcp add <name> --url <url> [--token-env VAR]
 nh mcp remove <name>              take one entry out (the file stays)
 nh mcp check [name]               actually connect, and say what happened
+nh mcp check <name> --call <tool> [--args JSON]   make one real call
 ```
 
-`--help` is answered wherever it appears — `nh mcp --help`, `nh mcp add --help`,
-`nh help mcp` — and so is a wrong flag: the message names what was wrong and the
-help says what to write instead. That is not politeness. An agent that asked
-`nh mcp add --help` and got `unknown flag --help` back spent two more calls
-guessing at the syntax, which is the whole saving the command exists for.
+`--help` is answered wherever it appears, whether `nh mcp --help`, `nh mcp add
+--help` or `nh help mcp`, and so is a wrong flag: the message names what was
+wrong and the help says what to write instead. That is not politeness. An agent
+that asked `nh mcp add --help` and got `unknown flag --help` back spent two more
+calls guessing at the syntax, which is the whole saving the command exists for.
 
 `--global` writes `~/.nanoharness/mcp.json`, the file every workspace reads;
 without it the target is this folder's own `.nanoharness/mcp.json`. `--dir DIR`
@@ -70,10 +71,23 @@ looking configured. `check` spawns the server, does the handshake and reads the
 catalog through the client a session uses, then closes it again: a pass means
 the session will connect, not that the JSON parsed.
 
-A token is never written. `--env` and `--token-env` name an environment
-variable, and the harness reads it at connect time (`docs/harness/mcp.md`).
+It does not mean the credential works. A remote server answers `initialize` and
+`tools/list` to anyone and only looks at the key when a tool is called, so
+`check` once printed `ok tavily 5 tools` for an entry whose key was nonsense:
+five tools in the prompt, every call an auth error. So the plain form says what
+it did not check, and `--call <tool>` makes one real call and prints what the
+server said, which is the only part of the protocol a key has to survive. The
+tool is named rather than chosen for you, because a catalog is not a list of
+safe things to run. `--args` takes a JSON object, and a name the server does not
+have comes back with the list of the ones it does.
+
+A *bearer* token is never written. `--env` and `--token-env` name an
+environment variable, and the harness reads it at connect time. A URL that
+carries its own key is the other case, and it is stored as given, including a
+`{{secret:name}}`, which is substituted as the command runs, so the file holds
+the real value (`docs/harness/mcp.md`).
 
 A session builds its tool list once, at startup, so a server added now is
-connected the next time the app starts or a session is opened — the command
-says so rather than leaving an agent to report a tool the running session has
-not got.
+connected the next time the app starts or a session is opened. The command says
+so rather than leaving an agent to report a tool the running session has not
+got.

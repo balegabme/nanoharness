@@ -7,7 +7,7 @@ import { runMcp } from './mcp.js'
 /**
  * `nh mcp`, run the way an agent runs it. The point of the command is that
  * adding a server is one call that writes the file with the harness's own
- * parser and can then connect for real — so the test writes with the command,
+ * parser and can then connect for real, so the test writes with the command,
  * reads the file off disk, and makes `check` talk to an actual server over
  * stdio. Nothing here asserts on a mock.
  */
@@ -33,6 +33,15 @@ function handle(message) {
   }
   if (message.method === 'tools/list') {
     send({ jsonrpc: '2.0', id: message.id, result: { tools: [{ name: 'echo', description: 'echo', inputSchema: { type: 'object', properties: {} } }] } })
+    return
+  }
+  // A remote server with a key in its URL behaves exactly like this: it greets
+  // anyone and only looks at the credential when a tool is called.
+  if (message.method === 'tools/call') {
+    const key = (message.params && message.params.arguments || {}).key
+    send(key === 'right'
+      ? { jsonrpc: '2.0', id: message.id, result: { content: [{ type: 'text', text: 'pong' }] } }
+      : { jsonrpc: '2.0', id: message.id, result: { isError: true, content: [{ type: 'text', text: 'Invalid key: it does not start with right-' }] } })
   }
 }
 `
@@ -153,6 +162,44 @@ describe('nh mcp check', () => {
 
     expect(code).toBe(0)
     expect(printed.out()).toContain('ok    probe  1 tool')
+  })
+
+  it('does not let a handshake stand in for a working credential', async () => {
+    const printed = captured()
+    const code = await runMcp(['check', 'probe', '--dir', project])
+
+    // The catalog came back, which on its own says only "ok". A server whose
+    // key is dead answers exactly this far.
+    expect(code).toBe(0)
+    expect(printed.out()).toContain('--call')
+  })
+
+  it('reports a call the server refused, where the handshake passed', async () => {
+    const printed = captured()
+    const code = await runMcp(['check', 'probe', '--dir', project, '--call', 'echo', '--args', '{"key":"wrong"}'])
+
+    expect(code).toBe(1)
+    expect(printed.out()).toContain('call  fail')
+    // The server's own sentence, so the reader can see it is the key and not
+    // the connection.
+    expect(printed.out()).toContain('Invalid key')
+  })
+
+  it('passes when the call itself comes back', async () => {
+    const printed = captured()
+    const code = await runMcp(['check', 'probe', '--dir', project, '--call', 'echo', '--args', '{"key":"right"}'])
+
+    expect(code).toBe(0)
+    expect(printed.out()).toContain('call  ok')
+    expect(printed.out()).toContain('pong')
+  })
+
+  it('names the tools it has when asked for one it has not', async () => {
+    const printed = captured()
+    const code = await runMcp(['check', 'probe', '--dir', project, '--call', 'nope'])
+
+    expect(code).toBe(1)
+    expect(printed.out()).toContain('it has: echo')
   })
 
   it('fails loudly on a server that will not start', async () => {

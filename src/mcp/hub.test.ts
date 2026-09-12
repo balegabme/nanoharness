@@ -11,7 +11,7 @@ import type { McpServer } from './config.js'
  *
  * Nothing here is stubbed: the test spawns a Node process that speaks
  * newline-delimited JSON-RPC, and the code under test is the whole path a tool
- * call takes — handshake, version negotiation, paginated catalog, schema
+ * call takes: handshake, version negotiation, paginated catalog, schema
  * narrowing, the call, and the two failure kinds. A fake transport would have
  * proved that the client talks to a fake transport.
  */
@@ -195,6 +195,11 @@ describe('what a session is told about MCP', () => {
     // question "what tools do you have" needs, and it is not a licence to edit.
     expect(text).toContain('probe (2 tools)')
     expect(text).toContain(paths.global)
+    // And it is told no entry shape, because the only thing it can do with one
+    // is put it in the task it hands over, where a guess arrives as a
+    // requirement the subagent has to satisfy or disprove.
+    expect(text).not.toContain('tokenEnv')
+    expect(text).not.toContain('envPassthrough')
   })
 
   it('gives the subagent the exact commands, with the workspace named', () => {
@@ -202,6 +207,8 @@ describe('what a session is told about MCP', () => {
 
     expect(text).toContain(`${cli} mcp add <name> --url <url>`)
     expect(text).toContain(`${cli} mcp check <name> --dir /work/app`)
+    // The one that writes the file is the one that gets the fields.
+    expect(text).toContain('tokenEnv')
     // Its own folder is the harness, not the workspace the user meant, so the
     // flag that says which workspace is in the command rather than in a note.
     expect(text).toContain('--dir /work/app')

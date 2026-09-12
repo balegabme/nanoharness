@@ -24,13 +24,13 @@ function platformNote(platform: NodeJS.Platform): string {
     'there is no /mnt/c and no /proc. Paths are either relative to the',
     'workspace root or Windows paths such as C:/Users/you/thing.',
     'Git Bash prints its own spelling, /c/Users/you/thing, and every tool',
-    'here takes either — so a path copied out of shell output works as it is.',
+    'here takes either, so a path copied out of shell output works as it is.',
   ].join(' ')
 }
 
 /**
- * The system prompt for one session. Short on purpose — a long prompt is paid
- * for on every request of every turn — but never vague about the two things
+ * The system prompt for one session. Short on purpose, because a long prompt is
+ * paid for on every request of every turn, and never vague about the two things
  * that make an agent wander: where it is, and what it may touch.
  */
 export function buildSystemPrompt(env: PromptEnvironment): string {
@@ -51,7 +51,9 @@ export function buildSystemPrompt(env: PromptEnvironment): string {
     'Rules:',
     '- Every tool is scoped to the workspace. A path outside it stops the turn and asks the user, so do not reach outside unless the task needs it, and say why when you do.',
     '- Prefer paths relative to the workspace root.',
-    '- Do the task that was asked: no unasked-for exploring, dependency installs, or refactors.',
+    '- Do the task that was asked: no unasked-for exploring, dependency installs, or refactors. Stop when the asked-for outcome is done and checked; how the thing works underneath is not part of it unless the answer is the task.',
+    '- Do not invent a fact about this machine or this project: a file path, a config field, a flag, a format, a convention. If you have not read it here, you do not know it. Check it in one call, or say plainly that you have not.',
+    '- Use what the project already has before rebuilding what it does. A repo with a CLI, a script or a task runner has one command for the job you are about to hand-write; `--help` on it costs one call and beats deriving the format from source.',
     '- Never state a rule, a permission or a limit you were not given. Asked what you can do, answer from the tools and the configuration in this prompt: something that is not configured is not configured, which is not the same as forbidden, and you say which one it is.',
     '- If the request leaves something open that would change what you do, ask. Do not invent work to fill the gap.',
     '- Read a file before you edit it. Check a command\'s output before acting on it.',

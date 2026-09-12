@@ -3,23 +3,27 @@ import { loadServers, mcpPaths, parseServer, readEntries, removeEntry, writeEntr
 import { McpHub } from '../mcp/hub.js'
 import type { McpServer } from '../mcp/config.js'
 
-/** `nh mcp` — manage MCP servers. */
+/** `nh mcp`: manage MCP servers. */
 
-export const MCP_HELP = `nh mcp — the MCP servers this harness will connect to
+export const MCP_HELP = `nh mcp: the MCP servers this harness will connect to
 
   nh mcp list [--json]              what is configured, in both files
   nh mcp add <name> --command <cmd> [--arg A]... [--env VAR]... [-- args...]
   nh mcp add <name> --url <url> [--token-env VAR]
   nh mcp remove <name>              take one entry out (the file stays)
   nh mcp check [name]               actually connect, and say what happened
+  nh mcp check <name> --call <tool> [--args JSON]   make one real call
 
   --global   the file every workspace reads (~/.nanoharness/mcp.json)
              default is this folder's own .nanoharness/mcp.json
   --disabled write the entry switched off
   --dir DIR  treat DIR as the workspace instead of the current folder
 
-A token is never written to the file: --env and --token-env name an
-environment variable, and the harness reads it at connect time.
+A bearer token is named, not written: --env and --token-env give the name of
+an environment variable, and the harness reads it at connect time. A server
+that authenticates through its own URL is the other case: that URL is stored
+as given, key and all, and a {{secret:name}} inside it is substituted as this
+command runs, so the file ends up holding the real value.
 `
 
 /**
@@ -38,6 +42,8 @@ interface Flags {
   command?: string
   url?: string
   tokenEnv?: string
+  call?: string
+  callArgs?: string
   args: string[]
   env: string[]
   rest: string[]
@@ -84,6 +90,12 @@ export function parseFlags(argv: readonly string[]): Flags {
       case '--token-env':
         flags.tokenEnv = wants(token, argv[++i])
         break
+      case '--call':
+        flags.call = wants(token, argv[++i])
+        break
+      case '--args':
+        flags.callArgs = wants(token, argv[++i])
+        break
       case '--arg':
         flags.args.push(wants(token, argv[++i]))
         break
@@ -102,7 +114,7 @@ export async function runMcp(argv: readonly string[]): Promise<number> {
   const [command, ...rest] = argv
   // `--help` means help wherever it appears, whichever subcommand it is sitting
   // behind. The alternative is a flag error on the one call whose whole purpose
-  // was to ask what the flags are — which is two more calls of guessing.
+  // was to ask what the flags are, which is two more calls of guessing.
   if (command === undefined || argv.some(token => token === '--help' || token === '-h')) {
     process.stdout.write(MCP_HELP)
     return 0
@@ -127,8 +139,8 @@ export async function runMcp(argv: readonly string[]): Promise<number> {
         return 2
     }
   } catch (err) {
-    // A wrong command line is answered with the right one. Anything else — an
-    // unreadable file, a server that threw — is a real failure and is left to
+    // A wrong command line is answered with the right one. Anything else, an
+    // unreadable file or a server that threw, is a real failure and is left to
     // the caller rather than dressed up as a typo.
     if (!(err instanceof UsageError)) throw err
     process.stderr.write(`nh mcp: ${err.message}\n${MCP_HELP}`)
@@ -173,7 +185,7 @@ async function list(flags: Flags, paths: { global: string; project: string }): P
 }
 
 /**
- * One entry as configured, or the reason the harness will ignore it — read with
+ * One entry as configured, or the reason the harness will ignore it, read with
  * the same `parseServer` a session uses, so the listing cannot flatter a file
  * the harness would throw away.
  */
@@ -210,6 +222,36 @@ async function remove(flags: Flags, path: string): Promise<number> {
 }
 
 /**
+ * The `--call` half of `check`: one real tool call, which is the only part of
+ * the protocol a credential has to survive. It is asked for rather than done
+ * automatically, because a catalog is not a list of safe things to run. The
+ * caller names the tool, so nothing is invoked that they did not choose.
+ */
+async function probe(hub: McpHub, servers: readonly McpServer[], flags: Flags): Promise<number> {
+  const tool = flags.call ?? ''
+  const name = servers[0]?.name
+  if (servers.length !== 1 || name === undefined) throw new UsageError('--call needs one server: nh mcp check <name> --call <tool>')
+
+  let args: Record<string, unknown> = {}
+  if (flags.callArgs !== undefined) {
+    const parsed: unknown = JSON.parse(flags.callArgs)
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) throw new UsageError('--args takes a JSON object')
+    args = parsed as Record<string, unknown>
+  }
+
+  const { result, tools } = await hub.probe(name, tool, args)
+  if (result === undefined) {
+    process.stdout.write(`no tool called ${tool} on ${name}${tools.length === 0 ? '' : `\n  it has: ${tools.join(', ')}`}\n`)
+    return 1
+  }
+  // The server's own words, not a verdict of ours: an auth failure and an empty
+  // search both come back as `isError`, and only the text says which.
+  const text = result.text.length > 400 ? `${result.text.slice(0, 399)}…` : result.text
+  process.stdout.write(result.isError ? `call  fail  ${name}  ${tool}\n  ${text}\n` : `call  ok    ${name}  ${tool}\n  ${text}\n`)
+  return result.isError ? 1 : 0
+}
+
+/**
  * Connect for real. This is the check that is worth having: it spawns the
  * server, does the handshake, and reads the catalog through the client a
  * session uses, so a pass means the session will work.
@@ -234,8 +276,18 @@ async function check(flags: Flags): Promise<number> {
           : `fail  ${status.name}  ${status.error ?? 'unknown reason'}\n`,
       )
     }
+    let called = 0
+    if (flags.call !== undefined) called = await probe(hub, servers, flags)
+    // Connecting is not authenticating, and saying "ok" without that sentence
+    // is how a server with a dead key was reported as working: the handshake
+    // and the catalog are answered to anyone, and a key in a URL is only
+    // checked when a tool is actually called.
+    else if (hub.status.some(status => status.connected)) {
+      process.stdout.write('a handshake does not check a credential: nh mcp check <name> --call <tool> makes one real call\n')
+    }
+
     const failed = hub.status.some(status => !status.connected)
-    return failed || loaded.problems.length > 0 ? 1 : 0
+    return failed || called !== 0 || loaded.problems.length > 0 ? 1 : 0
   } finally {
     // The servers were spawned to answer one question; leaving them running
     // after the command has printed its answer is a process leak with a prompt
