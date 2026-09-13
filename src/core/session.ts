@@ -27,6 +27,13 @@ export interface ToolContext {
 export interface Tool {
   input: ToolInput
   /**
+   * True for a tool that only reads. The loop may then run it at the same time
+   * as another call from the same assistant message. Only an explicit true
+   * opts in: a tool that says nothing runs alone, so a new write tool is
+   * exclusive by default.
+   */
+  parallel?: boolean
+  /**
    * True for a tool whose arguments must reach it exactly as the model wrote
    * them, `{{secret:name}}` and all. Every other tool gets the real values
    * substituted in (`SecretVault.revealDeep`), because a tool is where a key is
@@ -43,6 +50,8 @@ export type ArgsParse<A> = { ok: true; args: A } | { ok: false; error: string }
 
 export interface ToolSpec<A> {
   input: ToolInput
+  /** See `Tool.parallel`. */
+  parallel?: boolean
   /** See `Tool.keepsPlaceholders`. A tool that only turns its arguments into text. */
   keepsPlaceholders?: boolean
   parse(args: Record<string, unknown>): ArgsParse<A>
@@ -55,6 +64,7 @@ export interface ToolSpec<A> {
 export function defineTool<A>(spec: ToolSpec<A>): Tool {
   return {
     input: spec.input,
+    ...(spec.parallel === true ? { parallel: true } : {}),
     ...(spec.keepsPlaceholders === true ? { keepsPlaceholders: true } : {}),
     async run(raw, ctx) {
       const parsed = spec.parse(raw)
@@ -121,6 +131,12 @@ export class Session {
   /** The last tool call and how many times in a row it has been asked for. */
   private repeat: { key: string; count: number } = { key: '', count: 0 }
   private failures = 0
+  /**
+   * The provider sent a usage report that could not be read, and the fault is
+   * already recorded. Said once: a provider that does this does it every turn,
+   * and it is the same fact each time.
+   */
+  private usageProblemNoted = false
   private totalUsage = emptyUsage()
   private turnUsage = emptyUsage()
   // Stop is cooperative: the in-flight request is aborted and the loop ends at
@@ -149,6 +165,12 @@ export class Session {
     this.messages.push({ role: 'system', content: options.systemPrompt })
     // A resumed session keeps its running total: the turns it is resuming from
     // were paid for, and a counter that restarts at zero says they were not.
+    // A stored total whose `input` counted the cached tokens keeps that overlap
+    // for the life of the session. It cannot be repaired: the figure does not
+    // say which wire produced it, and an Anthropic one was always correct. The
+    // alternative would be discarding a real number to avoid an approximate
+    // one. `usage-log.ts` drops old lines instead, because it adds totals
+    // across sessions.
     this.totalUsage = { ...(options.usage ?? emptyUsage()) }
     // A resumed session keeps its own system prompt, not the stored one: the
     // prompt is built fresh each launch and may have changed since.
@@ -197,6 +219,18 @@ export class Session {
   }
 
   /**
+   * The provider sent a usage report that could not be read, so this turn's
+   * cost is unknown. Nothing is invented to cover the gap and the answer the
+   * user already paid for is kept; the one thing that is wrong is said out
+   * loud, once.
+   */
+  private noteUsageProblem(problem: string): void {
+    if (this.usageProblemNoted) return
+    this.usageProblemNoted = true
+    this.fault(`the provider's usage report could not be read (${problem}); this turn's cost is unknown`)
+  }
+
+  /**
    * Something the conversation should carry on from, arriving from outside the
    * turn: the answer a background subagent finished with.
    *
@@ -213,6 +247,15 @@ export class Session {
     // stores the transcript after this, so an answer that arrives while the
     // user is away survives the app closing.
     if (!this.running) this.flushPending()
+  }
+
+  /**
+   * Fold anything queued straight in, because there is no next round to fold
+   * it at: the process is ending. A queued answer left here would be lost,
+   * since the transcript written a moment later is what survives.
+   */
+  settle(): void {
+    this.flushPending()
   }
 
   private flushPending(): void {
@@ -270,8 +313,13 @@ export class Session {
   /**
    * Tokens a subagent of this session spent. A subagent is billed to whoever
    * started it, so its usage lands in the same total and leaves by the same
-   * event. That is what puts a spawn's cost in the window's counter and its
-   * output in the throughput while the spawn is still running.
+   * event, which is what puts a spawn's cost in the window's counter while the
+   * spawn is still running.
+   *
+   * The event carries no `streamMs`. The spawn's tokens came off a stream this
+   * session never timed, and it was very likely generating at the same moment,
+   * so there is no interval the two of them share. `src/renderer/metrics.ts` is
+   * where an event without one is absorbed.
    */
   addSubagentUsage(delta: TurnUsage): void {
     this.addUsage(delta)
@@ -335,9 +383,9 @@ export class Session {
     this.failures = 0
 
     for (;;) {
-      const { text, toolCalls, usage, thinking } = await this.drainRound()
+      const { text, toolCalls, usage, thinking, streamMs } = await this.drainRound()
       this.addUsage(usage)
-      this.bus.emit({ type: 'usage', sessionId, turn: this.turn, usage: { ...this.totalUsage }, at: Date.now() })
+      this.bus.emit({ type: 'usage', sessionId, turn: this.turn, usage: { ...this.totalUsage }, streamMs, at: Date.now() })
 
       // An assistant message with no text, no tool calls and no thinking draws
       // a blank in the window, and some providers refuse to take it back. The
@@ -373,10 +421,11 @@ export class Session {
         return this.totalUsage
       }
 
-      for (const call of toolCalls) {
-        if (this.stopped) this.noteSkipped(call)
-        else await this.executeTool(call)
-      }
+      // Calls run together where the tools say it is safe, and in the model's
+      // order either way. A batch of reads costs one wait instead of one per
+      // file; a write still runs alone, because the next call in the message
+      // may be about the file it just changed.
+      await this.executeTools(toolCalls)
 
       // Every tool call now has its result, so the transcript is balanced and a
       // background answer can be folded in. A job started earlier in this turn
@@ -398,11 +447,16 @@ export class Session {
     }
   }
 
-  private async drainRound(): Promise<{ text: string; toolCalls: ToolCall[]; usage: TurnUsage; thinking: ThinkingBlock[] }> {
+  private async drainRound(): Promise<{ text: string; toolCalls: ToolCall[]; usage: TurnUsage; thinking: ThinkingBlock[]; streamMs: number }> {
     let text = ''
     const toolCalls: ToolCall[] = []
     const thinking: ThinkingBlock[] = []
     let usage = emptyUsage()
+    // Timed from the first chunk rather than from the request, so the number
+    // is generation speed and not generation speed plus however long the
+    // provider queued. Tool calls run after this returns, so their time is
+    // outside it either way.
+    let firstChunkAt = 0
 
     const chunks = this.provider.stream({
       model: this.options.model,
@@ -414,6 +468,7 @@ export class Session {
 
     try {
       for await (const chunk of chunks) {
+        if (firstChunkAt === 0) firstChunkAt = Date.now()
         switch (chunk.kind) {
           case 'text':
             text += chunk.text
@@ -439,6 +494,7 @@ export class Session {
             break
           case 'done':
             usage = chunk.usage
+            if (chunk.usageProblem !== undefined) this.noteUsageProblem(chunk.usageProblem)
             break
           case 'error':
             throw new Error(chunk.message)
@@ -449,7 +505,7 @@ export class Session {
       // this round. Keep what arrived and let the loop wind down.
       if (!this.stopped) throw err
     }
-    return { text, toolCalls, usage, thinking }
+    return { text, toolCalls, usage, thinking, streamMs: firstChunkAt === 0 ? 0 : Date.now() - firstChunkAt }
   }
 
   /** A tool call the stop landed on top of. The model is told it never ran. */
@@ -465,9 +521,46 @@ export class Session {
     this.messages.push({ role: 'tool', content: note, toolCallId: call.id, failed: true })
   }
 
-  private async executeTool(call: ToolCall): Promise<void> {
-    const result = this.scrub(await this.resultFor(call))
+  /**
+   * Every call of one assistant message, in order. A run of tools that declared
+   * themselves read-only starts together and commits in the order the model
+   * asked; anything else runs on its own.
+   */
+  private async executeTools(calls: readonly ToolCall[]): Promise<void> {
+    let next = 0
+    while (next < calls.length) {
+      const call = calls[next]
+      if (call === undefined) return
+      if (this.stopped) {
+        this.noteSkipped(call)
+        next += 1
+        continue
+      }
+      if (this.toolFor(call)?.parallel !== true) {
+        await this.executeTool(call)
+        next += 1
+        continue
+      }
+      const group: ToolCall[] = []
+      for (;;) {
+        const candidate = calls[next]
+        if (candidate === undefined || this.toolFor(candidate)?.parallel !== true) break
+        group.push(candidate)
+        next += 1
+      }
+      const done = await Promise.all(
+        group.map(async call => ({ call, result: this.scrub(await this.resultFor(call)) })),
+      )
+      for (const { call, result } of done) this.commit(call, result)
+    }
+  }
 
+  private async executeTool(call: ToolCall): Promise<void> {
+    this.commit(call, this.scrub(await this.resultFor(call)))
+  }
+
+  /** The window, the transcript and the failure count for one finished call. */
+  private commit(call: ToolCall, result: ToolResult): void {
     this.failures = result.ok ? 0 : this.failures + 1
     // Debugging is mostly failures, so a run of them does not end the turn. It
     // is still worth saying out loud, because a model that cannot see the
@@ -481,7 +574,7 @@ export class Session {
     // refused tool as refused instead of as a successful call.
     this.messages.push({
       role: 'tool',
-      content: result.content ?? result.summary ?? '',
+      content: result.content ?? result.summary,
       toolCallId: call.id,
       ...(result.ok ? {} : { failed: true }),
     })
@@ -521,9 +614,13 @@ export class Session {
       return { ok: false, summary: same, content: same, isError: true }
     }
 
-    const tool = this.tools.find(t => t.input.name === call.name)
+    const tool = this.toolFor(call)
     if (tool === undefined) return { ok: false, summary: `unknown tool: ${call.name}` }
     return this.runWithArgs(tool, call.args)
+  }
+
+  private toolFor(call: ToolCall): Tool | undefined {
+    return this.tools.find(t => t.input.name === call.name)
   }
 
   private async runWithArgs(tool: Tool, raw: string): Promise<ToolResult> {
@@ -541,12 +638,22 @@ export class Session {
     // nothing else, the transcript and the request and the window alike, and a
     // tool that only turns its arguments back into text is upstream too.
     const args = tool.keepsPlaceholders === true ? parsed : (this.secrets.revealDeep(parsed) as Record<string, unknown>)
-    return tool.run(args, {
-      cwd: this.options.cwd,
-      access: this.access,
-      ...(this.options.spawn === undefined ? {} : { spawn: this.options.spawn }),
-      ...(this.options.job === undefined ? {} : { job: this.options.job }),
-    })
+    try {
+      return await tool.run(args, {
+        cwd: this.options.cwd,
+        access: this.access,
+        ...(this.options.spawn === undefined ? {} : { spawn: this.options.spawn }),
+        ...(this.options.job === undefined ? {} : { job: this.options.job }),
+      })
+    } catch (err) {
+      // A tool that threw rather than returned is a tool failure, and the loop
+      // needs a result either way. Without this, one rejected promise loses the
+      // whole message: the calls beside it have no answer, and the next request
+      // carries an assistant turn with tool calls nothing ever replied to,
+      // which both providers reject. `scrub` redacts what the error quotes.
+      const message = `${tool.input.name} failed: ${err instanceof Error ? err.message : String(err)}`
+      return { ok: false, summary: message, content: message, isError: true }
+    }
   }
 
   private addUsage(u: TurnUsage): void {

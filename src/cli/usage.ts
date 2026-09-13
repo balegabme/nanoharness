@@ -1,5 +1,5 @@
 // doc: docs/harness/cli.md
-import { emptyUsage } from '../core/types.js'
+import { cacheHitRate, emptyUsage } from '../core/types.js'
 import type { TurnUsage } from '../core/types.js'
 import type { UsageRecord } from '../core/usage-log.js'
 
@@ -8,13 +8,6 @@ export interface UsageSummary {
   sessions: number
   total: TurnUsage
   byModel: Map<string, { turns: number; usage: TurnUsage }>
-}
-
-// Cache hit rate is the plan's §15 headline metric: cached input over all
-// input the provider had to look at. No input at all means nothing to report.
-export function cacheHitRate(usage: TurnUsage): number | null {
-  const looked = usage.cacheRead + usage.input
-  return looked === 0 ? null : usage.cacheRead / looked
 }
 
 export function summarize(records: UsageRecord[]): UsageSummary {
@@ -42,28 +35,33 @@ export function formatSummary(summary: UsageSummary, logPath: string, skipped: n
   }
 
   lines.push(`${summary.turns} turns across ${summary.sessions} sessions`, '')
-  for (const [label, value] of usageRows(summary.total)) lines.push(`  ${label.padEnd(12)} ${value.toLocaleString('en-US').padStart(9)}`)
-  lines.push(`  ${'cache hit'.padEnd(12)} ${percent(cacheHitRate(summary.total)).padStart(9)}`)
+  for (const [label, value] of usageRows(summary.total)) lines.push(`  ${label.padEnd(20)} ${value.toLocaleString('en-US').padStart(9)}`)
+  lines.push(`  ${'cache hit'.padEnd(20)} ${percent(cacheHitRate(summary.total)).padStart(9)}`)
 
   if (summary.byModel.size > 0) {
     lines.push('', 'per model')
     for (const [model, entry] of [...summary.byModel].sort((a, b) => b[1].turns - a[1].turns)) {
       const turns = `${entry.turns} turn${entry.turns === 1 ? '' : 's'}`
-      lines.push(`  ${model}  ${turns}  in ${entry.usage.input.toLocaleString('en-US')}  cached ${entry.usage.cacheRead.toLocaleString('en-US')}  hit ${percent(cacheHitRate(entry.usage))}`)
+      // `written` is left out when there is none: only Anthropic reports cache
+      // writes, and a 0 on every row of every other provider says nothing.
+      const written = entry.usage.cacheWrite > 0 ? `  written ${entry.usage.cacheWrite.toLocaleString('en-US')}` : ''
+      lines.push(`  ${model}  ${turns}  in ${entry.usage.input.toLocaleString('en-US')}  cached ${entry.usage.cacheRead.toLocaleString('en-US')}${written}  hit ${percent(cacheHitRate(entry.usage))}`)
     }
   }
 
-  if (skipped > 0) lines.push('', `${skipped} unreadable line${skipped === 1 ? '' : 's'} skipped`)
+  if (skipped > 0) lines.push('', `${skipped} line${skipped === 1 ? '' : 's'} skipped (another schema version or unreadable)`)
   return lines.join('\n')
 }
 
+// `reasoning` is indented because it is a breakdown of `output`. The four
+// unindented rows add up to what the turn cost.
 function usageRows(usage: TurnUsage): [string, number][] {
   return [
     ['input', usage.input],
-    ['output', usage.output],
     ['cache read', usage.cacheRead],
     ['cache write', usage.cacheWrite],
-    ['reasoning', usage.reasoning],
+    ['output', usage.output],
+    ['  of which reasoning', usage.reasoning],
   ]
 }
 

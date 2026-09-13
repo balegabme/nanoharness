@@ -6,12 +6,23 @@ import { emptyUsage } from './types.js'
 import type { TurnUsage } from './types.js'
 
 export interface UsageRecord {
+  v: number
   at: number
   sessionId: string
   turn: number
   model: string
   usage: TurnUsage
 }
+
+/**
+ * Stamped on every line so a reader can tell which units the numbers are in:
+ * the meaning of a field changes with the wire, and a line already on disk
+ * cannot be repaired because it does not record which wire wrote it. A line
+ * from any version but this one is therefore skipped rather than summed under
+ * units it was not written in. The project is pre-1.0 and keeps no
+ * compatibility path.
+ */
+export const USAGE_SCHEMA = 2
 
 const USAGE_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite', 'reasoning'] as const
 
@@ -28,16 +39,25 @@ export function usageLogPath(env?: NodeJS.ProcessEnv, platform?: string): string
   return join(userDataDir(env, platform), 'usage.jsonl')
 }
 
-export async function appendUsage(record: UsageRecord, path = usageLogPath()): Promise<void> {
+// The version is stamped here rather than by the caller, so a new call site
+// cannot write an unversioned line.
+export async function appendUsage(record: Omit<UsageRecord, 'v'>, path = usageLogPath()): Promise<void> {
   await mkdir(dirname(path), { recursive: true })
-  await appendFile(path, `${JSON.stringify(record)}\n`, 'utf8')
+  await appendFile(path, `${JSON.stringify({ v: USAGE_SCHEMA, ...record })}\n`, 'utf8')
 }
 
 export interface UsageLog {
   records: UsageRecord[]
+  /** Lines that are not current records: another schema version, or unreadable. */
   skipped: number
 }
 
+/**
+ * Only current-version records come back. Everything else lands in `skipped`:
+ * summing two different meanings of `input` into one total produces a number
+ * true under neither, and the cache hit rate it feeds would read about half of
+ * what it should.
+ */
 export async function readUsage(path = usageLogPath()): Promise<UsageLog> {
   const text = await readFile(path, 'utf8').catch(() => null)
   if (text === null) return { records: [], skipped: 0 }
@@ -47,8 +67,8 @@ export async function readUsage(path = usageLogPath()): Promise<UsageLog> {
   for (const line of text.split('\n')) {
     if (line.trim() === '') continue
     const record = parseRecord(line)
-    if (record) records.push(record)
-    else skipped += 1
+    if (record === null || record.v !== USAGE_SCHEMA) skipped += 1
+    else records.push(record)
   }
   return { records, skipped }
 }
@@ -61,7 +81,8 @@ function parseRecord(line: string): UsageRecord | null {
     return null
   }
   if (!isObject(value)) return null
-  const { at, sessionId, turn, model, usage } = value
+  const { v, at, sessionId, turn, model, usage } = value
+  if (typeof v !== 'number') return null
   if (typeof at !== 'number' || typeof sessionId !== 'string' || typeof turn !== 'number') return null
   if (typeof model !== 'string' || !isObject(usage)) return null
 
@@ -71,7 +92,7 @@ function parseRecord(line: string): UsageRecord | null {
     if (typeof n !== 'number') return null
     parsed[key] = n
   }
-  return { at, sessionId, turn, model, usage: parsed }
+  return { v, at, sessionId, turn, model, usage: parsed }
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

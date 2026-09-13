@@ -25,9 +25,20 @@ job.
 ## nh usage [--json]
 
 Reads the usage log and reports totals, the cache hit rate
-(`cacheRead / (cacheRead + input)`, plan §15's headline metric), and a
-per-model breakdown. `--json` dumps the raw records instead, for piping
-somewhere else.
+(`cacheRead / (cacheRead + input + cacheWrite)`, plan §15's headline metric),
+and a per-model breakdown. A cache write is in the denominator because it is
+prompt the provider read in full and charged extra for, and it is printed on
+any row that has one so the percentage can be checked by hand.
+
+Each line carries the schema version it was written under. A line from another
+version is skipped, not summed: before version 2, `input` on an
+OpenAI-compatible turn included the cached tokens that `cacheRead` also
+counted, and a line already on disk cannot be converted because it does not
+record which wire wrote it. The log is never rewritten, and there is no
+compatibility path: this project is pre-1.0, so a build reads its own schema
+and skips the rest.
+
+`--json` dumps the raw records instead, for piping somewhere else.
 
 The log is `usage.jsonl` in the OS user-data dir (`%APPDATA%`,
 `~/Library/Application Support`, `$XDG_DATA_HOME`), one JSON line per completed
@@ -65,11 +76,10 @@ without it the target is this folder's own `.nanoharness/mcp.json`. `--dir DIR`
 treats `DIR` as the workspace instead of the current folder, and `--disabled`
 writes the entry switched off.
 
-Every write goes through the same `parseServer` a session uses, so an entry the
-harness would ignore is refused at the command instead of sitting in the file
-looking configured. `check` spawns the server, does the handshake and reads the
-catalog through the client a session uses, then closes it again: a pass means
-the session will connect, not that the JSON parsed.
+Every write goes through the same `parseServer` a session uses, and `check`
+connects through the same client, so a pass means the session will connect
+rather than that the JSON parsed. `mcp.md` has the file format and what an entry
+may hold.
 
 It does not mean the credential works. A remote server answers `initialize` and
 `tools/list` to anyone and only looks at the key when a tool is called, so
@@ -81,11 +91,9 @@ tool is named rather than chosen for you, because a catalog is not a list of
 safe things to run. `--args` takes a JSON object, and a name the server does not
 have comes back with the list of the ones it does.
 
-A *bearer* token is never written. `--env` and `--token-env` name an
-environment variable, and the harness reads it at connect time. A URL that
-carries its own key is the other case, and it is stored as given, including a
-`{{secret:name}}`, which is substituted as the command runs, so the file holds
-the real value (`docs/harness/mcp.md`).
+`--env` and `--token-env` name an environment variable rather than taking a
+token. A `--url` that carries its own key is the exception, and `mcp.md` says
+why that one writes a live credential to disk.
 
 A session builds its tool list once, at startup, so a server added now is
 connected the next time the app starts or a session is opened. The command says

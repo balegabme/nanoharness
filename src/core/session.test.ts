@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Session } from './session.js'
+import { Session, defineTool } from './session.js'
 import { emptyUsage } from './types.js'
 import { BASH_TOOL } from '../tools/bash.js'
+import { READ_TOOL } from '../tools/read.js'
 import type { Tool } from './session.js'
 import type { ChatInput, ChatProvider } from './provider.js'
 import type { AppEvent, ChatChunk, ToolResult } from './types.js'
@@ -70,9 +71,8 @@ async function session(provider: ChatProvider, tools: Tool[]): Promise<{ session
 describe('a turn that needs a lot of calls', () => {
   it('gets them: nothing cuts the loop off at a round count', async () => {
     const counting = counter()
-    // Well past the eight-round cap this harness used to have, and past the
-    // repeat breaker too — the arguments differ every round, which is what a
-    // real investigation looks like.
+    // Twenty rounds with the arguments differing every round, which is what a
+    // real investigation looks like: nothing cuts the loop at a round count.
     const provider = new RoundProvider(round => (round <= 20 ? call('count', { step: round }, `c${round}`) : say('twenty files, all read')))
     const { session: s, events, cwd } = await session(provider, [counting.tool])
 
@@ -112,6 +112,28 @@ describe('a model asking for the same thing over and over', () => {
   })
 })
 
+describe('a provider whose usage report cannot be read', () => {
+  it('keeps the answer and says once that the cost is unknown', async () => {
+    const problem: ChatChunk = {
+      kind: 'done',
+      usage: emptyUsage(),
+      usageProblem: 'usage arrived without prompt_tokens',
+    }
+    const provider = new RoundProvider(round => (round === 1 ? [{ kind: 'text', text: 'the answer' }, problem] : [problem]))
+    const { session: s, cwd } = await session(provider, [])
+
+    await s.run('first')
+    await s.run('second')
+
+    expect(s.transcript.some(message => message.role === 'assistant' && message.content === 'the answer')).toBe(true)
+    // Once, not once per turn: the same provider does the same thing next time.
+    const errors = s.notes.filter(note => note.kind === 'error')
+    expect(errors).toHaveLength(1)
+    expect(errors[0]?.text).toContain('cost is unknown')
+    await rm(cwd, { recursive: true, force: true })
+  })
+})
+
 describe('a turn that comes back with nothing', () => {
   it('says so instead of ending on a blank window', async () => {
     const provider = new RoundProvider(() => [{ kind: 'done', usage: emptyUsage() }])
@@ -124,6 +146,111 @@ describe('a turn that comes back with nothing', () => {
     // Nothing empty is written down: a blank assistant message is a block some
     // providers refuse to be sent back.
     expect(s.transcript.filter(message => message.role === 'assistant')).toEqual([])
+    await rm(cwd, { recursive: true, force: true })
+  })
+})
+
+/**
+ * Several calls in one assistant message. A tool that declared itself read-only
+ * runs beside its siblings, because the model already paid for the round trip
+ * once; a tool that said nothing is still exclusive, so a write never overlaps
+ * the call after it. The result order is the model's own, which is what the
+ * transcript needs to answer the calls in the order they were asked.
+ */
+describe('a message that asks for several tool calls', () => {
+  function tracker(parallel: boolean): { tool: Tool; mostActive: () => number } {
+    let active = 0
+    let most = 0
+    const tool = defineTool<{ path: string }>({
+      ...(parallel ? { parallel: true } : {}),
+      input: { name: 'peek', description: 'read one', inputSchema: { type: 'object', properties: {} } },
+      parse: raw => (typeof raw.path === 'string' ? { ok: true, args: { path: raw.path } } : { ok: false, error: 'path must be a string' }),
+      async run(args): Promise<ToolResult> {
+        active += 1
+        most = Math.max(most, active)
+        await new Promise(resolve => setTimeout(resolve, 20))
+        active -= 1
+        return { ok: true, summary: `peeked at ${args.path}`, content: `peeked at ${args.path}` }
+      },
+    })
+    return { tool, mostActive: () => most }
+  }
+
+  function batch(chunks: ChatChunk[]): ChatChunk[] {
+    return [...chunks, { kind: 'done', usage: emptyUsage() }]
+  }
+
+  it('runs read-only calls together, and answers them in order', async () => {
+    // The contract the whole mechanism exists for: `read` opted in.
+    expect(READ_TOOL.parallel).toBe(true)
+    const peeks = tracker(true)
+    const provider = new RoundProvider(round =>
+      round === 1
+        ? batch([
+            { kind: 'tool', tool: { id: 'a', name: 'peek', args: '{"path":"a.txt"}' } },
+            { kind: 'tool', tool: { id: 'b', name: 'peek', args: '{"path":"b.txt"}' } },
+          ])
+        : say('both read'),
+    )
+    const { session: s, events, cwd } = await session(provider, [peeks.tool])
+
+    await s.run('read both')
+
+    expect(peeks.mostActive()).toBe(2)
+    const answers = events.filter(event => event.type === 'tool_result').map(event => event.result.summary)
+    expect(answers).toEqual(['peeked at a.txt', 'peeked at b.txt'])
+    await rm(cwd, { recursive: true, force: true })
+  })
+
+  it('runs a tool that did not opt in on its own', async () => {
+    // Same shape, no `parallel`: the calls must not overlap.
+    const serial = tracker(false)
+    const provider = new RoundProvider(round =>
+      round === 1
+        ? batch([
+            { kind: 'tool', tool: { id: 'a', name: 'peek', args: '{"path":"a.txt"}' } },
+            { kind: 'tool', tool: { id: 'b', name: 'peek', args: '{"path":"b.txt"}' } },
+          ])
+        : say('both read'),
+    )
+    const { session: s, cwd } = await session(provider, [serial.tool])
+
+    await s.run('read both')
+
+    expect(serial.mostActive()).toBe(1)
+    await rm(cwd, { recursive: true, force: true })
+  })
+
+  it('turns a thrown tool into a result, so its siblings still answer', async () => {
+    // A tool that throws is not an exception the turn is allowed to die on:
+    // the calls beside it in the same message would be left without an answer,
+    // and a provider refuses a conversation that ends on an unanswered call.
+    const boom: Tool = {
+      parallel: true,
+      input: { name: 'boom', description: 'fail', inputSchema: { type: 'object', properties: {} } },
+      async run(): Promise<ToolResult> {
+        throw new Error('EISDIR: illegal operation on a directory')
+      },
+    }
+    const peeks = tracker(true)
+    const provider = new RoundProvider(round =>
+      round === 1
+        ? batch([
+            { kind: 'tool', tool: { id: 'a', name: 'boom', args: '{}' } },
+            { kind: 'tool', tool: { id: 'b', name: 'peek', args: '{"path":"b.txt"}' } },
+          ])
+        : say('recovered'),
+    )
+    const { session: s, events, cwd } = await session(provider, [boom, peeks.tool])
+
+    await s.run('try both')
+
+    const answers = events.filter(event => event.type === 'tool_result')
+    expect(answers).toHaveLength(2)
+    expect(answers[0]).toMatchObject({ result: { ok: false } })
+    expect(answers[0]?.type === 'tool_result' ? answers[0].result.summary : '').toContain('boom failed')
+    expect(answers[1]?.type === 'tool_result' ? answers[1].result.summary : '').toBe('peeked at b.txt')
+    expect(s.transcript.at(-1)).toMatchObject({ role: 'assistant', content: 'recovered' })
     await rm(cwd, { recursive: true, force: true })
   })
 })
@@ -148,6 +275,64 @@ describe('the notes a session keeps', () => {
     )
     rebuilt.restoreNotes(s.notes)
     expect(rebuilt.notes).toEqual(s.notes)
+    await rm(cwd, { recursive: true, force: true })
+  })
+})
+
+/**
+ * How long the model spent generating, which is what the window divides output
+ * tokens by. The session measures it rather than the renderer, because by the
+ * time an event reaches the window the gap since the last one is mostly
+ * whatever tool ran in between. `src/renderer/metrics.test.ts` has the arithmetic
+ * on the other side of it.
+ */
+describe('how long the model spent generating', () => {
+  it('measures the stream itself, so a round reports the time its chunks took', async () => {
+    const provider: ChatProvider = {
+      async *stream(): AsyncGenerator<ChatChunk> {
+        yield { kind: 'text', text: 'thinking' }
+        await new Promise(resolve => setTimeout(resolve, 60))
+        yield { kind: 'text', text: ' about it' }
+        yield { kind: 'done', usage: { input: 0, output: 40, cacheRead: 0, cacheWrite: 0, reasoning: 0 } }
+      },
+    }
+    const { session: built, cwd } = await session(provider, [])
+    const stamps: (number | undefined)[] = []
+    built.bus.on('usage', event => void stamps.push(event.streamMs))
+
+    await built.run('go')
+
+    expect(stamps).toHaveLength(1)
+    expect(stamps[0]).toBeGreaterThanOrEqual(50)
+    await rm(cwd, { recursive: true, force: true })
+  })
+
+  it("sends no generation time with a subagent's tokens, which came off a stream it never timed", async () => {
+    // A spawn reports back mid-turn, which is the only way this happens: the
+    // child's bus is live while the parent is inside a round.
+    const holder: { session: Session | null } = { session: null }
+    const spawn: Tool = {
+      input: { name: 'spawn', description: 'start one', inputSchema: { type: 'object', properties: {} } },
+      async run(): Promise<ToolResult> {
+        holder.session?.addSubagentUsage({ input: 0, output: 900, cacheRead: 0, cacheWrite: 0, reasoning: 0 })
+        return { ok: true, summary: 'the child answered' }
+      },
+    }
+    const provider = new RoundProvider(round => (round === 1 ? call('spawn', {}, 'c1') : say('done')))
+    const { session: built, cwd } = await session(provider, [spawn])
+    holder.session = built
+    const stamps: (number | undefined)[] = []
+    built.bus.on('usage', event => void stamps.push(event.streamMs))
+
+    await built.run('go')
+
+    // Round one, then the spawn's total, then round two.
+    expect(stamps).toHaveLength(3)
+    expect(stamps[1]).toBeUndefined()
+    expect(stamps[0]).toBeTypeOf('number')
+    expect(stamps[2]).toBeTypeOf('number')
+    // The spawn's tokens are still in the total the window counts.
+    expect(built.spent.output).toBe(900)
     await rm(cwd, { recursive: true, force: true })
   })
 })

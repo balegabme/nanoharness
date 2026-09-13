@@ -1,5 +1,6 @@
 // doc: docs/harness/ui.md
 import { el, pretty } from './dom.js'
+import { hitText, promptTokens, Throughput } from './metrics.js'
 import type { TranscriptMessage } from '../ipc/contract.js'
 import type { AppEvent, SessionNote, TurnUsage } from '../core/types.js'
 
@@ -49,9 +50,9 @@ function withoutMarker(text: string): string {
 }
 
 export function usageText(usage: TurnUsage): string {
-  const seen = usage.cacheRead + usage.input
-  const hit = seen === 0 ? 'n/a' : `${((usage.cacheRead / seen) * 100).toFixed(0)}%`
-  return `in ${usage.input} · out ${usage.output} · cached ${usage.cacheRead} · hit ${hit}${usage.reasoning > 0 ? ` · reasoning ${usage.reasoning}` : ''}`
+  const written = usage.cacheWrite > 0 ? ` · written ${usage.cacheWrite}` : ''
+  const reasoning = usage.reasoning > 0 ? ` · reasoning ${usage.reasoning}` : ''
+  return `in ${usage.input} · out ${usage.output} · cached ${usage.cacheRead}${written} · hit ${hitText(usage)}${reasoning}`
 }
 
 function metric(name: string, value: string, kind?: string): HTMLElement {
@@ -94,14 +95,8 @@ export class ChatView {
   private thinkingBody: HTMLElement | null = null
   private thinkingCard: HTMLDetailsElement | null = null
 
-  /**
-   * Output tokens per second, measured across the round that just reported: the
-   * running total is what the session emits, so the rate is the difference
-   * between two totals over the time between them.
-   */
-  private roundStartedAt = 0
-  private lastOutput = 0
-  private rate: number | null = null
+  /** Tokens per second for the turn on screen. `metrics.ts` has the arithmetic. */
+  private readonly throughput = new Throughput()
 
   constructor(private readonly host: ChatHost) {}
 
@@ -157,36 +152,32 @@ export class ChatView {
     line.hidden = usage === null
     if (usage === null) return
 
-    const seen = usage.cacheRead + usage.input
     line.append(metric('in', String(usage.input)), metric('out', String(usage.output)), metric('cached', String(usage.cacheRead)))
-    if (seen > 0) line.append(metric('hit', `${((usage.cacheRead / seen) * 100).toFixed(0)}%`, 'hit'))
+    // Only Anthropic ever reports a cache write, and a row of pills reading 0
+    // on every other provider is a column of noise.
+    if (usage.cacheWrite > 0) line.append(metric('written', String(usage.cacheWrite)))
+    if (promptTokens(usage) > 0) line.append(metric('hit', hitText(usage), 'hit'))
     if (usage.reasoning > 0) line.append(metric('reasoning', String(usage.reasoning)))
-    if (this.rate !== null) line.append(metric('tok/s', this.rate.toFixed(this.rate < 10 ? 1 : 0), 'rate'))
+    const rate = this.throughput.value
+    if (rate !== null) line.append(metric('tok/s', rate.toFixed(rate < 10 ? 1 : 0), 'rate'))
     line.title = `${usageText(usage)}
 Every turn added up, subagents included.`
   }
 
   /**
    * The session's own count of what it has spent, which the renderer only ever
-   * reads: the rate is measured here because only the window knows when the
-   * round started. A subagent's tokens arrive in the same total, so both the
-   * count and the rate include the agents this one started.
+   * reads. A subagent's tokens arrive in the same total, so the counter
+   * includes the agents this one started; the rate does not, for the reason
+   * `metrics.ts` gives.
    */
-  noteUsage(usage: TurnUsage): void {
-    const now = Date.now()
-    const produced = usage.output - this.lastOutput
-    const seconds = (now - this.roundStartedAt) / 1000
-    if (this.roundStartedAt > 0 && produced > 0 && seconds >= 0.4) this.rate = produced / seconds
-    this.lastOutput = usage.output
-    this.roundStartedAt = now
+  noteUsage(usage: TurnUsage, streamMs?: number): void {
+    this.throughput.note(usage, streamMs)
     this.setUsage(usage)
   }
 
   /** What a re-opened session has already spent. Nothing was timed, so no rate. */
   showStoredUsage(usage: TurnUsage | undefined): void {
-    this.rate = null
-    this.roundStartedAt = 0
-    this.lastOutput = usage?.output ?? 0
+    this.throughput.seed(usage?.output ?? 0)
     this.setUsage(usage ?? null)
   }
 
@@ -260,9 +251,9 @@ Every turn added up, subagents included.`
   /**
    * A spawn that has started and not answered yet. A foreground subagent blocks
    * the parent's turn, so its tool card sits there running for as long as it
-   * takes, and until this the card was the one thing in the window that named a
-   * subagent nobody could open. The card becomes a way in the moment the job
-   * starts; when the result lands, the card keeps the link it already has.
+   * takes; without this the card would name a subagent nobody could open. The
+   * card becomes a way in the moment the job starts, and when the result lands
+   * it keeps the link it already has.
    */
   liveSubagent(id: string): void {
     const cards = [...this.host.stream.querySelectorAll<HTMLDetailsElement>('details.block.tool')].reverse()
@@ -289,9 +280,7 @@ Every turn added up, subagents included.`
     this.assistantBlock = null
     this.thinkingBody = null
     this.thinkingCard = null
-    this.rate = null
-    this.roundStartedAt = 0
-    this.lastOutput = 0
+    this.throughput.seed(0)
     this.setUsage(null)
   }
 
@@ -302,7 +291,7 @@ Every turn added up, subagents included.`
     this.thinkingBody = null
     this.thinkingCard = null
     this.toolCards.clear()
-    this.roundStartedAt = Date.now()
+    this.throughput.startTurn()
   }
 
   private toolCard(name: string, args: string): HTMLDetailsElement {
@@ -436,7 +425,7 @@ Every turn added up, subagents included.`
       case 'usage':
         // The running total belongs beside the session's name, not as another
         // block pushing the conversation up.
-        this.noteUsage(event.usage)
+        this.noteUsage(event.usage, event.streamMs)
         break
       case 'session.error':
         this.errorBlock(event.message)

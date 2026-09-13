@@ -23,8 +23,38 @@ version segment comes from — with `stream: true` and
 no usage at all and every turn records zero tokens. Servers that do not know
 the field ignore it. SSE lines
 (`data: ...`), tool-call arguments arrive as fragments and are accumulated
-per call index. Usage maps `prompt_tokens_details.cached_tokens` to
-`cacheRead` and `completion_tokens_details.reasoning_tokens` to `reasoning`.
+per call index.
+
+### Usage on this wire
+
+Two of the numbers this wire sends are totals that already contain a smaller
+number sent beside them, and reading either as a separate figure counts those
+tokens twice.
+
+`prompt_tokens` is the whole prompt, cached part included, so the cached count
+is subtracted out and `input` records only what the server had to read in full.
+Left in, every cached token landed in `input` and in `cacheRead` both, which
+doubled the denominator of the cache hit rate and capped the displayed figure at
+50%. A prompt that was 90% cached showed as 47.4%. Anthropic's wire reports the
+uncached part directly, so this is the one place the two have to be brought into
+line, and `input` means the same thing afterwards.
+
+`completion_tokens` already contains the reasoning tokens, so `reasoning` is a
+breakdown of `output` rather than a sixth figure to add to it.
+
+The cached count has two spellings. OpenAI sends
+`prompt_tokens_details.cached_tokens`; DeepSeek sends `prompt_cache_hit_tokens`
+at the top level instead, with `prompt_cache_miss_tokens` beside it. Both are
+read, OpenAI's first. A usage report that arrives without its two totals, or
+with more cached tokens than prompt tokens, is rejected rather than smoothed
+over: the session keeps the answer and records one fault saying the turn's cost
+is unknown. Capping the count or defaulting it to zero would put a number true
+under nothing into the window and the append-only log, where an entry cannot be
+repaired later.
+
+Cache writes have no field here: this wire bills them at the ordinary input rate
+and never names them, so `cacheWrite` stays 0 and only Anthropic ever reports
+one.
 
 Key: passed via `Authorization: Bearer`. Effort rides as `reasoning_effort`,
 left out entirely at `none`, because which values a family accepts varies and an
@@ -59,8 +89,17 @@ leaking into the session loop:
 - **Tool results are `tool_result` blocks on a user message**, and consecutive
   results merge into one message, because the API wants alternating roles.
 - **Events are named** (`message_start`, `content_block_*`, `message_delta`),
-  usage arrives in two halves, and tool arguments stream as `input_json_delta`
-  fragments that are concatenated and parsed once at `content_block_stop`.
+  and tool arguments stream as `input_json_delta` fragments that are
+  concatenated and parsed once at `content_block_stop`.
+- **Usage arrives in two halves**, and in the units the harness stores.
+  `message_start` carries `input_tokens`, `cache_read_input_tokens` and
+  `cache_creation_input_tokens`, and `message_delta` carries `output_tokens` at
+  the end. `input_tokens` here is the uncached part of the prompt already, with
+  nothing to subtract, which is the shape the OpenAI wire has to be converted
+  into. This wire names cache writes, so `cacheWrite` is only ever non-zero on
+  it. It reports no reasoning count, so `reasoning` stays 0 even on a turn that
+  thought: the thinking tokens are inside `output_tokens` and are not broken
+  out.
 - **Thinking blocks are signed and must come back.** When a turn uses tools, the
   next request has to carry the assistant's `thinking` blocks — text plus the
   `signature` that arrived on `signature_delta` — ahead of the text and

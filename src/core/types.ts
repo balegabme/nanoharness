@@ -62,6 +62,24 @@ export function emptyUsage(): TurnUsage {
 }
 
 /**
+ * The plan's §15 headline metric: cached input over all the input that went
+ * into the prompt. Cache writes count in the denominator because they are
+ * prompt tokens the provider read in full and charged a premium for: a turn
+ * that read 20k cached and wrote 5k new is four fifths cache, not 99.9%.
+ *
+ * It lives beside `TurnUsage` so the CLI and the window divide the same
+ * numbers; a copy per surface is a copy that drifts.
+ *
+ * The answer only means one thing across providers because `input` is
+ * normalized at the provider boundary to exclude whatever was served from
+ * cache. `null` is "no prompt yet", which is not the same as a 0% hit.
+ */
+export function cacheHitRate(usage: TurnUsage): number | null {
+  const prompt = usage.cacheRead + usage.input + usage.cacheWrite
+  return prompt === 0 ? null : usage.cacheRead / prompt
+}
+
+/**
  * A block of the model's own reasoning. Anthropic signs each one and requires
  * the signed block back, unmodified and in order, on the next request of a turn
  * that used tools - a modified block is a 400. So the signature travels with
@@ -77,7 +95,12 @@ export type AppEvent =
   | { type: 'thinking_delta'; sessionId: string; text: string; at: number }
   | { type: 'tool_call'; sessionId: string; call: ToolCall; at: number }
   | { type: 'tool_result'; sessionId: string; callId: string; result: ToolResult; at: number }
-  | { type: 'usage'; sessionId: string; turn: number; usage: TurnUsage; at: number }
+  // `streamMs` is how long the model spent generating the round this event
+  // closes: first chunk to last, with no tool time in it. It is absent on a
+  // subagent's usage, because that total arrives from a stream nobody timed
+  // here and folding it into a rate would divide one agent's tokens by another
+  // agent's clock.
+  | { type: 'usage'; sessionId: string; turn: number; usage: TurnUsage; streamMs?: number; at: number }
   | { type: 'session.error'; sessionId: string; turn: number; message: string; at: number }
   | { type: 'session.finished'; sessionId: string; turn: number; at: number }
   | { type: 'session.stopped'; sessionId: string; turn: number; at: number }
@@ -85,7 +108,7 @@ export type AppEvent =
   // harness broke, a turn that ended without an answer, a background job that
   // reported back. A turn never ends without one of these or an answer.
   | { type: 'session.note'; sessionId: string; turn: number; text: string; at: number }
-  | { type: 'permission.request'; sessionId: string; id: string; intent: 'read' | 'write' | 'run'; paths: string[]; root: string; at: number }
+  | { type: 'permission.request'; sessionId: string; id: string; intent: 'read' | 'write' | 'run'; paths: string[]; command?: string; root: string; at: number }
   // Which MCP servers this session ended up with, once its hub has finished
   // dialling. The window asks for the same thing when a session is opened; this
   // is the push for the case where the answer arrives after the question.
@@ -126,5 +149,8 @@ export type ChatChunk =
   // carries no signature and is kept for the window and the transcript only.
   | { kind: 'thinking_block'; block: ThinkingBlock }
   | { kind: 'tool'; tool: ToolCall }
-  | { kind: 'done'; usage: TurnUsage }
+  // `usageProblem` is set when the provider sent a usage report that could not
+  // be read: the answer stands, this turn's cost is unknown, and the session
+  // says so. See `noteUsageProblem` in `session.ts`.
+  | { kind: 'done'; usage: TurnUsage; usageProblem?: string }
   | { kind: 'error'; message: string }

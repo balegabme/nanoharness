@@ -209,8 +209,11 @@ against the parent's budget, on the parent's say-so, so the parent's counter
 includes them. The window rolls each usage event a subagent emits into the
 parent session's running total as it arrives, as a delta against what that child
 had already reported, so the same tokens are never counted twice. That puts
-subagents into the count and into the tok/s rate in real time, while they are
-still running. A background subagent that outlives its parent's turn keeps
+subagents into the count in real time, while they are still running. It does
+not put them into the tok/s rate: a spawn generates at the same moment its
+parent does, on a stream this session never timed, so there is no interval the
+two of them share to divide by. The rate stays the parent's own.
+A background subagent that outlives its parent's turn keeps
 adding to the same total, and the total is written back to the session index
 when it finishes, so a reopened session shows what it really cost.
 
@@ -257,6 +260,25 @@ line, and the model never sees a note, while the whole answer sits on disk under
 the app's data directory, outside the workspace the agent may read. An agent that
 started three jobs and was asked to combine what they found would have no way to
 do it and no way to say why.
+
+A job that never finishes is written down too. Jobs live in memory and die with
+the process, so quitting the app used to end a background subagent in silence:
+one session's last message said a reviewer's report would land when it was
+ready, the app closed a few minutes later, and the reopened conversation held
+no report and no reason. `JobRegistry.abandon` now ends everything still
+running as `stopped` on the way out, and the main process delivers one message
+per background job into the conversation that started it, saying what it was
+asked and that its answer is gone. The `spawn` description says the same thing
+up front, so an agent does not finish its work on the promise of a job that may
+not come back.
+
+The timing is the whole of it. A registry belongs to a window and is dropped
+when that window's `webContents` is destroyed, so this runs on `before-quit`,
+which fires while the windows are still up, and not on `will-quit`, which fires
+after the last of them is gone and would find nothing to abandon. The delivered
+message is then flushed into the transcript rather than queued: a turn is
+usually still in flight, that is what background means, and the queue is
+drained at the end of a round that is not going to come.
 
 The answer is queued rather than pushed, because a job finishes whenever it
 finishes and a message inserted between a tool call and its result is a request

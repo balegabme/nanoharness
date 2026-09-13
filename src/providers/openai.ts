@@ -20,15 +20,19 @@ interface WireDelta {
   tool_calls?: { index: number; id?: string; function?: { name?: string; arguments?: string } }[]
 }
 
+// After `parseUsage` has read it: the totals are there and the optional fields
+// are resolved to numbers, so nothing downstream needs a fallback.
 interface WireUsage {
-  prompt_tokens?: number
-  completion_tokens?: number
-  prompt_tokens_details?: { cached_tokens?: number }
-  completion_tokens_details?: { reasoning_tokens?: number }
+  prompt_tokens: number
+  completion_tokens: number
+  cached_tokens: number
+  reasoning_tokens: number
 }
 
 interface WireChunk {
   usage?: WireUsage
+  /** A usage report was present and could not be read; the round still stands. */
+  usageProblem?: string
   delta?: WireDelta
 }
 
@@ -97,12 +101,14 @@ export function createOpenAIProvider(opts: OpenAIOptions): ChatProvider {
       const decoder = new TextDecoder()
       let buffer = ''
       let usage: TurnUsage = emptyUsage()
+      /** Why a usage chunk could not be read, if one could not. */
+      let usageProblem: string | undefined
       const pending = new Map<number, PendingTool>()
       /**
        * The round's reasoning, kept so the transcript has it. This wire carries
        * no signature and `toWireMessage` never sends thinking back, so the block
-       * is for the window and the stored transcript alone, which is the only
-       * place the reasoning existed and was then thrown away.
+       * is for the window and the stored transcript alone; nothing else keeps
+       * it.
        */
       let reasoning = ''
 
@@ -135,6 +141,7 @@ export function createOpenAIProvider(opts: OpenAIOptions): ChatProvider {
                 }
               }
               if (event.usage) usage = usageFromWire(event.usage)
+              if (event.usageProblem !== undefined) usageProblem ??= event.usageProblem
             }
           }
         }
@@ -147,7 +154,11 @@ export function createOpenAIProvider(opts: OpenAIOptions): ChatProvider {
       for (const tc of pending.values()) {
         if (tc.name) yield { kind: 'tool', tool: { id: tc.id, name: tc.name, args: tc.args } }
       }
-      yield { kind: 'done', usage }
+      // A round whose usage could not be read still has its answer and tool
+      // calls; the reason rides out here so the session can record it, rather
+      // than a usage report taking down a round the model has already been
+      // paid for.
+      yield { kind: 'done', usage, ...(usageProblem === undefined ? {} : { usageProblem }) }
     },
   }
 }
@@ -177,29 +188,111 @@ function toWireTool(t: ToolInput): WireToolDef {
 function parseWire(line: string): WireChunk | null {
   const data = line.slice(5).trim()
   if (data === '[DONE]') return null
-  let json: { choices?: { delta?: WireDelta }[]; usage?: WireUsage }
+  let json: { choices?: { delta?: WireDelta }[]; usage?: unknown }
   try {
     json = JSON.parse(data)
   } catch {
     throw new Error('provider sent malformed SSE chunk')
   }
   const delta = json.choices?.[0]?.delta
-  const usage = json.usage
-  if (!delta && !usage) return null
+  // A null usage is a server saying it has none, which is not a malformed
+  // report; both are distinct from a report that cannot be read.
+  let usage: WireUsage | undefined
+  let usageProblem: string | undefined
+  if (json.usage !== undefined && json.usage !== null) {
+    try {
+      usage = parseUsage(json.usage)
+    } catch (err) {
+      if (!(err instanceof UsageError)) throw err
+      // The line may carry content as well, and that content is the model's
+      // output. The unreadable usage rides beside the delta instead of taking
+      // the line down.
+      usageProblem = err.message
+    }
+  }
+  if (!delta && usage === undefined && usageProblem === undefined) return null
   const out: WireChunk = {}
   if (usage !== undefined) out.usage = usage
+  if (usageProblem !== undefined) out.usageProblem = usageProblem
   if (delta !== undefined) out.delta = delta
   return out
 }
 
+/**
+ * `input` means the same thing on both wires: prompt tokens the provider had to
+ * read in full, with the cached ones counted separately. This wire reports it
+ * differently. `prompt_tokens` is the whole prompt with the cached part inside
+ * it, so the cached half is subtracted out here. `completion_tokens` already
+ * contains the reasoning tokens, so `reasoning` is a breakdown of `output` and
+ * is never added on top. `providers.md` has the whole of it.
+ */
 function usageFromWire(u: WireUsage): TurnUsage {
   return {
-    input: u.prompt_tokens ?? 0,
-    output: u.completion_tokens ?? 0,
-    cacheRead: u.prompt_tokens_details?.cached_tokens ?? 0,
+    input: u.prompt_tokens - u.cached_tokens,
+    output: u.completion_tokens,
+    cacheRead: u.cached_tokens,
+    // This wire bills cache writes at the ordinary input rate and never names
+    // them, so there is nothing to report. Anthropic is the one that charges a
+    // premium for the write and counts it apart.
     cacheWrite: 0,
-    reasoning: u.completion_tokens_details?.reasoning_tokens ?? 0,
+    reasoning: u.reasoning_tokens,
   }
+}
+
+/** A usage object that cannot be read as numbers. */
+class UsageError extends Error {}
+
+/**
+ * Validate the usage object and resolve its optional fields. The two
+ * `*_details` objects are optional in the spec, a server with caching switched
+ * off sends no cached count at all, and DeepSeek spells one of them
+ * `prompt_cache_hit_tokens` instead; those absences mean zero and are settled
+ * here. A payload missing its totals, or one that reports more cached tokens
+ * than prompt tokens, comes back as an error: the cost is written to an
+ * append-only log, and a number invented here would be in it for good.
+ */
+function parseUsage(value: unknown): WireUsage {
+  if (!isObject(value)) throw new UsageError('the usage field was not an object')
+  const prompt = value.prompt_tokens
+  const completion = value.completion_tokens
+  if (typeof prompt !== 'number') throw new UsageError('usage arrived without prompt_tokens')
+  if (typeof completion !== 'number') throw new UsageError('usage arrived without completion_tokens')
+  if (prompt < 0 || completion < 0) throw new UsageError('provider sent a negative token count')
+  const cached = cachedTokens(value)
+  if (cached < 0 || cached > prompt) {
+    throw new UsageError(`provider reported ${cached} cached tokens against a prompt of ${prompt}`)
+  }
+  const completionDetails = value.completion_tokens_details
+  const reasoning = isObject(completionDetails) ? completionDetails.reasoning_tokens : undefined
+  return {
+    prompt_tokens: prompt,
+    completion_tokens: completion,
+    cached_tokens: cached,
+    reasoning_tokens: typeof reasoning === 'number' ? reasoning : 0,
+  }
+}
+
+/**
+ * The two spellings of the cached count, standard first so a turn is never
+ * counted one way on one request and another way on the next.
+ */
+function cachedTokens(u: Record<string, unknown>): number {
+  const details = u.prompt_tokens_details
+  const standard = isObject(details) ? details.cached_tokens : undefined
+  if (standard !== undefined) {
+    if (typeof standard !== 'number') throw new UsageError('cached_tokens was not a number')
+    return standard
+  }
+  const deepseek = u.prompt_cache_hit_tokens
+  if (deepseek !== undefined) {
+    if (typeof deepseek !== 'number') throw new UsageError('prompt_cache_hit_tokens was not a number')
+    return deepseek
+  }
+  return 0
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 /**
  * `GET {baseURL}/v1/models`, the setup screen's test call. It doubles as a

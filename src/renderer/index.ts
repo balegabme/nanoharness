@@ -221,8 +221,11 @@ async function openSubagent(id: string): Promise<void> {
     viewing = id
     sub.clear()
     for (const event of bufferOf(id)) sub.handleEvent(event)
-    // Replayed usage events would time a rate against the replay rather than
-    // against the model, so the totals are re-seated and the rate starts over.
+    // The buffer keeps only the last stretch of a long job, so replaying it
+    // rebuilds the window but not the whole count. The total comes from the
+    // usage events the window kept for this job, and the rate starts over
+    // rather than being divided out of whatever part of the stream survived
+    // the cap.
     sub.showStoredUsage(spendingOf(id))
     sub.setActivity(live.state === 'running')
     drawSubHead(live)
@@ -262,10 +265,10 @@ function closeSubagent(): void {
 }
 
 /**
- * A native select sizes itself to its widest option, so the chips used to shove
- * each other along the row whenever a model had a long id. The select is now
- * invisible and laid over the chip; this writes what it says onto the label the
- * chip actually draws.
+ * A native select sizes itself to its widest option, so a visible one would
+ * shove the chips along the row whenever a model had a long id. The select is
+ * invisible and laid over the chip; this writes what it says onto the label
+ * the chip actually draws.
  */
 function syncChips(): void {
   for (const [select, label] of chipValues) {

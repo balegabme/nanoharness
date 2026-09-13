@@ -36,7 +36,10 @@ ledger uses the same test — `isHarnessRepo(cwd)` decides between the repo's
 
 `Session.run(userText)` emits `session.started`, appends the user message,
 streams a provider turn, emits `usage`, and if the model called tools it
-executes them and repeats until no tool calls remain. The assistant message
+executes them and repeats until no tool calls remain. The calls of one message
+run in the model's order; a run of tools that declared themselves read-only
+starts together (`executeTools`), because the wait was already paid for once.
+The assistant message
 (with its tool calls) is kept in history so later turns see it, unless the
 round produced nothing at all — no text, no tool call, no thinking — which is
 not a message and is not written down. Provider or harness failures emit
@@ -63,8 +66,19 @@ session is rebuilt — see `sessions.md`.
 
 Every round emits a `usage` event with input/output/cacheRead/cacheWrite/
 reasoning totals. The values are cumulative for the session's run (a renderer
-that wants per-round deltas can diff consecutive events). Cached-token fields
-come from the provider (step 1 already carries cache fields from turn one).
+that wants per-round deltas can diff consecutive events).
+
+`input` means prompt tokens the provider read in full, with anything served
+from cache counted under `cacheRead` instead, and `reasoning` is a breakdown of
+`output` rather than a sixth number. The two wires report neither of those the
+same way, so both are normalized at the provider boundary; `providers.md` has
+which wire sends what.
+
+The event also carries `streamMs`: how long the model spent generating that
+round, first chunk to last. It is there because the window shows a tokens-per-
+second rate and the renderer cannot tell generating from waiting on a tool. A
+subagent's usage arrives with no `streamMs`, since those tokens came off a
+stream this session never timed.
 
 Each completed turn is also appended to `usage.jsonl` in the OS user-data dir,
 never the repo. `nh usage` reads it back — see `cli.md`.
@@ -89,6 +103,7 @@ the invoke reply carries the usage and the session as it now stands, since the
 first message names it.
 
 One of those events flows the other way in spirit: `permission.request` is
-emitted when a tool reaches outside the session folder, and the turn stays
-parked until the renderer answers it over `permission:respond`. There is no HTTP listener in v1, and a session can still be driven
-headlessly without a window.
+emitted when a tool reaches outside the session folder or wants to run a shell
+command, and the turn stays parked until the renderer answers it over
+`permission:respond`. There is no HTTP listener in v1, and a session can still be driven
+headlessly without a window, though a gate with nobody to ask refuses the shell.

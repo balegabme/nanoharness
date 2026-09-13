@@ -11,6 +11,7 @@ Files:
 - src/renderer/composer.ts — the composer in its two seats, and the height the flow clears
 - src/renderer/jobs.ts — the running subagents and the buffered stream of each one
 - src/renderer/sidebar.ts — folders and their sessions, search, add and delete
+- src/renderer/metrics.ts — tokens per second and the cache hit rate, kept away from the DOM so both can be tested
 - src/renderer/chat.ts — the message flow, drawn the same for the main agent and for an opened subagent, with streamed text, thinking, tool rows, notes and replayed transcripts
 - src/renderer/settings.ts — the settings sheet, with the provider list, form, probe and model ticking
 - src/renderer/permission.ts — the modal a tool waits on when it reaches outside its folder
@@ -76,13 +77,22 @@ started but not answered yet is otherwise a blank rectangle with a composer
 under it, which reads as broken rather than as ready.
 
 The running total sits in the topbar, to the right of the title, as a row of
-small pills: in, out, cached, hit rate, reasoning, and tokens per second. Each
-pill is a bright number and a dim name, so the row reads as numbers first and
-labels second. The rate is measured here rather than reported by the provider:
-the `usage` event carries a running total, so a round's tokens per second is the
-output that arrived since the last event over the wall time it took, and a round
-too short to measure honestly (under 0.4s) does not produce one. Re-opening a
-session shows its stored totals without a rate, because no round has run yet.
+small pills: in, out, cached, hit rate, and tokens per second, plus reasoning
+and cache-written where there are any. Each pill is a bright number and a dim
+name, so the row reads as numbers first and labels second. Everything the hit
+rate divides by is on the row, so the percentage can be checked against the
+numbers beside it.
+
+Neither number is taken off the clock in the window. The `usage` event carries
+the running total and `streamMs`, the time the model actually spent generating
+that round, because by the time an event arrives the gap since the last one is
+mostly whatever tool ran in between: a turn with one slow bash call in it used
+to report the model at a fraction of its real speed. Tokens and generating-time
+accumulate across the turn, and a turn that has generated for under 0.4s shows
+no rate rather than a noisy one. A subagent's usage carries no `streamMs`, so it
+adds to the counters and stays out of the rate. Re-opening a session shows its
+stored totals without a rate, because nothing has been timed yet. `metrics.ts`
+has both, away from the DOM so both are tested.
 
 The topbar is where that row belongs. It is a fact about the session, like the
 title and the folder beside it, and not a control. On the control row the chips
@@ -226,16 +236,11 @@ navigation lockdown is a hole exactly one scheme wide.
 ## Asking to leave the folder
 
 A tool that reaches outside its session's folder parks the turn behind a modal.
-The modal lists **every** resolved path that one call reaches for, not one path
-at a time: a shell command routinely names several, and four prompts for one
-command is how people learn to click Allow without reading. Symlinks and `..`
-are already followed, so what is on screen is where the agent would actually
-land.
-
-Answers stick for the session. **Allow for this session** grants the directory
-rather than the single file, and a **Deny** is remembered, because a model told
-no tends to try the same path again, and asking twice about a settled question
-is the other way a prompt stops being read.
+It names the resolved path, after symlinks and `..`, and a **Deny** is
+remembered as well as an allow. A shell command parks the same modal and shows
+the command itself, since nothing read it for paths; its session answer reads
+**Allow all shell commands**, because that is what it grants. `sessions.md` has
+the rule, the three answers and why a prompt per path stops being read.
 
 ## Security posture
 

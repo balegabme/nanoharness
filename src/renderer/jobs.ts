@@ -85,7 +85,7 @@ export function jobById(id: string): JobView | undefined {
   return jobs.find(job => job.id === id)
 }
 
-/** Everything one subagent has streamed so far, oldest first. */
+/** One subagent's stream, oldest first, back as far as the buffer cap keeps. */
 export function bufferOf(id: string): readonly AppEvent[] {
   return buffers.get(id) ?? []
 }
