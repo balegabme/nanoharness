@@ -87,6 +87,23 @@ async function received(log: string): Promise<Record<string, unknown>[]> {
     .filter(message => message.beat !== true)
 }
 
+/**
+ * The same log, read until it holds what the test is waiting for. The cancel
+ * notification is sent without being awaited, on purpose: the request rejects
+ * on its deadline rather than on the server's acknowledgement, so the reject
+ * and the notification race. Reading the log once can land before the
+ * notification is written.
+ */
+async function awaitMessage(log: string, method: string): Promise<Record<string, unknown> | undefined> {
+  const giveUp = Date.now() + 2000
+  for (;;) {
+    const messages = await received(log)
+    const found = messages.find(message => message.method === method)
+    if (found !== undefined || Date.now() > giveUp) return found
+    await sleep(20)
+  }
+}
+
 /** Whether the child is still writing, which is the only honest liveness check. */
 async function stillRunning(log: string): Promise<boolean> {
   const before = (await stat(log)).size
@@ -111,9 +128,8 @@ describe('a call the server never answers', () => {
 
     await expect(client.callTool('wait', {})).rejects.toBeInstanceOf(RequestTimeoutError)
 
-    const messages = await received(log)
-    const call = messages.find(message => message.method === 'tools/call')
-    const cancelled = messages.find(message => message.method === 'notifications/cancelled')
+    const cancelled = await awaitMessage(log, 'notifications/cancelled')
+    const call = (await received(log)).find(message => message.method === 'tools/call')
     expect(call).toBeDefined()
     // Advisory, and addressed to the request that expired.
     expect(cancelled).toBeDefined()

@@ -1,8 +1,11 @@
 // doc: docs/harness/tools.md
 import { execFile } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
+import { rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { defineTool } from '../core/session.js'
-import { suspectPaths } from '../core/scope.js'
 import type { ArgsParse, Tool } from '../core/session.js'
 import type { ToolResult } from '../core/types.js'
 
@@ -68,11 +71,46 @@ function parseArgs(args: Record<string, unknown>): ArgsParse<BashArgs> {
   return { ok: true, args: { command: args.command } }
 }
 
+/**
+ * Hand the command to bash as a file rather than as an argument. Git Bash
+ * truncates a `-c` string at 8 KiB and runs the front half anyway, so a 12 KB
+ * patch script would run cut mid-line, with bash reporting an unterminated
+ * heredoc, and the agent would read that as a failed edit rather than a
+ * half-applied one. A script file has no such limit, and the shell still
+ * starts as a login shell, so `grep`, `sed` and `curl` are on PATH.
+ *
+ * CRLF is normalised on the way in: bash reads the carriage return as part of
+ * the word, so a heredoc terminator written `PY\r` never matches `PY`. The fold is
+ * over the whole command and not only its line ends, so a heredoc written to
+ * lay down a CRLF fixture lays down LF instead. That is worth the trade here:
+ * the model writes CRLF by accident far more often than on purpose, and
+ * `printf` is the way to write one on purpose.
+ *
+ * The file is the command, so it is written for this user alone: the temp
+ * directory is shared, and this project keeps a pasted key out of the
+ * transcript and off the wire.
+ */
 function run(command: string, cwd: string): Promise<ToolResult> {
+  const script = join(tmpdir(), `nh-${randomUUID()}.sh`)
+  return writeFile(script, command.replace(/\r\n/g, '\n'), { encoding: 'utf8', mode: 0o600 })
+    .then(() => exec(script, cwd))
+    .catch((err: unknown) => {
+      // A script that could not be written is a tool failure and not a thrown
+      // promise: the loop needs a result to hand back to the model.
+      const why = `could not write the command to a script file: ${err instanceof Error ? err.message : String(err)}`
+      return { ok: false, summary: why, content: why, isError: true } satisfies ToolResult
+    })
+    // Cleanup is not the command's result. Windows can hold the file open just
+    // long enough after a timeout kills bash for `rm` to fail, and throwing
+    // there would discard output that is already in hand.
+    .finally(() => void rm(script, { force: true }).catch(() => undefined))
+}
+
+function exec(script: string, cwd: string): Promise<ToolResult> {
   return new Promise<ToolResult>(resolve => {
     execFile(
       bashBin as string,
-      ['-lc', command],
+      ['-l', script],
       { cwd, timeout: TIMEOUT_MS, windowsHide: true, maxBuffer: OUTPUT_CAP, encoding: 'utf8' },
       (error, stdout, stderr) => {
         const out = [stdout, stderr].filter(Boolean).join('\n').trim()
@@ -104,8 +142,8 @@ function run(command: string, cwd: string): Promise<ToolResult> {
 }
 
 // One shell with one set of caps, in two dresses: the guard is the only thing
-// that differs, so neither variant can drift away from the other's timeout,
-// output cap or scope check.
+// that differs, so neither variant can drift away from the other's timeout or
+// output cap.
 function bashTool(guarded: boolean): Tool {
   return defineTool<BashArgs>({
     input: {
@@ -125,16 +163,19 @@ function bashTool(guarded: boolean): Tool {
       const refused = guarded ? writeGuard(command) : null
       if (refused !== null) return { ok: false, summary: refused, content: refused, isError: true }
 
-      // A shell command is not a path list, so the scope check is a screen, not
-      // a proof: every path the command names is checked, and the command runs
-      // with the session root as its cwd. A command that builds a path at
-      // runtime slips through, which is why the ledger wants a real sandbox.
-      const allowed = await access.checkAll(suspectPaths(command), 'run')
-      if (!allowed.ok) return { ok: false, summary: allowed.reason, content: allowed.reason, isError: true }
       if (!bashBin) {
         const missing = 'no shell available: git bash not found in the usual Windows paths'
         return { ok: false, summary: missing, content: missing, isError: true }
       }
+
+      // The command is approved as a whole, never read. A shell command is a
+      // program, and every attempt to pull paths out of one has read a script
+      // body, a heredoc, a sed address or an HTML tag as somewhere on disk. So
+      // the app's gate shows the person the command and remembers their answer
+      // for the session; a gate with nobody to ask refuses it outright.
+      const allowed = await access.checkCommand(command)
+      if (!allowed.ok) return { ok: false, summary: allowed.reason, content: allowed.reason, isError: true }
+
       return run(command, cwd)
     },
   })

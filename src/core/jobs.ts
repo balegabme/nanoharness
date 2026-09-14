@@ -97,6 +97,19 @@ export class JobRegistry {
     this.jobs.delete(id)
   }
 
+  /**
+   * Everything still running, ended as `stopped` because the process that was
+   * running it is going away. The job's answer will never arrive, and the
+   * conversation has to carry that: the returned views are what the caller
+   * needs to say so in the transcript, so the last word is not a promise
+   * nothing will keep.
+   */
+  abandon(note: string): JobView[] {
+    const running = [...this.jobs.values()].filter(job => job.state === 'running')
+    for (const job of running) this.finish(job.id, { state: 'stopped', note })
+    return running.map(job => ({ ...job }))
+  }
+
   get(id: string): JobView | undefined {
     const job = this.jobs.get(id)
     return job === undefined ? undefined : { ...job }

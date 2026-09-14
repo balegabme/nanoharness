@@ -25,8 +25,10 @@ request of every turn. Stay in the workspace and say why when you cannot. Prefer
 relative paths. Do the task that was asked, and do not explore the machine. Ask
 about a gap in the request instead of inventing work to fill it, because an
 agent handed "spawn three subagents, one of them a weather job" will otherwise
-make the other two up. Read before editing. Do not retry a failed call
-unchanged.
+make the other two up. Read before editing, and change an existing file with
+`edit` rather than rewriting it. Do not retry a failed call unchanged. Ask for
+everything you already know you need in one message, since the read-only calls
+run together.
 
 Three of them are there because of what a model does when it is *nearly* sure.
 "Do not invent a fact about this machine or this project", meaning a path, a
@@ -42,6 +44,18 @@ nobody asked. All three came out of one turn: an editor asked to add an MCP
 server spent fifteen rounds and 130k tokens deriving the config layout from
 `src/`, with the doc that says "neither file has to be hand-written" already
 open in its context.
+
+Three came out of one run where the user's first line was that browser tools
+are pointless for a model with no eyes. The agent probed for Chrome, Edge, the
+puppeteer cache and the playwright cache anyway, twice after being interrupted
+to ask why, and each probe was a path outside the workspace, so each one put a
+modal in front of the user. So the prompt now says there is no screen, no
+browser and no image here, and that work is checked by running it and reading
+what it prints. It says that a limit the user states is part of the task, and
+that going to look for a ruled-out tool is the same as using it. And it says to
+answer an interruption in words before running anything else, because a person
+who asks "why do you keep doing that" and gets three more commands has been
+ignored.
 
 Two more are there because of what a model does with silence. "Do not install
 anything" is scoped to dependencies and machine state, and says so, because an
@@ -159,27 +173,23 @@ file. So `normalizeTarget` accepts both spellings and every gate goes through
 it. Only `/<letter>/…` is translated: `/usr/bin` has a two-letter first segment
 and is left exactly as it is.
 
-The `read`, `write` and `log_improvement` tools ask the gate before they touch
-anything. `bash` is the awkward one, because a command line is not a path list.
-Every path-shaped token in the command is checked, absolute paths and `~` and
-anything walking through `..`, and the command runs with the root as its working
-directory, but a path built at runtime out of variables will not be caught. That
-is a screen and not a sandbox, and the ledger says so.
+The `read`, `write` and `edit` tools ask the gate before they touch anything.
+`bash` asks too, but its question is different, because a command line is a
+program and not a path list. This project has paid for every attempt to read
+one as a list: a heredoc carrying `</script>` became a prompt for `C:\script`,
+a Python patch script's `2>/dev/null` became a prompt for `C:\dev\null`, a
+browser probe found Chrome and Edge under Program Files and stopped on each, and
+a README that contained a URL became a prompt for `e://`. Every one of those
+prompts named a place the command was not going, and the command did not run.
 
-The command is split into words the way the shell splits it, quotes included,
-and that matters. Splitting on whitespace alone cut the inside of a quoted
-script into fragments, and the fragments looked like paths: the `.exec` at the
-end of a regex literal became a permission prompt for `C:\.exec`, a `node -e`
-one-liner raised three questions about paths that do not exist, and one of them
-was the whole of `C:\`. Nobody reads the fourth prompt of that kind, and a
-screen that trains the click is worse than no screen at all.
-
-So a word that carries what a path cannot, such as `;`, `=`, `$`, a quote or a
-newline, is treated as code, and only two shapes are pulled out of it: a drive
-letter, or two or more `/` segments. A URL is removed before any of it, because
-its `/mcp/` is a route on someone else's server and not a folder here. The cost
-is a real path hidden inside a script body, spelled out of pieces, which the old
-splitter caught by accident when it caught everything.
+So the shell is approved whole. The modal shows the person the command itself,
+and the answer is one of the three below. "Allow all shell commands" then covers
+the rest of the session, because there is nothing finer to remember: once the
+shell is allowed it can reach anything the user can, and the prompt says so.
+This is the one place the harness cannot scope what it approves, and a real
+boundary would need an OS sandbox; the ledger keeps that entry open. What does
+not come back is the parser: paths are resolved where they are used and never
+guessed out of a string.
 
 ## Asking
 
@@ -190,18 +200,23 @@ of asking.
 
 Three answers, and they mean what they say:
 
-| answer | effect |
-|---|---|
-| Allow once | this one path, this one time |
-| Allow for this session | that directory, until the app closes |
-| Deny | the tool gets an error and the turn carries on |
+| answer | paths | shell |
+|---|---|---|
+| Allow once | this one path, this one time | this one command |
+| Allow for this session | that directory, until the app closes | every shell command, until the app closes |
+| Deny | the tool gets an error and the turn carries on | the command does not run; that same command is not asked about again |
 
 "Allow for this session" grants the directory rather than the single file. A
 tool let at one path in a folder invariably wants its neighbours next, and
-prompting per file is how people learn to click yes without reading.
+prompting per file is how people learn to click yes without reading. The shell
+gets the same answer at the other scale, and the button says "Allow all shell
+commands" so the size of the grant is on the label.
 
 Grants live in memory. Closing the app forgets them; nothing on disk records
-that a session was ever allowed out of its folder.
+that a session was ever allowed out of its folder. A grant also outlives the
+live session being rebuilt, which happens on every settings save, secret
+capture and role switch, because it was an answer about that session. Deleting
+the session forgets it.
 
 One directory is readable without a prompt: the NanoHarness checkout itself,
 when the app is running from source. The harness editor is the one role told in
@@ -215,3 +230,12 @@ Two things cannot be answered, and both resolve to a denial rather than a hang:
 a prompt for a session that is not the one on screen, and a prompt whose window
 went away. A tool waiting on a promise that can never settle would park the
 turn forever.
+
+A refusal says what was refused and that going looking for another way to the
+same place will stop the turn again. It used to say "you denied access to it",
+which reads as a refusal of that one path: an agent told no for `chrome.exe`
+asked next about the puppeteer cache, then about the playwright one, and each
+attempt put another modal in front of the user. A path already refused this
+session is answered from the earlier answer, and says so. A shell command is
+remembered by its text: the same command is not asked about twice, and the next,
+different command is.

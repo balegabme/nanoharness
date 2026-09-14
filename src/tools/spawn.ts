@@ -72,7 +72,7 @@ export const SPAWN_TOOL = defineTool<SpawnArgs>({
       // a live turn and in a transcript re-opened a week later: it is stored
       // with the result, so the conversation itself points at the subagent's
       // own conversation.
-      const note = `started ${job.role}/${job.mode} as background job ${job.id}. Do not wait for it and do not go looking for its output: when it finishes, what it answered arrives here as a message. [subagent:${job.id}]`
+      const note = `started ${job.role}/${job.mode} as background job ${job.id}. Do not wait for it and do not go looking for its output: when it finishes, what it answered arrives here as a message. It only survives while the app is open, so do not end the work on the promise of one: say what you have, and what is still out. [subagent:${job.id}]`
       return { ok: true, summary: note, content: note }
     }
 

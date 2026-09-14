@@ -28,7 +28,7 @@ NanoHarness is a small, token-efficient, self-documenting coding harness, and th
 ## Status
 
 Early, active development. The specification and build order are in
-[plan.md](plan.md) (section 18). Research notes live in
+[plan.md](plan.md) (section 17). Research notes live in
 [docs/research/](docs/research).
 
 ## Development

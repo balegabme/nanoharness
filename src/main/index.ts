@@ -8,6 +8,7 @@ import { createProvider } from '../providers/factory.js'
 import { BASH_TOOL, GUARDED_BASH_TOOL } from '../tools/bash.js'
 import { READ_TOOL } from '../tools/read.js'
 import { WRITE_TOOL } from '../tools/write.js'
+import { EDIT_TOOL } from '../tools/edit.js'
 import { LOG_IMPROVEMENT_TOOL } from '../tools/log-improvement.js'
 import { SPAWN_TOOL } from '../tools/spawn.js'
 import { JOB_UPDATE_TOOL } from '../tools/job-update.js'
@@ -25,7 +26,8 @@ import { appendUsage } from '../core/usage-log.js'
 import { emptyUsage } from '../core/types.js'
 import { IPC_CHANNELS } from '../ipc/contract.js'
 import { configStatus, deleteProvider, loadProviderConfig, probeProvider, saveProvider, setActive } from './config-store.js'
-import { PermissionBroker, promptingGate } from './permission.js'
+import { PermissionBroker, gateState, promptingGate } from './permission.js'
+import type { GateState } from './permission.js'
 import {
   addWorkspace,
   createSession,
@@ -113,7 +115,7 @@ const HARNESS = harnessFacts()
 const APP_ID = 'com.nanoharness.app'
 
 function shellName(): string {
-  return process.platform === 'win32' ? 'Git Bash (MSYS), through `bash -lc`' : 'bash, through `bash -lc`'
+  return process.platform === 'win32' ? 'Git Bash (MSYS), as a login shell running one script per command' : 'bash, as a login shell running one script per command'
 }
 
 // Live sessions, keyed the way the renderer addresses them. A session that was
@@ -233,7 +235,6 @@ function brokerFor(sender: WebContents): PermissionBroker {
 // One registry per window, for the same reason as the broker: a job is only
 // visible where it can be shown, and its events go to that window's renderer.
 const jobRegistries = new Map<number, JobRegistry>()
-
 function jobsFor(sender: WebContents): JobRegistry {
   const existing = jobRegistries.get(sender.id)
   if (existing) return existing
@@ -288,6 +289,7 @@ const TOOLS: Record<string, Tool> = {
   bash: BASH_TOOL,
   read: READ_TOOL,
   write: WRITE_TOOL,
+  edit: EDIT_TOOL,
   log_improvement: LOG_IMPROVEMENT_TOOL,
   spawn: SPAWN_TOOL,
   job_update: JOB_UPDATE_TOOL,
@@ -333,6 +335,23 @@ function sessionFor(sender: WebContents, sessionId: string): Promise<Session> {
   const build = buildSession(sender, sessionId).finally(() => building.delete(sessionId))
   building.set(sessionId, build)
   return build
+}
+
+/**
+ * What each open session has already been allowed, keyed by session id. A live
+ * `Session` is retired and rebuilt whenever settings are saved, a secret is
+ * captured or the role is switched; the user's answers were about the session,
+ * not about the process that happened to build it, so they outlive the
+ * rebuild. Deleting a session forgets them with it.
+ */
+const permissions = new Map<string, GateState>()
+
+function permissionsFor(sessionId: string): GateState {
+  const existing = permissions.get(sessionId)
+  if (existing) return existing
+  const state = gateState()
+  permissions.set(sessionId, state)
+  return state
 }
 
 async function buildSession(sender: WebContents, sessionId: string): Promise<Session> {
@@ -396,6 +415,8 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
     root,
     sessionId,
     broker: brokerFor(sender),
+    state: permissionsFor(sessionId),
+    redact: text => secrets.redact(text),
     ...(HARNESS === undefined ? {} : { readable: [HARNESS.root] }),
   })
 
@@ -552,12 +573,42 @@ ${outcome.answer}`)
  */
 let quitting = false
 
+/**
+ * What happens to the subagents that are still working when the app goes away.
+ * They die with the process, and the conversation has to carry the loss: the
+ * next turn needs to know the work was never done, so it can ask for it again
+ * instead of waiting for an answer that is gone.
+ */
+async function abandonJobs(): Promise<void> {
+  const why = 'the app closed while it was running'
+  const touched = new Map<string, Session>()
+  for (const registry of jobRegistries.values()) {
+    for (const job of registry.abandon(why)) {
+      const parent = sessions.get(job.sessionId)
+      if (parent === undefined || !job.background) continue
+      parent.deliver(`Background ${job.role} job ${job.id} never finished: ${why}, and its answer is gone. It was asked: ${job.task}`)
+      touched.set(job.sessionId, parent)
+    }
+  }
+  for (const [id, session] of touched) {
+    // A turn may still be in flight, and `deliver` queues rather than folds in
+    // that case. Nothing is coming that would drain the queue.
+    session.settle()
+    await saveTranscript(id, session.transcript, session.notes).catch((err: unknown) => {
+      process.stderr.write(`abandoned job: ${err instanceof Error ? err.message : String(err)}\n`)
+    })
+  }
+}
+
 function quit(event: Electron.Event): void {
   if (quitting) return
   quitting = true
   event.preventDefault()
-  // A key captured in the last turn is still queued for the encrypted file.
-  void Promise.all([retire(), flushSecrets()]).finally(() => app.quit())
+  // A key captured in the last turn is still queued for the encrypted file, and
+  // a job still running has to be written down before the sessions go.
+  void abandonJobs()
+    .then(() => Promise.all([retire(), flushSecrets()]))
+    .finally(() => app.quit())
 }
 
 app.whenReady().then(() => {
@@ -616,7 +667,10 @@ app.whenReady().then(() => {
 
   ipcMain.handle(IPC_CHANNELS.workspaceRemove, async (_event: IpcMainInvokeEvent, id: string): Promise<WorkspaceStatus> => {
     const status = await workspaceStatus()
-    for (const session of status.sessions.filter(s => s.workspaceId === id)) void retire(session.id)
+    for (const session of status.sessions.filter(s => s.workspaceId === id)) {
+      void retire(session.id)
+      permissions.delete(session.id)
+    }
     await removeWorkspace(id)
     return workspaceStatus()
   })
@@ -677,6 +731,7 @@ app.whenReady().then(() => {
 
   ipcMain.handle(IPC_CHANNELS.sessionDelete, async (_event: IpcMainInvokeEvent, id: string): Promise<WorkspaceStatus> => {
     void retire(id)
+    permissions.delete(id)
     await deleteSession(id)
     return workspaceStatus()
   })
@@ -775,9 +830,13 @@ app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
   // An MCP server is a subprocess this app started, so quitting has to take
-  // them with it. `will-quit` rather than `window-all-closed`: closing the last
-  // window on macOS does not end the app.
-  app.on('will-quit', quit)
+  // them with it. Not `window-all-closed`, because closing the last window on
+  // macOS does not end the app, and not `will-quit` either: that fires after
+  // every window is gone, and a window taking its `webContents` with it takes
+  // its job registry too (see `jobRegistries` above), so there would be no
+  // running job left to write down. `before-quit` runs while both are still
+  // here.
+  app.on('before-quit', quit)
 
   app.on('window-all-closed', () => app.quit())
 })

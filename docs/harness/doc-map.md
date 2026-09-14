@@ -34,15 +34,15 @@ pnpm doc-check
 - `overview.md` — architecture, session loop, usage accounting, IPC
 - `providers.md` — provider layer, wire format, auth, provider settings
 - `tools.md` — tool specs, the arg-validation boundary, caps
-- `cli.md` — the `nh` command: `doc-check`, `usage`
+- `cli.md` — the `nh` command: `doc-check`, `usage`, `mcp`
 - `ui.md` — the desktop window, the context bridge, the renderer
 - `sessions.md` — folders, sessions, transcripts, and the scope rule
 - `agents.md` — the three roles, spawn modes, and background jobs
-- `mcp.md` — the MCP client, its transports, and the Tavily default
+- `mcp.md` — the MCP client, its transports, and the two config files
 - `skills.md` — the skill format and the list injected into the prompt
 - `secrets.md` — pasted keys, placeholders, and the substitution boundary
 - `improvements.md` — the flaw and improvement ledger (living doc)
 - `doc-map.md` — this page
 
-Pages arrive with the features they document; plan §4 lists the ones still to
-come (snippets, hooks, env-detection, security).
+Pages arrive with the features they document. Still to come: snippets, hooks
+and env-detection.

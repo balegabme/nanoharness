@@ -9,8 +9,10 @@ import type { JobState } from './jobs.js'
 import { Session } from './session.js'
 import { cloneHistory, createSpawnHost } from './spawn.js'
 import { workspaceGate } from './scope.js'
+import type { AccessGate } from './scope.js'
 import { emptyUsage } from './types.js'
 import { BASH_TOOL, GUARDED_BASH_TOOL } from '../tools/bash.js'
+import { EDIT_TOOL } from '../tools/edit.js'
 import { JOB_UPDATE_TOOL } from '../tools/job-update.js'
 import { READ_TOOL } from '../tools/read.js'
 import { SPAWN_TOOL } from '../tools/spawn.js'
@@ -82,7 +84,7 @@ function say(text: string): ChatChunk[] {
   return [{ kind: 'text', text }, { kind: 'done', usage: emptyUsage() }]
 }
 
-const PARENT_TOOLS: Tool[] = [BASH_TOOL, READ_TOOL, WRITE_TOOL, SPAWN_TOOL]
+const PARENT_TOOLS: Tool[] = [BASH_TOOL, READ_TOOL, WRITE_TOOL, EDIT_TOOL, SPAWN_TOOL]
 
 interface Harness {
   session: Session
@@ -161,7 +163,7 @@ ${outcome.answer}`,
             }
           }
           const shell = AGENTS[request.role].bash === 'guarded' ? GUARDED_BASH_TOOL : BASH_TOOL
-          const writes = AGENTS[request.role].tools.includes('write') ? [WRITE_TOOL] : []
+          const writes = AGENTS[request.role].tools.includes('write') ? [WRITE_TOOL, EDIT_TOOL] : []
           return {
             systemPrompt: agentPrompt(request.role, env),
             // Only a background child gets `job_update`: a foreground one is
@@ -191,14 +193,21 @@ async function workspace(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'nh-agents-'))
 }
 
+/** A gate that says yes to every path and command, for shell mechanics. */
+function openGate(root: string): AccessGate {
+  return {
+    root,
+    check: async target => ({ ok: true, path: target }),
+    checkCommand: async () => ({ ok: true }),
+  }
+}
+
 describe('spawn', () => {
   /**
-   * A long answer used to arrive at the parent with its ending cut off at 4000
-   * characters and a `…` in place of the rest, with no sentence saying so, in
-   * a result the parent reads as the whole of what the subagent found. A review
-   * whose verdict is in its last paragraph was therefore handed over as a
-   * review with no verdict. Nothing in the harness bounds an answer now: the
-   * model's own output limit does, which is a real bound in the right place.
+   * A parent reads a spawn's result as the whole of what the subagent found, so
+   * a review whose verdict is in its last paragraph has to arrive with that
+   * paragraph. The only bound on an answer is the model's own output limit,
+   * which is a real bound in the right place.
    */
   it('hands over a long answer whole', async () => {
     const cwd = await workspace()
@@ -396,12 +405,11 @@ describe('background jobs', () => {
   })
 
   /**
-   * The answer of a background job used to reach the window and stop there. The
-   * model was told a job had finished, given its first line in a note it cannot
-   * read as a message, and left to find the rest in a file under the app's data
-   * directory, outside the workspace, which is the one place the agent may not
-   * go. "Start three of these and tell me what they found" was not a hard
-   * request, it was an impossible one.
+   * A background job's answer has to reach the model, not only the window: a
+   * note carries the first line and nothing else, and the full answer sits
+   * under the app's data directory, outside the workspace, where the agent may
+   * not read it. "Start three of these and tell me what they found" only works
+   * if each answer is folded into the conversation.
    */
   it('puts what the job answered into the conversation the model reads', async () => {
     const cwd = await workspace()
@@ -553,7 +561,7 @@ describe('the planner\'s shell', () => {
   it('runs a command that reads and refuses the same command with a redirect', async () => {
     const cwd = await workspace()
     try {
-      const ctx = { cwd, access: workspaceGate(cwd) }
+      const ctx = { cwd, access: openGate(cwd) }
 
       const read = await GUARDED_BASH_TOOL.run({ command: 'echo hello' }, ctx)
       expect(read.ok).toBe(true)
@@ -568,6 +576,27 @@ describe('the planner\'s shell', () => {
       const allowed = await BASH_TOOL.run({ command: 'echo hello > note.txt' }, ctx)
       expect(allowed.ok).toBe(true)
       expect(await readFile(join(cwd, 'note.txt'), 'utf8')).toContain('hello')
+    } finally {
+      await rm(cwd, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('a job the app outlives', () => {
+  it('ends as stopped, so the window and the transcript can say the answer is gone', async () => {
+    const cwd = await workspace()
+    try {
+      const { jobs, ended } = harness({}, cwd)
+      const review = jobs.start({ sessionId: 'parent', role: 'builder', mode: 'distinct', task: 'review the scene', background: true })
+      const lookup = jobs.start({ sessionId: 'parent', role: 'planner', mode: 'clone', task: 'find the config', background: false })
+
+      const abandoned = jobs.abandon('the app closed while it was running')
+
+      expect(abandoned.map(job => job.id).sort()).toEqual([review.id, lookup.id].sort())
+      expect(ended(review.id)).toEqual({ state: 'stopped', note: 'the app closed while it was running' })
+      expect(jobs.list()).toEqual([])
+      // Nothing is left to abandon twice: a second pass at quit time is silent.
+      expect(jobs.abandon('again')).toEqual([])
     } finally {
       await rm(cwd, { recursive: true, force: true })
     }

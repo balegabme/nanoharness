@@ -5,7 +5,8 @@ Minimal, opinionated coding harness whose twin obsessions are **token efficiency
 (or the user) can navigate the harness instantly and modify it safely. Distributed as an
 **open-source GitHub repo** — hygiene rules in §16.
 
-**Status:** planning complete — **all research answered** (§17). Ready to build (§18).
+**Status:** planning complete. The build order is §17; the research behind each
+section is cited from the section that uses it.
 
 **Intent (why this exists):** distilled from years of daily use of Claude Code, opencode,
 pi, oh-my-pi, deepseek harness and others — each had strengths the others lacked. This is
@@ -79,41 +80,32 @@ nanoharness/
   README.md  LICENSE  CONTRIBUTING.md  SECURITY.md  CODE_OF_CONDUCT.md  CHANGELOG.md
   .github/workflows/ci.yml   .gitignore   .editorconfig
   docs/
-    harness/              # one md per feature area — the documentation layer
-      overview.md         # architecture, data flow        ← src/core, src/main
-      doc-map.md          # this convention itself + index
-      agents.md           # agent defs, prompts, permissions ← src/agents
-      tools.md            # tool specs                      ← src/tools
-      providers.md        # provider layer, auth, probing   ← src/providers
-      mcp.md              # MCP client, Tavily wiring       ← src/mcp
-      skills.md           # skill format + injection        ← src/skills
-      snippets.md         # snippet format + composer flow  ← src/snippets, src/renderer
-      hooks.md            # hook events + config            ← src/hooks
-      sessions.md         # session model, transcripts, checkpoints ← src/sessions, src/store
-      env-detection.md    # system probe + prompt injection ← src/env
-      ui.md               # desktop UI: events, components, design tokens ← src/renderer
-      security.md         # key storage                     ← src/security
-      improvements.md     # THE flaw/improvement ledger (living doc)
+    harness/              # one md per feature area — the documentation layer.
+                          # doc-map.md holds the index; pages still to write are
+                          # snippets, hooks and env-detection.
     research/             # deep-research artifacts (source material, not doc-map targets)
   snippets/               # built-in prompt snippets shipped with the package (secret-free)
   examples/               # sample skill, hooks.json, mcp.json, commands/ — secret-free
-  src/
-    main/     core/   agents/   tools/   providers/   snippets/
-    mcp/      skills/ hooks/    env/     security/    renderer/
+  src/                    # today: main core ipc cli tools providers mcp renderer
+                          # planned: snippets hooks env
 ```
 
-Doc-map rules:
-1. **Every source file's first lines**: `// doc: docs/harness/<file>.md` (+ optional `#anchor`).
-2. **Every doc lists its files** under a `Files:` heading — bidirectional links.
-3. `nh doc-check` (command + SessionStart hook): fails on files without doc links, docs
-   without files, dead links. Zero discipline required to keep the map honest.
-4. **Harness-editor context**: at spawn it receives the doc *index* (list mode: path +
-   one-line summary per md), reads what it needs, then edits code. List-first,
-   read-on-demand — itself a token-efficiency technique.
+Doc-map rules. `docs/harness/doc-map.md` is the live version of 1 to 4 and
+carries the detail; these are kept numbered because the rest of the repo cites
+them by number.
+
+1. Every source file's first lines name its doc.
+2. Every doc lists the files it explains, so the link runs both ways.
+3. `nh doc-check` fails on either half being missing, in CI and as a
+   SessionStart hook. Zero discipline required to keep the map honest.
+4. The harness editor is handed the doc *index* at spawn, reads what it needs,
+   then edits code. List-first and read-on-demand is itself a token-efficiency
+   technique.
 5. Improvement entries land under dated headings in the workspace ledger
-   `.nanoharness/improvements.md`; when the workspace *is* the nanoharness repo (dev mode)
-   they land in `docs/harness/improvements.md` instead — the installed package dir is never
-   written to. The harness-editor marks entries resolved (with ref) when fixed.
+   `.nanoharness/improvements.md`, or in `docs/harness/improvements.md` when the
+   workspace *is* this repo, so the installed package directory is never written
+   to. The harness editor marks an entry resolved, with a ref, when it is
+   fixed.
 
 Per-project config lives in `.nanoharness/` (workspace): model choice, hooks.json,
 mcp.json, skills/, commands/, snippets/, memory file. Secret-free by schema (§16).
@@ -129,7 +121,7 @@ summary + artifacts.
 | | builder | planner | harness-editor |
 |---|---|---|---|
 | Purpose | regular coding on the project | read-only research/planning | modifies the harness itself |
-| Write tools | bash, read, write | read, bash (guarded) | bash, read, write |
+| Write tools | bash, read, write, edit | read, bash (guarded) | bash, read, write, edit |
 | Bash | full, cwd-scoped | best-effort write-guard (deny `>` `>>` `tee` `rm` `mv` `cp` `sed -i` …; pwsh variant when the §6 fallback is active: `Out-File`, `Set-Content`, `Remove-Item`, `Move-Item`, `Copy-Item` …) — documented as best-effort, not a security boundary | full, harness-repo-scoped |
 | Extra context | env block | env block | **doc index list** + improvements.md |
 | Default effort | low/medium | medium/high | low |
@@ -164,10 +156,13 @@ commits (§16). UI shows the job live.
 - **read** — offset/limit with caps (2,000 lines / 2,000 chars per line, 256KB pre-read
   gate); past the gate → explicit error with continuation hint, not silent truncation.
   Structural summary first; grep-first exploration encouraged.
-- **write** — create/overwrite; **str_replace-style narrow patches as default** (3.5–6.5×
-  cheaper than sequential edits, 6× cheaper than full rewrites; full rewrite only under
-  ~300–400 lines). Snapshot tags `{path: hash}` after writes to avoid confirm re-reads;
-  revalidate hash/mtime before trusting (external formatters invalidate).
+- **write** — create/overwrite; full rewrite only under ~300–400 lines. Snapshot tags
+  `{path: hash}` after writes to avoid confirm re-reads; revalidate hash/mtime before
+  trusting (external formatters invalidate).
+- **edit** — str_replace-style narrow patches, the default for a change to a file
+  (3.5–6.5× cheaper than sequential edits, 6× cheaper than full rewrites): literal
+  `old_string`/`new_string`, unique match unless `replace_all`, CRLF-safe matching,
+  and a one-line confirmation as the result.
 - **web_search / web_fetch** — routed through the Tavily MCP server (built-in default MCP
   config). If Tavily unavailable → clear error, no silent fallback.
 - **log_improvement** — appends a dated entry to the workspace improvement ledger (§4 rule 5). All agents.
@@ -282,7 +277,8 @@ runs as a SessionStart hook by default.
 
 ## 11. Providers & settings
 
-Full reference: `docs/research/OpenAI vs Anthropic API Schema Reference.md`
+Full reference: `docs/research/OpenAI vs Anthropic API Schema Reference.md`,
+which supersedes `provider-schemas-summary.md`
 (integration checklists + quirk matrix).
 
 **Wire essentials:**
@@ -439,14 +435,17 @@ server mode (127.0.0.1 + startup-issued token), Responses-API migration.
 
 ---
 
-## 15. Token efficiency — ranked plan (from `docs/research/Nanoharness Token-Saving Techniques Catalog.md`)
+## 15. Token efficiency — ranked plan
+
+From `docs/research/Nanoharness Token-Saving Techniques Catalog.md`, which
+supersedes `token-efficiency-summary.md`.
 
 The report's **top-10, adopted as build priority**:
 
 | # | Technique | Key numbers |
 |---|---|---|
 | 1 | **Cache-aware prompt assembly** — stability-classified inputs, stable byte-prefix, frozen per-session tool set, append-only messages; Anthropic ≤4 explicit breakpoints | 90% cache-read discount both providers (OpenAI newest families; legacy 50%); write 1.25×/2×; −80% latency on hits; **40–70% input-cost reduction on repeated-context turns** |
-| 2 | **Usage instrumentation** — cache hit rate = `cache_read / (cache_read + input)`; per-agent/phase attribution; cost-per-task | Prerequisite for everything; catches silent cache breakage |
+| 2 | **Usage instrumentation** — cache hit rate = `cache_read / (cache_read + input + cache_write)`, with `input` normalized per provider to exclude cached tokens; per-agent/phase attribution; cost-per-task | Prerequisite for everything; catches silent cache breakage |
 | 3 | **Offset/limit reads + explicit truncation markers + grep-first** | ~10× reduction on targeted lookups; silent truncation = documented hallucination bug class |
 | 4 | **str_replace default edits**, full rewrite < ~300–400 lines | 3.5–6.5× vs alternatives (script 7K / diff 8.5K / sequential 25K / rewrite 43K tokens on the benchmark task) |
 | 5 | **Batch independent tool calls** (system-prompt instruction + concurrent runner) | ~60% input reduction, 4× latency (12s→3s, 40K→16K) |
@@ -522,21 +521,11 @@ no keys on runners).
 
 ---
 
-## 17. Research status
+## 17. Build order
 
-| Topic | Status | Report |
-|---|---|---|
-| A — token-efficiency catalog | ✅ full (48KB, ranked top-10 + counter-evidence) | `docs/research/Nanoharness Token-Saving Techniques Catalog.md` (supersedes `token-efficiency-summary.md`) |
-| B — MCP client spec | ✅ full (cited) | `docs/research/mcp-client-spec.md` |
-| C — provider schemas + quirk matrix | ✅ full (checklists + matrix) | `docs/research/OpenAI vs Anthropic API Schema Reference.md` (supersedes `provider-schemas-summary.md`) |
-| D — Claude Code design language | ✅ full (tokens + components + keyboard map, confidence-flagged) | `docs/research/Claude Code Visual & Interaction Design Spec for Web Port.md` |
-
-All research questions are closed. The original prompts are recoverable from chat history;
-their answers live in `docs/research/`.
-
----
-
-## 18. Build order
+The four reports in `docs/research/` are the source material behind §7, §11,
+§13 and §15. The prompts that produced them are recoverable from chat history;
+only the answers are in the repo.
 
 0. OSS scaffold: `git init` + `package.json` at **version 0.0.1**, LICENSE, README,
    CONTRIBUTING, SECURITY, CHANGELOG, CI (typecheck/lint/test/doc-check/gitleaks),
