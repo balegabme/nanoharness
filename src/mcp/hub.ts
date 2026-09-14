@@ -112,7 +112,7 @@ export class McpHub {
 export function mcpBlock(
   status: readonly ServerStatus[],
   paths: { global: string; project: string },
-  options: { canWrite: boolean; canSpawn: boolean; root: string; cli?: string },
+  options: { canSpawn: boolean; canConfigure: boolean; root: string; cli?: string },
 ): string[] {
   const connected = status.filter(server => server.connected)
   const broken = status.filter(server => !server.connected)
@@ -126,26 +126,24 @@ export function mcpBlock(
   lines.push(
     `They are configured in two files: ${paths.global} for every workspace and ${paths.project} for this one, where a name in the project file wins.`,
   )
-  // Who is being told this decides what they are told. An agent that can spawn
-  // is not the one who edits the config: that is the harness-editor's job. Give
-  // this agent the command alongside a rule telling it to delegate and the two
-  // halves of the prompt argue, so it gets the handoff and the editor gets the
-  // commands.
-  // An agent that delegates is given no entry shape at all. Hand it the fields,
-  // url and tokenEnv and "a token is never written in the file", and it does
-  // the only thing it can with them: writes them into the task as a
-  // requirement, for an endpoint whose key goes in the query string, where none
-  // of it was true. Schema it cannot check against the server is schema it will
-  // relay. It says which server and what the user gave it; the fields are the
-  // editor's business.
+  // Who is being told this decides what they are told. A spawn-capable agent
+  // gets no commands: the handoff rule in its session prompt routes harness work
+  // to a harness-editor, and a command here would argue with it. The entry shape
+  // and the commands go only to the configurer, which is the editor. A
+  // spawn-capable agent given the fields does the only thing it can with them,
+  // which is to write url, tokenEnv and "a token is never written in the file"
+  // into the task as a requirement, for an endpoint whose key goes in the query
+  // string, where none of it was true. Schema it cannot check against the server
+  // is schema it will relay. A child that is not the configurer gets the facts
+  // and nothing to relay.
   if (options.canSpawn) {
     lines.push(
-      'Adding, removing or switching off a server edits one of those files, which is harness work: spawn a harness-editor (mode distinct) and say which server and what the user gave you, in their words. Do not say which file, which fields or which command: you have not read the harness and it has. It is configuration, not an install.',
+      'Adding, removing or switching off a server edits one of those files. It is configuration, not an install.',
     )
     return lines
   }
 
-  if (!options.canWrite) return lines
+  if (!options.canConfigure) return lines
 
   lines.push(
     'Both files use the shape every MCP client uses: {"mcpServers": {"<name>": {...}}}. A stdio entry has command, args and envPassthrough (variable names, passed through from the environment); an HTTP entry has url and, where the server takes a bearer token, tokenEnv, the name of the variable holding it, so that token is named rather than written. A server that authenticates through its own URL instead is a different case: the placeholder is substituted before the writer runs, so that URL is stored with the real credential in it.',
@@ -157,14 +155,14 @@ export function mcpBlock(
   }
 
   lines.push(
-    'Adding a server is one command, not a hand-written file. It is configuration, not an install:',
+    'Adding a server is one command. It is configuration, not an install:',
     `  ${options.cli} mcp add <name> --url <url> [--token-env VAR] --global      an HTTP server, for every workspace`,
     `  ${options.cli} mcp add <name> --command <cmd> [--arg A] [--env VAR] --dir ${options.root}      a stdio server, for this workspace only`,
     `  ${options.cli} mcp list --dir ${options.root}      what is configured, in both files`,
     `  ${options.cli} mcp check <name> --dir ${options.root}      connect for real and report what happened`,
     `  ${options.cli} mcp remove <name> [--global] --dir ${options.root}      take one entry out; the file stays`,
     `Without \`--global\` the target is the workspace file, and \`--dir\` says which workspace. Pass it, because your own folder may not be the one the user meant. \`${options.cli} mcp --help\` prints this list.`,
-    "The command parses and writes the entry with the harness's own code, so a hand-written JSON file and a hand-written script to check it are both work you do not have to do. An entry it refuses is one a session would have ignored.",
+    'An entry the command refuses is one a session would have ignored.',
     'The new server is connected the next time a session is built, not inside this turn, and the user needs to be told that.',
   )
   return lines

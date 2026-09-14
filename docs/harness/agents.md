@@ -42,10 +42,12 @@ is ever asked to.
 
 ### Harness work goes to a subagent
 
-Builder and planner both carry the same handoff rule, and it has no pricing in
-it. Anything about NanoHarness itself goes to a harness-editor subagent, spawned
-`distinct`: changing it, configuring it, adding an MCP server or a skill, or a
-question about how it behaves.
+Builder and planner sessions both carry the same handoff rule, and it has no
+pricing in it. Anything about NanoHarness itself goes to a harness-editor
+subagent, spawned `distinct`: changing it, configuring it, adding an MCP server
+or a skill, or a question about how it behaves. A distinct subagent does not
+carry the rule: it has no `spawn` tool, and a prompt that names a tool the agent
+was never given is an instruction it cannot follow.
 
 A question is answered directly only when the answer is already in the
 conversation. Anything else would mean reading the harness, and the parent's
@@ -60,13 +62,14 @@ parent has figured out the file and the path on its own, and the case where a
 single command would do it. That last clause is not hypothetical: the MCP block
 used to hand every writing role the `nh mcp add` line, and a builder read that
 against the delegate rule, argued the two out in its own thinking and ran the
-command itself. Now the command only reaches an agent that cannot spawn, and the
-rule only reaches one that can, so there is nothing to weigh.
+command itself. Now the commands and the entry shape go only to the
+harness-editor, which cannot spawn, and a spawn-capable agent gets neither, so
+there is nothing to weigh.
 
-The parent is told what to hand over and not how to do it: which change, which
-file or scope, and whatever the user gave it quoted verbatim, such as a URL, a
-key or a command line, because a distinct subagent cannot see the conversation
-it was summoned from. The subagent is asked to report the files it touched and
+The parent is told what to hand over and not how to do it: the outcome, and
+whatever the user gave it quoted verbatim, such as a URL, a key or a command
+line, because a distinct subagent cannot see the conversation it was summoned
+from. The subagent is asked to report the files it touched and
 the diff, because its last message is the whole of what the parent gets, and a
 claim with no diff behind it is a claim. It also has to say that a harness
 change reaches the running app only after a rebuild and a restart, instead of

@@ -175,21 +175,25 @@ describe('a server that will not start', () => {
 })
 
 /**
- * Who is told what. A rule that harness config goes to a harness-editor and a
- * command that does the same job are two halves of a prompt that argues with
- * itself, answered by whichever half the model reads last. These tests pin who
- * gets which half.
+ * Who is told what. Commands that write a server and the rule that routes
+ * harness work to a harness-editor are two halves of a prompt that argues with
+ * itself, settled by whichever half the model reads last. These tests pin the
+ * split: the block itself never routes and never hands an entry shape to anyone
+ * but the configurer, the configurer gets the commands, and a spawn-capable
+ * agent gets neither.
  */
 describe('what a session is told about MCP', () => {
   const status = [{ name: 'probe', connected: true, toolCount: 2 }]
   const paths = { global: '/home/me/.nanoharness/mcp.json', project: '/work/app/.nanoharness/mcp.json' }
   const cli = 'node "/opt/nanoharness/out/cli/index.js"'
 
-  it('tells an agent that can spawn to hand the work over, and gives it no command to run', () => {
-    const text = mcpBlock(status, paths, { canWrite: true, canSpawn: true, root: '/work/app', cli }).join('\n')
+  it('tells an agent that can spawn where the servers and files are, and gives it no command to run', () => {
+    const text = mcpBlock(status, paths, { canConfigure: true, canSpawn: true, root: '/work/app', cli }).join('\n')
 
-    expect(text).toContain('spawn a harness-editor')
     expect(text).not.toContain('mcp add')
+    // Routing is the session prompt's, so the block that lists the servers does
+    // not also say who edits the config.
+    expect(text).not.toContain('harness-editor')
     // It still knows what it has and where the files are: that is what the
     // question "what tools do you have" needs, and it is not a licence to edit.
     expect(text).toContain('probe (2 tools)')
@@ -202,11 +206,11 @@ describe('what a session is told about MCP', () => {
   })
 
   it('gives the subagent the exact commands, with the workspace named', () => {
-    const text = mcpBlock(status, paths, { canWrite: true, canSpawn: false, root: '/work/app', cli }).join('\n')
+    const text = mcpBlock(status, paths, { canConfigure: true, canSpawn: false, root: '/work/app', cli }).join('\n')
 
     expect(text).toContain(`${cli} mcp add <name> --url <url>`)
     expect(text).toContain(`${cli} mcp check <name> --dir /work/app`)
-    // The one that writes the file is the one that gets the fields.
+    // The configurer is the one that gets the fields.
     expect(text).toContain('tokenEnv')
     // Its own folder is the harness, not the workspace the user meant, so the
     // flag that says which workspace is in the command rather than in a note.
@@ -214,10 +218,12 @@ describe('what a session is told about MCP', () => {
     expect(text).toContain('mcp --help')
   })
 
-  it('tells an agent that cannot write neither one', () => {
-    const text = mcpBlock(status, paths, { canWrite: false, canSpawn: false, root: '/work/app', cli }).join('\n')
+  it('tells an agent that is not the configurer neither one', () => {
+    const text = mcpBlock(status, paths, { canConfigure: false, canSpawn: false, root: '/work/app', cli }).join('\n')
 
     expect(text).not.toContain('mcp add')
     expect(text).not.toContain('harness-editor')
+    expect(text).not.toContain('tokenEnv')
+    expect(text).not.toContain('which you can do when asked')
   })
 })

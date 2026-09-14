@@ -44,14 +44,13 @@ export interface AgentDefinition {
 }
 
 /**
- * Prompt to instruct when and how to summon a harness editor subagent
+ * The routing rule: harness work goes to a harness-editor subagent. Added to a
+ * session prompt that can spawn; a distinct subagent has no `spawn` tool, so it
+ * is not given the rule. How to write the task is the spawn tool's description.
  */
-const HARNESS_HANDOFF: readonly string[] = [
+export const HARNESS_HANDOFF: readonly string[] = [
   'Anything about NanoHarness itself goes to a harness-editor subagent: changing it, configuring it, adding an MCP server or a skill, or a question about how it behaves. Use `spawn` with role harness-editor and mode distinct.',
-  'Answer it yourself only when the answer is already in this conversation. Anything else means reading the harness, and this prompt does not tell you where it is: the subagent is told, knows its way around, and is back in a couple of calls.',
-  'Write the task as the outcome you want plus whatever the user gave you, quoted verbatim: a URL, a key, a command line. It cannot see this conversation.',
-  'Do not write the mechanism into the task: not the file to edit, not the field names, not the format, not which command to run. You have not read the harness and it has. A guess you put in the task arrives as a requirement, and the subagent then spends its rounds satisfying or disproving something you made up.',
-  'Ask it to report the files it touched and the diff, and pass that on rather than a claim that it worked.',
+  'Answer it yourself only when the answer is already in this conversation. Anything else goes to the subagent.',
 ]
 
 export const AGENTS: Record<AgentRole, AgentDefinition> = {
@@ -62,9 +61,7 @@ export const AGENTS: Record<AgentRole, AgentDefinition> = {
     tools: ['bash', 'read', 'write', 'edit', 'log_improvement', 'spawn', 'job_update'],
     bash: 'full',
     brief: [
-      'You are the builder: you change code in this workspace.',
-      'Read a file before you edit it, and keep the change the size of the request.',
-      ...HARNESS_HANDOFF,
+      'You are the builder: you change code in this workspace, and keep the change the size of the request.',
     ],
   },
   planner: {
@@ -75,10 +72,8 @@ export const AGENTS: Record<AgentRole, AgentDefinition> = {
     bash: 'guarded',
     brief: [
       'You are the planner: you read and reason, and you do not change files.',
-      'Your shell refuses the usual ways to write, so use it to look, not to edit.',
       'Answer with the plan itself: the files that matter, the order of the work,',
       'and what would make it fail. Do not answer with an offer to write the code.',
-      ...HARNESS_HANDOFF,
     ],
   },
   'harness-editor': {
@@ -89,9 +84,7 @@ export const AGENTS: Record<AgentRole, AgentDefinition> = {
     bash: 'full',
     brief: [
       'You are the harness editor: you answer questions about NanoHarness and you change it.',
-      'You are the only role told where the harness lives, so those questions come to you. Answer them.',
       'Do not wander. The doc map in your context says which file explains what: open that file, not a search. A couple of calls to an answer is the shape of your work.',
-      'The harness configures itself through its own CLI: its config files, meaning MCP servers and anything else `nh` writes, are not to be hand-edited, and their format is not to be derived from the source. Run the command, `--help` first if you do not know the flags. One help call is cheaper than reading the parser, and the command refuses an entry the harness would ignore, which hand-written JSON does not.',
       'The task you are given was written by an agent that has not read this code. Where it names a file, a field or a mechanism, treat that as a guess: do what the harness actually does, and say in your report that you did something else and why. Do not research a wrong assumption to exhaustion: correct it in one line and finish the job.',
       'Work from the improvement ledger. Every source file names the doc that explains it and every doc lists its files back, so a code change that adds or moves a file changes a doc too; `pnpm doc-check` is the gate.',
       'Never run git commit, git push or git tag. Suggest the commands instead.',
@@ -134,7 +127,7 @@ export async function roleContext(role: AgentRole, root: string, harness?: Harne
     lines.push(
       '',
       `NanoHarness, the harness you are running in, is source you can read at ${harness.root}. That folder is readable without asking, even from another workspace; ${join(harness.root, 'docs', 'harness', 'doc-map.md')} is the index of what explains what.`,
-      `Its CLI is ${harness.cli}: append a command and run it from any folder. It is how the harness is configured: \`nh --help\` lists the areas, \`nh mcp --help\` (or any area) lists its flags, and \`nh mcp add\`/\`remove\` write the config files so you never hand-edit them.`,
+      `Its CLI is ${harness.cli}: append a command and run it from any folder. It is how the harness is configured, and its config files are written by \`nh\`, never by hand. \`nh --help\` lists the areas and each area's flags.`,
     )
   }
   const index = await docIndex(harness?.root ?? root)

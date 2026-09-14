@@ -258,6 +258,9 @@ describe('spawn', () => {
       expect(provider.calls).toHaveLength(3)
       const child = provider.calls[1]
       expect(child?.messages[0]?.content).toContain('You are the planner')
+      // A distinct subagent cannot spawn, so its prompt does not carry the
+      // routing rule, which names the spawn tool.
+      expect(child?.messages[0]?.content).not.toContain('harness-editor subagent')
       // A distinct agent starts from nothing: the parent's turn is not in it.
       expect(child?.messages).toHaveLength(2)
       // The planner cannot write, and the tool list is where that is enforced.

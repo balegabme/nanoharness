@@ -208,7 +208,7 @@ The system prompt carries the servers this session actually connected to and
 the two file paths. Everyone gets that much: it is what "what tools do you
 have" needs, and it is not a licence to edit anything.
 
-The shape of an entry goes only to the role that writes the file. An agent that
+The shape of an entry goes only to the harness-editor. An agent that
 delegates does the only thing it can with the fields, which is to write `url`,
 `tokenEnv` and "a token is never written in the file" into the task as a
 requirement. The server in question authenticates through its own URL, so none
@@ -221,15 +221,13 @@ and not written, which is what `tokenEnv` is for; a URL that carries its own key
 is stored as given, key and all, and the prompt says so rather than promising
 otherwise.
 
-What comes after it depends on who is reading. An agent that can spawn is told
-to hand the change to a harness-editor and is given no command at all; the
-harness-editor, which cannot spawn, is given the commands, with `--dir <the
-workspace>` already in them, because its own folder may not be the workspace the
-user meant. Tell both halves to one agent and a builder reads the rule that says
-*delegate* and the command that says *here is how*, weighs them against each
-other in its own thinking, and does the work itself. A prompt that argues with
-itself is settled by whichever half the model reads last, so only one half is
-sent.
+What comes after it depends on who is reading. An agent that can spawn is given
+no command at all; the handoff rule is added to its session prompt, and this
+block says only what a change touches. The harness-editor, which cannot spawn,
+is given the commands, with `--dir <the workspace>` already in them, because its
+own folder may not be the workspace the user meant. A prompt that holds both a
+command and a rule to delegate is settled by whichever half the model reads
+last, and a builder given both ran the command itself, so only one half is sent.
 
 The commands are written out with their flags rather than named, because a
 command an agent is never told about might as well not exist. `cli.md` has the

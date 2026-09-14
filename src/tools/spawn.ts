@@ -36,7 +36,7 @@ export const SPAWN_TOOL = defineTool<SpawnArgs>({
       'distinct whenever this conversation would bias the answer or is beside the point: reviewing or verifying work done in this turn, a fresh read of code you have already described, an independent estimate, a question from a different part of the repo entirely.',
       'A reviewer, verifier or critic is always distinct: a clone has read your reasoning and will agree with it, which is the one thing a check must not do.',
       'Sequential work belongs in this loop, not in a subagent: splitting it up costs far more and finishes no sooner.',
-      'State the task as the outcome you want, with anything the user gave you quoted verbatim. For work you have not done yourself, do not prescribe the mechanism (the file, the field names, the format, the command): the agent doing it can see what you cannot, and a guess in the task becomes a requirement it has to satisfy or disprove.',
+      'State the task as the outcome you want, with anything the user gave you quoted verbatim: a distinct agent cannot see this conversation. For work you have not done yourself, do not prescribe the mechanism (the file, the field names, the format, the command): the agent doing it can see what you cannot, and a guess in the task becomes a requirement it has to satisfy or disprove. Ask it to report the files it touched and the diff.',
       'background: true returns a job id immediately and lets this turn carry on. You do not have to poll it or go looking for its output: when it finishes, what it answered is delivered into this conversation as a message, in full. That may be later in this turn or at the start of the next one, so start the ones you need early and use them when they land.',
     ].join(' '),
     inputSchema: {
@@ -49,8 +49,8 @@ export const SPAWN_TOOL = defineTool<SpawnArgs>({
           description:
             'clone (default, cheap, you again with this history) or distinct (the named role, from scratch, blind to this conversation, which is what a review or verification needs)',
         },
-        task: { type: 'string', description: 'the outcome you want, stated so it can be reached without asking you anything, plus anything the user gave you verbatim. Leave out the file, fields or commands you guess it needs' },
-        background: { type: 'boolean', description: 'do not wait for it; this is what "as a job" means. Its answer is delivered to you in full when it finishes' },
+        task: { type: 'string', description: 'the outcome you want, stated so it can be reached without asking you anything' },
+        background: { type: 'boolean', description: 'do not wait for it; its answer is delivered to you in full when it finishes' },
       },
       required: ['role', 'task'],
       additionalProperties: false,

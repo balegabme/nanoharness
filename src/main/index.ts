@@ -12,7 +12,7 @@ import { EDIT_TOOL } from '../tools/edit.js'
 import { LOG_IMPROVEMENT_TOOL } from '../tools/log-improvement.js'
 import { SPAWN_TOOL } from '../tools/spawn.js'
 import { JOB_UPDATE_TOOL } from '../tools/job-update.js'
-import { AGENTS, AGENT_ROLES, agentPrompt, isAgentRole, roleContext } from '../core/agents.js'
+import { AGENTS, AGENT_ROLES, HARNESS_HANDOFF, agentPrompt, isAgentRole, roleContext } from '../core/agents.js'
 import { EventBus } from '../core/event-bus.js'
 import { JobRegistry } from '../core/jobs.js'
 import { cloneHistory, createSpawnHost } from '../core/spawn.js'
@@ -400,11 +400,14 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
     ...skillsBlock(skills),
     ...secretsBlock(secrets.names()),
     ...mcpBlock(hub.status, paths, {
-      canWrite: AGENTS[role].tools.includes('write'),
+      canConfigure: role === 'harness-editor',
       canSpawn: AGENTS[role].tools.includes('spawn'),
       root,
       ...(HARNESS === undefined ? {} : { cli: HARNESS.cli }),
     }),
+    // A session that can spawn carries the routing rule. A distinct subagent
+    // has no `spawn` tool, so its prompt does not name one.
+    ...(AGENTS[role].tools.includes('spawn') ? HARNESS_HANDOFF : []),
   ]
   const systemPrompt = agentPrompt(role, environment(root), context)
   const tools = [...toolsFor(role, { canSpawn: true, isJob: false }), ...hub.tools()]
@@ -453,12 +456,13 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
         ...(await roleContext(request.role, root, HARNESS)),
         ...skillsBlock(skills),
         ...secretsBlock(secrets.names()),
-        // A subagent cannot spawn, so it is the one that does the work: it gets
-        // the commands the session above it was told to delegate. The commands
-        // name the harness CLI, and the CLI names the harness root, so they go
-        // to the one role allowed to know either.
+        // A subagent cannot spawn, so it cannot hand the work on again. The
+        // MCP configurer is the harness-editor, which gets the commands (the
+        // CLI names the harness root, which only that role may know); a builder
+        // or planner child gets the facts and nothing to relay. No child gets
+        // the routing rule, which would name a tool it does not have.
         ...mcpBlock(hub.status, paths, {
-          canWrite: AGENTS[request.role].tools.includes('write'),
+          canConfigure: request.role === 'harness-editor',
           canSpawn: false,
           root,
           ...(request.role === 'harness-editor' && HARNESS !== undefined ? { cli: HARNESS.cli } : {}),

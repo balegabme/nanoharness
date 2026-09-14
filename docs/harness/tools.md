@@ -65,7 +65,8 @@ replace does not.
 ## edit
 
 Replaces literal text in an existing UTF-8 file, ported from `deepseek-harness`.
-`old_string` must appear exactly once unless `replace_all` is true; a missing or
+Its description asks for a read first, unless the file was created or last edited
+in this session. `old_string` must appear exactly once unless `replace_all` is true; a missing or
 ambiguous match comes back as an error that says which. Matching is done with
 CRLF folded to LF and the file is written back with the line endings it came in
 with, so a model that copies what `read` showed it still matches a CRLF file.

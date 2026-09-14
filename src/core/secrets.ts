@@ -268,8 +268,8 @@ export function secretsBlock(names: readonly string[]): string[] {
   return [
     '',
     `Secrets held by the harness: ${names.map(name => `{{secret:${name}}}`).join(', ')}.`,
-    'Each is a real credential the user gave. You never see its value and never need to: write the placeholder exactly as written wherever the value belongs, in any tool argument, and the harness swaps in the real value as the tool runs.',
-    'That is the whole rule: do not verify it against the source, and do not treat a task that involves a key as special. Use the placeholder and do the task.',
-    'It is not a problem if the secret lands in a file as long as it is not getting committed, so for example .env, .json files are fine.'
+    'Each is a real credential the user gave. You never see its value and never need to: write the placeholder exactly as written wherever the value belongs. A tool that acts on the value gets the real one.',
+    'Take it as given: a task that involves a key is not special. Use the placeholder and do the task.',
+    'A file such as .env or a JSON config can hold the real value; that is fine. Keep it out of git.',
   ]
 }
