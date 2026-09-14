@@ -1050,8 +1050,8 @@ body {
 
 /*
  * The answer, as opposed to everything the turn said on its way to one. A turn
- * is mostly tool cards and half-sentences between them, and the thing that was
- * actually asked for used to be drawn exactly like the commentary around it.
+ * is mostly tool cards and half-sentences between them, so the answer gets a
+ * card of its own rather than the same treatment as the commentary around it.
  */
 .block.final .body {
   padding: var(--s3) var(--s4);
@@ -1807,11 +1807,11 @@ button.chip:hover:enabled,
 
 /* ── 10b. dropdowns ──────────────────────────────────────────────────── */
 
-/* A select's popup used to be the one thing in the window the app did not
-   draw: system colours, system radius, system font, in the middle of a themed
-   app. `base-select` hands the list back to the page, so it is styled here
-   exactly like every other surface. The rules above stay as the fallback for
-   an engine that cannot. */
+/* A select's popup is the one thing in the window the app does not draw by
+   default: system colours, system radius, system font, in the middle of a
+   themed app. `base-select` hands the list back to the page, so it is styled
+   here exactly like every other surface. The rules above stay as the fallback
+   for an engine that cannot. */
 @supports (appearance: base-select) {
   .chip-select select,
   .sheet select,

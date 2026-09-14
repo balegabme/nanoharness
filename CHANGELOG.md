@@ -3,287 +3,169 @@
 All notable changes to this project are documented in this file.
 Format based on Keep a Changelog; versioning follows SemVer.
 
+Nothing has been released yet, so this file says what 0.0.1 will contain rather
+than how it got there. An entry says what changed and, where a reader would
+otherwise be surprised, what it was doing wrong before. The reasoning behind a
+design is in `docs/`, the full account of a defect is in
+`docs/harness/improvements.md`, and the step-by-step development history is in
+the git log; none of the three is repeated here.
+
 ## [Unreleased]
 
 ### Added
-- `nh mcp list | add | remove | check` configures MCP servers from the terminal:
-  the entry is written through the same parser a session reads it with, and
-  `check` proves a server works by connecting to it, spawning it, doing the
-  handshake and reading its catalog through the client a session uses.
-- The harness editor's system prompt now names the harness itself — where its
-  source is, where the doc map is, and the exact command that runs its CLI,
-  including `nh mcp add` — and it is the only role told. Builder and planner
-  get none of it: an agent whose prompt never names the harness cannot wander
-  into its source, so a question about the harness has exactly one route.
-- Builder and planner hand anything about the harness — a change, a config
-  edit, or a question about how it behaves — to a harness-editor subagent,
-  unless the answer is already in the conversation. The subagent reports the
-  files it touched and the diff, and says that a change reaches the running app
-  only after a rebuild and a restart.
-- A session file now stores the notes beside the messages, so re-opening a
-  session shows what the window showed: an error, a stop, a turn that ended
-  without an answer, a refused repeat, a background job starting and finishing.
-  Each note is replayed between the two blocks it appeared between.
-- MCP client (step 4): stdio and Streamable HTTP transports, the spec's
-  handshake and version negotiation, a tool catalog read to the end of its
-  cursor when a session opens, per-request deadlines with advisory cancellation,
-  and JSON Schema narrowed to what a provider accepts. Server tools join a
-  session's tool list as `mcp__<server>__<tool>`.
-- MCP servers are configured in two files — `~/.nanoharness/mcp.json` for every
-  workspace and `.nanoharness/mcp.json` for one — where a project entry replaces
-  the global one by name and `"enabled": false` switches it off. Both name a
-  token's environment variable rather than holding the token, and no server is
-  configured by default.
-- The system prompt tells the agent which MCP servers the session connected to,
-  where the two config files are, and what an entry looks like, so the one role
-  that can write but not spawn — the harness editor — can add a server when the
-  work is handed to it. It also says outright that an unconfigured thing is
-  unconfigured rather than forbidden — a model with nothing in the prompt was
-  inventing a policy against MCP instead.
-- Skills: a workspace's `.nanoharness/skills/*/SKILL.md` files are listed in the
-  system prompt one line each - name, description, path - and the agent reads
-  the one it needs. The documents themselves never enter the prompt.
-- `examples/mcp.json` and `examples/skills/release-checklist/` as working
-  copies of both formats.
-- Initial repository scaffold: tooling, CI, OSS files (plan section 18, step 0).
-- Session loop, event bus, typed IPC, OpenAI-compatible streaming provider, and
-  the bash, read, and write tools (step 1).
-- Doc map with `nh doc-check` in CI, the improvement ledger and its
-  `log_improvement` tool, and `nh usage` over a per-turn usage log (step 2).
-- Desktop window: a chat stream that renders the session event feed, a context
-  bridge with no Node access, and one session per window (step 5, first slice).
-- First-run setup screen: base URL, model and API key, with the key encrypted by
-  the OS and the rest saved to a secret-free settings file.
-- Provider setup tests the endpoint and fetches its model list, and the models
-  ticked there are the only ones a session can run.
-- A settings chip in the header reopens provider settings at any time.
-- The brand mark is the window icon and sits in the app header.
-- `src/core/roots.ts` separates the workspace from the harness root, so a
-  harness-editor job runs against the nanoharness checkout rather than the
-  project the harness was invoked in.
-- As many providers as you want, of either kind: settings keeps a list of
-  records rather than one endpoint, so a local server, an OpenAI-compatible
-  service and an Anthropic account can sit side by side, each with its own key
-  and its own model allowlist.
-- Anthropic provider: `/v1/messages` streaming with named events, the system
-  prompt lifted to its own field, tool results as `tool_result` blocks, and
-  usage read from both halves of the stream.
-- Thinking effort as a neutral setting (`none`, `low`, `medium`, `high`) that
-  becomes `reasoning_effort` on the OpenAI wire and a thinking budget on the
-  Anthropic one, with `max_tokens` raised to clear the budget.
-- Model and effort pickers in the header, so switching either takes one click
-  instead of a trip through settings.
-- Workspaces and sessions: folders in a left sidebar, each holding its own
-  conversations, with search, an add-folder picker and per-row delete. The
-  session index and one transcript file per session live in the user-data dir,
-  so re-opening a session — or restarting the app — replays what was said and
-  done.
-- Every session is held to its folder. Tools resolve their paths through an
-  access gate that walks symlinks and expands `~` before deciding, so `..`,
-  an absolute path and a home-relative path are all caught. Reaching outside
-  raises a modal naming the path: allow once, allow for this session, or deny.
-  Denial comes back to the model as a tool error, so the turn continues.
-- A two-column app shell: sidebar of folders and sessions, a topbar naming the
-  open session and its folder, the transcript in the middle, and model, effort,
-  scope and running usage on the composer's control row.
-- Settings is a sheet over the app with its own left nav, not a screen the app
-  falls back to.
-- A stop button. Send becomes Stop while a turn runs, and Esc in the composer
-  does the same: the request in flight is aborted and the loop ends at the next
-  boundary. Whatever arrived is kept, a tool call the stop landed on is told it
-  never ran, and the session can be continued.
-- The app announces the end of a turn: a short blip, and a desktop notification
-  when the window is not the one in front. The `alerts` chip silences both.
-- A system prompt built per session, naming the workspace root, the platform,
-  the shell and the date — and saying outright that `bash` on Windows is Git
-  Bash, not WSL, so there is no `/mnt/c` to go looking for.
-- Thinking is stored and replayed where the provider signed it, so a re-opened
-  Anthropic session shows the reasoning it actually sent back.
 
-- Three agent roles — builder, planner and harness editor — as a chip on the
-  composer. A role decides the tools, the shell and the default effort, and the
-  harness editor is handed the doc index and the improvement ledger, so a
-  request lands in the right file. The planner cannot write: its shell refuses
-  redirects, the file verbs, in-place edits, mutating git subcommands and
-  package installs, and says so in the words of the role.
-- A `spawn` tool that hands one self-contained piece of work to another agent.
-  `clone` reuses this conversation's prompt, tools and history byte for byte,
-  so the provider's cache pays for most of it; `distinct` starts the agent from
-  its own prompt with no history, for work that must not see the conversation.
-  Nothing nests — a subagent has no spawn host and says so if it tries — and a
-  subagent is held to exactly its parent's folder.
-- Background jobs: `spawn` with `background: true` returns a job id at once and
-  the turn carries on. The job posts progress with `job_update` and its answer
-  when it ends, and a strip under the session tree shows which agent is
-  running, what it was asked, and its last line.
+**Core**
+- Session loop with an event bus, typed IPC, and the `bash`, `read`, `write` and
+  `edit` tools.
+- Independent tool calls in one assistant message run together where the tool
+  declares itself read-only, and in the model's order either way.
+- OpenAI-compatible and Anthropic-compatible streaming providers, as wire
+  formats rather than vendors. As many configured providers as you want, of
+  either kind, side by side.
+- Thinking effort as one neutral setting (`none`, `low`, `medium`, `high`),
+  mapped to `reasoning_effort` or to a thinking budget.
+- Thinking is stored and replayed where the provider signed it.
+- A system prompt built per session, naming the workspace root, the platform,
+  the shell and the date.
+- No round budget on the tool loop. A model going in circles is caught instead:
+  a repeated call is refused and the turn ends with a note; a run of failures
+  appends a nudge to the result and carries on.
+- `src/core/roots.ts` separates the workspace root from the harness root.
+
+**Agents**
+- Three roles — builder, planner and harness editor — chosen per session. A role
+  decides the tools, the shell and what the prompt names. The planner cannot
+  write, and its shell says so in the role's own words.
+- `spawn` hands one piece of work to another agent, `clone` (this conversation's
+  prompt, tools and history) or `distinct` (its own prompt, no history). Nothing
+  nests, and a subagent is held to its parent's folder.
+- Background jobs: `spawn` with `background: true` returns a job id and the turn
+  carries on. Progress goes through `job_update`, and a strip under the session
+  tree shows what is running.
+- Anything about the harness goes to a harness-editor subagent. It is the only
+  role whose prompt names the harness at all.
+
+**Workspaces and scope**
+- Folders in a sidebar, each holding its own sessions. The session index and one
+  transcript per session live in the user-data dir, so re-opening a session or
+  restarting the app replays what was said and done.
+- A session file stores the notes beside the messages, so a re-opened session
+  shows what the window showed: an error, a stop, a turn with no answer, a
+  refused repeat, a background job.
+- Every session is held to its folder. Tools resolve paths through an access
+  gate that walks symlinks and expands `~`, and accepts both the Windows and the
+  Git Bash spelling of a path. Reaching outside raises one modal naming the
+  resolved path: allow once, allow for the session, or deny. A denial reaches
+  the model as a tool error, so the turn continues. The gate is on the file
+  tools (`read`, `write`, `edit`); a shell command has no path to resolve, so it
+  is approved whole: the modal shows the command, and its session answer allows
+  every later command.
+- The NanoHarness checkout is readable without a prompt when the app runs from
+  source. Writing to it still asks.
+- A stop button, and Esc in the composer. The request in flight is aborted and
+  the loop ends at the next boundary; whatever arrived is kept.
+
+**MCP**
+- MCP client: stdio and Streamable HTTP transports, handshake and version
+  negotiation, a tool catalog read to the end of its cursor, per-request
+  deadlines with advisory cancellation, and JSON Schema narrowed to what a
+  provider accepts. Server tools join the session as `mcp__<server>__<tool>`.
+- Two config files, `~/.nanoharness/mcp.json` and `.nanoharness/mcp.json`, where
+  a project entry replaces a global one by name and `"enabled": false` switches
+  it off. Both name a token's environment variable rather than holding the
+  token. No server is configured by default.
+- `nh mcp list | add | remove | check`. `check` proves a server works by
+  connecting to it through the same client a session uses.
+- The system prompt tells the agent which servers answered and where the config
+  files are.
+
+**Skills**
+- `.nanoharness/skills/*/SKILL.md` are listed in the system prompt one line
+  each, and the agent reads the one it needs. The documents never enter the
+  prompt.
+- `examples/mcp.json` and `examples/skills/release-checklist/`.
+
+**Tooling**
+- Doc map with `nh doc-check` in CI, the improvement ledger and its
+  `log_improvement` tool, and `nh usage` over a per-turn usage log.
+- Repository scaffold: tooling, CI, OSS files.
+
+**Desktop app**
+- A two-column shell: sidebar of folders and sessions, a topbar naming the open
+  session, the transcript in the middle, and the controls on the composer. The
+  sidebar collapses to a rail.
+- Settings as a sheet with its own nav: providers, their keys and their model
+  allowlists, plus a connection test that doubles as the model picker.
+- First run asks for a provider. The key is encrypted by the OS and the settings
+  file has no field to put one in.
+- Model and effort pickers in the header.
+- Running usage in the topbar, stored with the session: in, out, cached, cache
+  hit rate and tokens per second, plus reasoning and cache-written where the
+  provider reports any. The rate counts the time the model spent generating, so
+  a tool call in the middle of a turn does not drag it down.
+- End-of-turn blip and a desktop notification when the window is not in front,
+  both silenced by the `alerts` bell.
+- Nothing is drawn by the browser: the app has its own confirm and prompt
+  sheets, and styles the native select popups through `appearance: base-select`.
+- Three layers of design tokens — a raw ramp, aliases naming what a colour is
+  for, and components that read only aliases — with one easing curve, three
+  durations, and a single spacing and radius vocabulary. Dark only.
+- The brand mark is the window icon, the app icon, and the empty state.
+- A renderer that fails to load writes a banner into the page instead of leaving
+  a blank window.
 
 ### Changed
-- The MCP block in the system prompt now depends on who is reading it. An agent
-  that can spawn is told to hand a config change to a harness-editor; the
-  harness-editor gets the `nh mcp` commands, with the workspace already in them.
-  Both halves used to go to every writing role, and a builder asked to install a
-  server weighed the rule against the command and did the work itself.
-- The tool loop is no longer capped at eight rounds; there is no round budget at
-  all. A cap is the harness deciding a long task is a bug, and it ended turns
-  mid-investigation with nothing on screen to say why. What is caught instead is
-  a model going in circles: the third identical call is refused with an
-  explanation, the sixth ends the turn with a note, and five failed calls in a
-  row appends a line to the result saying so.
-- The window has no File/Edit/View menu bar any more.
-- Thinking is read from every spelling the OpenAI-compatible world uses
-  (`reasoning_content` and `reasoning`), so servers that stream it now fill the
-  thinking block instead of leaving it empty.
-- Nothing about a provider is compiled in any more. There is no default base
-  URL, no default model and no fallback key; a missing value opens setup instead
-  of silently reaching for a vendor.
-- A provider is configured in the setup screen and nowhere else. The
-  `OPENAI_*` environment variables are gone and nothing replaced them: since
-  the app cannot run until a provider is set, one place to set it beats a
-  screen plus a set of variables that silently outrank it.
-- A session runs in its folder rather than in whatever directory Electron was
-  launched from.
-- The small mark (`favicon.svg`) is used wherever the logo renders under about
-  48px. The three window dots turn to mush at that size, so only the empty
-  state and the window icon get the full mark.
-- A refused tool call is stored as refused, so a re-opened session shows it in
-  red instead of dressing it up as a successful call.
-- One tool call now costs one permission prompt. Every path a call reaches for
-  is resolved together and asked about in a single modal, device nodes
-  (`/dev/null`, `NUL`) are not treated as paths at all, and a denial is
-  remembered, so a command with four paths and a redirect no longer produces
-  five prompts and a repeat of each.
-- The base URL is joined to an endpoint by rule rather than by assumption: the
-  `/v1` is added only when the base does not already end in a version segment,
-  so `https://api.z.ai/api/paas/v4` and `https://api.z.ai/api/anthropic` both
-  reach the right path. The settings field says which part of the address to
-  paste, with examples per API kind, and the kinds are labelled by wire format
-  (`/chat/completions`, `/messages`) rather than by vendor name.
-- The Anthropic wire sends the assistant's signed thinking blocks back on
-  tool-using turns. They were being dropped, which that API rejects.
+- A provider is configured in the setup screen and nowhere else. Nothing about a
+  vendor is compiled in: no default base URL, no default model, no fallback key,
+  and no `OPENAI_*` environment variables.
+- The base URL is joined to an endpoint by rule, so a base that already ends in
+  a version segment is not given a second one.
 - The API key goes out as both `x-api-key` and `Authorization: Bearer`, because
   Anthropic-compatible gateways differ on which they read.
-- The full mark on the empty state is 112px and the sidebar mark 24px; the
-  design tokens grew a hover surface, a second border weight and a soft accent
-  wash, and the composer, sheets and thinking blocks were restyled on them.
-- `suggestedBaseURL()` is gone. It answered `https://api.anthropic.com` for the
-  Anthropic kind, which is a vendor address in a harness that talks to
-  Anthropic-*compatible* endpoints; nothing called it.
+- Thinking is read from every spelling the OpenAI-compatible world uses.
+- A session runs in its folder rather than in whatever directory Electron was
+  launched from.
+- Every agent thinks at the session's own effort; roles no longer carry one.
+- A spawn asking to clone into another role runs that role distinct instead.
+- The system prompt says there is no screen, no browser and no image here, that
+  a limit the user states is part of the task, and that an interruption gets an
+  answer in words before another tool call. An agent told in the first line that
+  browser tools were pointless probed for Chrome, Edge, puppeteer and playwright
+  anyway, twice after being asked to stop.
 - An eslint rule stops the renderer importing runtime code from `src/core`,
-  `src/ipc` or `src/main`. The `app://` handler refuses anything outside
-  `out/renderer`, so such an import 404s at load time and the window opens blank
-  with nothing on screen saying why. Type imports stay allowed.
-- The window was redesigned around three layers of design tokens — a raw ramp,
-  aliases naming what a colour is for, and components that read only aliases.
-  One easing curve and three durations replace per-rule timings, and the
-  surfaces, radii and spacing are a single vocabulary.
-- The app is dark and only dark, as plan section 3 always said. The light
-  aliases, the `prefers-color-scheme` block and the sidebar's theme toggle are
-  gone: a second theme is a second design to keep honest, and nobody was asking
-  for this one.
-- The composer is one element in two seats: centred in the hero before a session
-  exists, in a card floating over the flow once one is open. Moving the node
-  rather than mounting a second copy keeps a half-written message and the caret
-  across the move, and the flow's tail spacer is written from the card's
-  measured height instead of a guessed one.
-- The sidebar collapses to a rail of icons, and the mark in the rail is the
-  button that brings it back.
-- The app icon is drawn full bleed. The old artwork carried its own margin, so
-  Windows scaled the whole square into the taskbar slot and the mark landed
-  visibly smaller than every icon beside it. `scripts/brand-icons.cjs`
-  rasterises the sizes Windows asks for, up to 256.
-- The composer's controls could be painted under the dock's fade gradient: the
-  gradient is positioned and the card was not, so it won on paint order. Every
-  child of the dock now has a stacking position of its own.
-- A renderer that fails to load says so in the window. A failed load, a preload
-  error or a console error now writes a banner into the page instead of leaving
-  a blank window and a message on a stdout that Windows discards.
-- A running turn is shown in the flow, at the end of it: three dots and the
-  elapsed time, and nothing at all when no turn is running. The `idle`/`working`
-  chip in the top corner is gone; the chip is kept only for `offline`.
-- The running total moved off the control row into the topbar, beside the title
-  and the folder. On the row it was the first thing squeezed out as the chips
-  grew, and on a line under them it landed on the card's rounded bottom corner
-  next to the send button. It is also stored with the session now: re-opening
-  one shows what it has already cost instead of starting the count at zero.
-- The composer chips draw their own labels with the native select laid over
-  them. A select sizes itself to its widest option, so one long model id used to
-  shove the row along; now the model chip is the one that gives way when the
-  window narrows.
-- `New session` and `Settings` were drawn in the chat flow's label style —
-  uppercase, 10px, nudged off centre — because they shared its class name. They
-  read as buttons again, on the search field's height and radius with their
-  glyphs in the same column as its magnifier.
-- The running total is a row of pills rather than a run-on line, and it counts
-  tokens per second alongside in, out, cached, hit rate and reasoning. The rate
-  is measured in the window — the provider reports a running total, so a round's
-  rate is the output that arrived over the time it took — and a round too short
-  to measure does not claim one.
-- The `alerts` toggle is a bell, struck through when it is off.
-- A session with nothing in it yet shows the mark behind the flow, faint and
-  large, instead of a blank rectangle. It goes as soon as anything is appended.
-- The running-turn dots share the message column instead of sitting against the
-  left edge of the window.
-- Nothing the app opens is drawn by the browser any more. `confirm()` is
-  replaced by a sheet in the app's own vocabulary, and the `<select>` popups are
-  styled through `appearance: base-select` — the app's surfaces and shadow, the
-  accent on the ticked row, a checkmark in a column of its own, and a chevron
-  drawn in CSS. Browsers without the property keep the platform popup.
-- A provider is removed by the `x` on its own card, after a confirmation naming
-  it. The old **Remove provider** button sat in the form, where it acted on
-  whichever provider happened to be loaded.
-- The **Active model** control is gone from settings; the model chip on the
-  composer is the one place to change it. A save keeps the running model if it
-  is still ticked and falls back to the first ticked one if it is not, so a
-  provider is never left without a model to run.
-- The about pane is the mark, "Built with a heart by balega", and a link to
-  @BalegaNorbert on X. The window itself cannot navigate, so the link goes out
-  through a `shell:open-external` channel that refuses any scheme but `http:`
-  and `https:`.
-- `New session` and `Settings` put their glyph and their label on one line and
-  in one column, and the settings glyph is a set of sliders: a 24-grid cogwheel
-  turns to mush at 16px. The sheet's close control is an `x` and nothing else.
-- The composer's control row is measured against the card instead of the
-  window, since the same card is narrow with the rail open and wide with it
-  collapsed. When it tightens, `alerts` drops out first and the scope badge
-  second — both repeat what the settings pane says — so the three selects keep
-  their full labels instead of the model id collapsing to two characters.
-- Every agent thinks at the session's own effort. Each role used to carry a
-  default, and switching agent moved the effort chip under the user's hand —
-  two settings for one decision, with the visible one not in charge.
-- A spawn asking to clone into another role runs that role distinct instead. A
-  clone is the parent's prompt and the parent's tools, so a clone "as a
-  planner" was a builder with a planner's name on the job; the strip and the
-  cost line now report the mode that actually ran.
-- The destructive button in a confirm sheet is filled in the same red as the
-  stop button, and the sheet answers on the right with Cancel first. Red text
-  on nothing, beside an outlined Cancel, drew the weaker of the two controls as
-  the one the sheet exists for. The permission sheet's **Deny** refuses a
-  request rather than destroying anything, so it is an ordinary outlined button.
+  `src/ipc` or `src/main`, which would 404 at load and open a blank window.
 
 ### Fixed
-- `nh mcp --help`, `nh mcp add --help`, `nh mcp check -h` and `nh help mcp` all
-  print the help, and a wrong flag prints the message and the help rather than a
-  bare `unknown flag`. The old behaviour cost an agent two extra calls guessing
-  at a syntax it had asked for.
-- Git Bash paths work on Windows. `/c/project/file` — the spelling the shell
-  prints, and the one a model copies out of shell output — resolved to
-  `<drive>:\c\project\file` and came back as a missing file or an
-  out-of-scope refusal naming a path nobody meant. Both spellings now resolve to
-  the same file, and `/usr/bin` is left alone.
-- A turn that ends with no answer says so instead of leaving the flow looking
-  exactly like a finished turn.
+- The Anthropic wire sends the assistant's signed thinking blocks back on
+  tool-using turns. They were being dropped, which that API rejects.
+- A clone no longer inherits the parent's unanswered `spawn` call, which made
+  every clone die on a `tool_calls` message nothing had replied to.
+- Git Bash paths resolve on Windows. `/c/project/file` used to reach
+  `<drive>:\c\project\file` and come back as a missing file or a refusal naming
+  a path nobody meant. `/usr/bin` is left alone.
+- A denial is remembered, and a path already refused this session is answered
+  from that refusal instead of asking again.
+- A refused tool call is stored as refused, so a re-opened session shows it in
+  red rather than as a successful call.
+- A turn that ends with no answer says so.
 - An assistant message with no text, no tool call and no thinking is not stored:
-  it drew a blank block in the window and is a block some providers refuse to be
-  sent back.
-- The NanoHarness source is readable without a permission prompt when the app
-  runs from a checkout, so a question about the harness does not stop on a
-  prompt for the harness's own files. Writing to it still asks.
-- A clone no longer inherits the parent's unanswered `spawn` call. The parent
-  is inside that call while the clone starts, so its transcript ended on an
-  assistant message with a tool call nothing had replied to, and every clone —
-  background job or not — died on `provider 400: an assistant message with
-  'tool_calls' must be followed by tool messages`. The in-flight turn is cut
-  from the clone's history rather than patched with an invented result.
-- The counters in the header sit in the middle of their pills. They were
-  baseline-aligned inside a fixed-height chip, which lines the number up with
-  its label and then parks the pair against the top edge.
+  it drew a blank block, and some providers refuse to be sent one back.
+- `nh mcp --help` and its variants print the help, and a wrong flag prints the
+  message and the help.
+- A shell command longer than 8 KiB runs whole. Git Bash cuts a `-c` string at
+  that size and runs the front of it, so a 12 KB patch script was executed half
+  written; the command now goes to bash as a script file.
+- Paths are no longer read out of shell commands. The screen that did it turned
+  `</script>` into `C:\script`, `2>/dev/null` into `C:\dev\null`, a browser
+  probe's Program Files paths into three separate prompts, and a README URL into
+  `e://`; every false prompt stopped a command that had nothing to do with the
+  place named. The shell is approved whole instead, never parsed: the modal
+  shows the command and offers allow once, allow all shell commands for the
+  session, or deny. A gate with nobody to ask refuses the command rather than
+  run it unscreened.
+- A refusal no longer says "you denied access to it". A closed window produces
+  the same refusal, and the old wording sent agents hunting for another route to
+  the same place, one modal per attempt.
+- A background job still running when the app closes is written into the
+  conversation that started it, instead of disappearing with the process while
+  the last message promises its report.

@@ -28,9 +28,9 @@ command runs, so the file ends up holding the real value.
 
 /**
  * A command typed wrong, as opposed to a command that ran and failed. It is its
- * own kind because the answer to it is the help text: an agent that guessed
- * `mcp add --help` and got `unknown flag --help` went on guessing for two more
- * calls, which is the round trip this CLI exists to save.
+ * own kind because the answer to it is the help text: a bad flag answered with
+ * a flag error sends an agent guessing for another call or two, which is the
+ * round trip this CLI exists to save.
  */
 class UsageError extends Error {}
 
@@ -278,10 +278,10 @@ async function check(flags: Flags): Promise<number> {
     }
     let called = 0
     if (flags.call !== undefined) called = await probe(hub, servers, flags)
-    // Connecting is not authenticating, and saying "ok" without that sentence
-    // is how a server with a dead key was reported as working: the handshake
-    // and the catalog are answered to anyone, and a key in a URL is only
-    // checked when a tool is actually called.
+    // Connecting is not authenticating. The handshake and the catalog are
+    // answered to anyone, and a key in a URL is only checked when a tool is
+    // actually called, so "ok" on its own would report a server with a dead
+    // key as working.
     else if (hub.status.some(status => status.connected)) {
       process.stdout.write('a handshake does not check a credential: nh mcp check <name> --call <tool> makes one real call\n')
     }

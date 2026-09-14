@@ -139,9 +139,8 @@ export async function readEntries(path: string): Promise<Record<string, unknown>
  * Write one entry into one config file, creating the file and the
  * `.nanoharness` folder around it. The entry is validated by the same
  * `parseServer` a session uses, so "the harness accepted it" is what the
- * command actually checked rather than a second opinion — an agent that
- * hand-wrote the JSON and then hand-wrote a validator to approve it was
- * checking its own homework.
+ * command actually checked rather than a second opinion; a validator written
+ * beside a hand-written entry would only be checking its own homework.
  */
 export async function writeEntry(path: string, name: string, entry: Record<string, unknown>): Promise<McpServer> {
   const server = parseServer(name, entry)

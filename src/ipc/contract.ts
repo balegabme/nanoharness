@@ -151,17 +151,22 @@ export interface SubagentOpenResponse {
   notes: SessionNote[]
 }
 
-/** A tool wants paths outside the session root, and is waiting on an answer. */
+/** A tool wants paths outside the session root, or a command run, and waits. */
 export interface PermissionAsk {
   id: string
   sessionId: string
   intent: AccessIntent
   /**
-   * Every resolved path this one tool call reaches for — symlinks and `..`
-   * already followed. A shell command routinely names several, and they are
-   * asked about together so one command costs one answer.
+   * Every resolved path this one tool call reaches for, symlinks and `..`
+   * already followed. A file tool names one; the array is what lets a future
+   * multi-path tool ask about them in a single answer. Empty for a command.
    */
   paths: string[]
+  /**
+   * The shell command this ask is about, shown to the user verbatim. Present
+   * only when `intent` is `run`; a command has no resolved path to show.
+   */
+  command?: string
   root: string
 }
 

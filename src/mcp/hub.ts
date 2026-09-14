@@ -127,10 +127,10 @@ export function mcpBlock(
     `They are configured in two files: ${paths.global} for every workspace and ${paths.project} for this one, where a name in the project file wins.`,
   )
   // Who is being told this decides what they are told. An agent that can spawn
-  // is not the one who edits the config: that is the harness-editor's job, and
-  // handing this agent the command alongside a rule telling it to delegate is
-  // how one ended up doing the work itself and arguing with its own prompt on
-  // the way. It gets the handoff. The editor gets the commands.
+  // is not the one who edits the config: that is the harness-editor's job. Give
+  // this agent the command alongside a rule telling it to delegate and the two
+  // halves of the prompt argue, so it gets the handoff and the editor gets the
+  // commands.
   // An agent that delegates is given no entry shape at all. Hand it the fields,
   // url and tokenEnv and "a token is never written in the file", and it does
   // the only thing it can with them: writes them into the task as a
@@ -148,7 +148,7 @@ export function mcpBlock(
   if (!options.canWrite) return lines
 
   lines.push(
-    'Both files use the shape every MCP client uses: {"mcpServers": {"<name>": {...}}}. A stdio entry has command, args and envPassthrough (variable names, passed through from the environment); an HTTP entry has url and, where the server takes a bearer token, tokenEnv, the name of the variable holding it, so that token is named rather than written. A server that authenticates through its own URL instead is a different case: that URL is stored as given, key and all.',
+    'Both files use the shape every MCP client uses: {"mcpServers": {"<name>": {...}}}. A stdio entry has command, args and envPassthrough (variable names, passed through from the environment); an HTTP entry has url and, where the server takes a bearer token, tokenEnv, the name of the variable holding it, so that token is named rather than written. A server that authenticates through its own URL instead is a different case: the placeholder is substituted before the writer runs, so that URL is stored with the real credential in it.',
   )
 
   if (options.cli === undefined) {

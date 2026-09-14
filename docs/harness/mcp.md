@@ -9,7 +9,7 @@ Files:
 - src/mcp/transport.ts — stdio and Streamable HTTP
 - src/mcp/client.ts — the handshake, the catalog, and calls
 - src/mcp/schema.ts — MCP JSON Schema narrowed to what a provider takes
-- src/mcp/config.ts — `.nanoharness/mcp.json` and the Tavily default
+- src/mcp/config.ts — the two `mcp.json` files, and what an entry may hold
 - src/mcp/hub.ts — every server a session talks to, as harness tools
 
 ## What is implemented
@@ -232,12 +232,8 @@ itself is settled by whichever half the model reads last, so only one half is
 sent.
 
 The commands are written out with their flags rather than named, because a
-command an agent is never told about might as well not exist. The one that made
-that concrete: an agent asked to add a server hand-wrote the JSON, then wrote a
-throwaway script re-implementing this project's own config parser to check its
-work, and spent five rounds on what `nh mcp add` does in one. Its private copy
-of the parser could have disagreed with the real one, so the check it ran proved
-nothing either.
+command an agent is never told about might as well not exist. `cli.md` has the
+turn that made that concrete.
 
 That block is there because of two failures, both observed. A model asked what
 tools it has answers from its training set when the prompt says nothing. And one

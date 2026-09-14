@@ -25,6 +25,9 @@ function parseArgs(args: Record<string, unknown>): ArgsParse<ReadArgs> {
 }
 
 export const READ_TOOL = defineTool<ReadArgs>({
+  // Reading changes nothing, so a message that asks for several files can run
+  // them together (`executeTools` in src/core/session.ts).
+  parallel: true,
   input: {
     name: 'read',
     description: 'Read a file with offset/limit. Lines are capped at 2000 chars.',

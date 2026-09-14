@@ -208,8 +208,8 @@ describe('the vault', () => {
   it('catches a token from a vendor the list has never heard of, and leaves hashes alone', () => {
     const vault = new SecretVault()
 
-    // Pasted bare, with no label in front of it and no prefix any list knows.
-    // This one went into the window and the transcript before the shape rule.
+    // Pasted bare, with no label in front of it and no prefix any list knows:
+    // the shape rule is what catches it.
     const pasted = 'user_4wV8Y3UT8cvgCpf4YCFVv2LMx2WgREoxvhiVDQHvVvFdhV24atYwGnKwJSauibmLfY8TqKeLiNJrGD3bA8orxrXF'
     const caught = vault.capture(`here it is: ${pasted}`)
     expect(caught.text).toBe('here it is: {{secret:secret}}')

@@ -69,6 +69,13 @@ model reading a reference it cannot resolve, and a harness that can.
    is simple. Does it *use* the argument, or does it turn the argument into
    text somebody else reads? The second kind keeps the placeholder.
 
+   A permission prompt is the other place a revealed value could surface.
+   `bash` asks the gate before it runs, and by then its command holds the real
+   key, so `promptingGate` takes the vault's `redact` and the modal shows
+   `curl -H 'Authorization: Bearer {{secret:key}}'`. The person approves the
+   line with the placeholder in it, which is the same thing the window and the
+   transcript hold.
+
 4. **Scrub.** `Session.executeTool` runs the result back through `redact()`
    before it becomes a transcript message. A key that a tool prints — an echoed
    command line, a config file the model asked to read, an error quoting the

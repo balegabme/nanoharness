@@ -50,8 +50,8 @@ const PATTERNS: readonly { hint: string; re: RegExp }[] = [
 
 /**
  * The vendors nobody has a pattern for. A service the list has never heard of
- * still issues `<word>_<blob>`, and a user who pastes one bare — no "my key
- * is" in front of it — was getting it into the window and the transcript.
+ * still issues `<word>_<blob>`, and a user who pastes one bare, with no "my key
+ * is" in front of it, must not get it into the window or the transcript.
  *
  * The shape does the work the prefix list cannot: a short word, an underscore,
  * then forty or more letters and digits with upper case, lower case and a
@@ -260,16 +260,16 @@ export function hasUnknownSecret(built: readonly string[], current: readonly str
  * What the agent is told, and it needs telling. A model handed
  * `{{secret:tavily_key}}` with no explanation does one of two things: it stops
  * and asks the user for the real key, or it writes `YOUR_KEY_HERE` and calls
- * the job done. Both are the same bug — it does not know the placeholder is
- * live — and four lines fix it.
+ * the job done. Both are the same bug, that it does not know the placeholder
+ * is live, and this block fixes it.
  */
 export function secretsBlock(names: readonly string[]): string[] {
   if (names.length === 0) return []
   return [
     '',
     `Secrets held by the harness: ${names.map(name => `{{secret:${name}}}`).join(', ')}.`,
-    'Each one is a real credential the user gave. You cannot read its value and do not need to: write the placeholder exactly as it appears, anywhere a tool argument would take the key — a curl header, an environment assignment, a config file — and the harness substitutes the real value as the tool runs.',
-    'Never ask the user for the value, never invent one, and never write a stand-in such as YOUR_KEY_HERE. A placeholder that reaches a tool works; a placeholder you paraphrase does not.',
-    'Tool output comes back with the value replaced by the same placeholder, so a key you echo will not appear. That is the redaction working, not a failed command.',
+    'Each is a real credential the user gave. You never see its value and never need to: write the placeholder exactly as written wherever the value belongs, in any tool argument, and the harness swaps in the real value as the tool runs.',
+    'That is the whole rule: do not verify it against the source, and do not treat a task that involves a key as special. Use the placeholder and do the task.',
+    'It is not a problem if the secret lands in a file as long as it is not getting committed, so for example .env, .json files are fine.'
   ]
 }

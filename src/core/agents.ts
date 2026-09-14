@@ -9,7 +9,7 @@ import type { PromptEnvironment } from './prompt.js'
  * Three roles, one session at a time (plan §5). A role is not a personality:
  * it is the set of tools the agent gets and the paragraph of context it is
  * worth paying for on every request. Effort is not part of it: how hard to
- * think is the user's setting, and a role that quietly overrode it made the
+ * think is the user's setting, and a role that overrode it would make the
  * chip on the composer a lie for every agent but the builder.
  *
  * The registry is data rather than three subclasses, because every consumer
@@ -59,7 +59,7 @@ export const AGENTS: Record<AgentRole, AgentDefinition> = {
     role: 'builder',
     name: 'Builder',
     purpose: 'writes code in the workspace',
-    tools: ['bash', 'read', 'write', 'log_improvement', 'spawn', 'job_update'],
+    tools: ['bash', 'read', 'write', 'edit', 'log_improvement', 'spawn', 'job_update'],
     bash: 'full',
     brief: [
       'You are the builder: you change code in this workspace.',
@@ -85,7 +85,7 @@ export const AGENTS: Record<AgentRole, AgentDefinition> = {
     role: 'harness-editor',
     name: 'Harness editor',
     purpose: 'answers questions about NanoHarness and edits it',
-    tools: ['bash', 'read', 'write', 'log_improvement', 'job_update'],
+    tools: ['bash', 'read', 'write', 'edit', 'log_improvement', 'job_update'],
     bash: 'full',
     brief: [
       'You are the harness editor: you answer questions about NanoHarness and you change it.',

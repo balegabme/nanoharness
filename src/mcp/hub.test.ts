@@ -175,11 +175,10 @@ describe('a server that will not start', () => {
 })
 
 /**
- * Who is told what. The failure this pins down is one that happened: a builder
- * was handed both the rule that harness config goes to a harness-editor and the
- * command that does it, weighed the two against each other in its own thinking,
- * and did the work itself. A prompt that argues with itself is answered by
- * whichever half the model reads last.
+ * Who is told what. A rule that harness config goes to a harness-editor and a
+ * command that does the same job are two halves of a prompt that argues with
+ * itself, answered by whichever half the model reads last. These tests pin who
+ * gets which half.
  */
 describe('what a session is told about MCP', () => {
   const status = [{ name: 'probe', connected: true, toolCount: 2 }]
