@@ -5,6 +5,8 @@ Files:
 - src/tools/read.ts — offset/limit read with caps, parallel-safe
 - src/tools/write.ts — create/overwrite write
 - src/tools/edit.ts — literal replace in an existing file
+- src/tools/text.ts — whether a file's bytes are text a tool may rewrite
+- src/core/diff.ts — the unified diff a write or an edit hands back
 - src/tools/log-improvement.ts — append an entry to the improvement ledger
 
 A Tool wraps a JSON schema (ToolInput) plus a `run` function. Tools list is
@@ -71,8 +73,37 @@ ambiguous match comes back as an error that says which. Matching is done with
 CRLF folded to LF and the file is written back with the line endings it came in
 with, so a model that copies what `read` showed it still matches a CRLF file.
 Binary files and files that do not decode as UTF-8 are refused, and so is an
-edit whose two strings are the same. The result is one confirmation line, not
-the file, so a model has nothing to gain from reading it back.
+edit whose two strings are the same.
+
+## What a write hands back
+
+Both writing tools answer with a line saying what they did and a fenced unified
+diff of the change: `edited src/core/session.ts (1 replacement, +12 −3)`, then
+the hunks. `src/core/diff.ts` builds it, in about two hundred lines of line-LCS
+and hunk formatting. The two things a diff package would add on top, word-level
+highlighting and patch application, would go unused here: the harness only ever
+displays a change.
+
+The diff is read twice, by the window that draws it and by the model that is
+billed for it, which is what the caps are for. Three lines of context either
+side; at most 120 lines, after which the rest is one line saying how much was
+cut; and a pair of files too large for the LCS table gets a line count instead
+of a diff. A `write` over an existing file diffs against what was there, so an
+overwrite says what it replaced rather than counting the whole file as new.
+
+Three cases are named rather than drawn. A file that was not there counts every
+line as added and nothing as removed, which is what `@@ -0,0 +1,n @@` says. Two
+versions that differ only in whether the last line is terminated have the same
+lines and no hunk to show, so the diff is one header saying the trailing newline
+was added or removed; a header with an empty body under it would read as a write
+that changed nothing. And a file that exists but cannot be read as text — a
+permission error, a lock, a binary, bytes that are not UTF-8 — gets no diff and a
+line saying so, because reporting it as a new file would tell the model it had
+created the lines it actually destroyed.
+
+Handing the model the diff is what stops the next round opening the file again
+to check the edit landed. The window uses the same text: an edit card opens
+into a diff pane (see `ui.md`).
 
 ## log_improvement
 

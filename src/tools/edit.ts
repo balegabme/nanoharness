@@ -1,6 +1,8 @@
 // doc: docs/harness/tools.md
 import { readFile, stat, writeFile } from 'node:fs/promises'
 import { defineTool } from '../core/session.js'
+import { diffBlock, statText, unifiedDiff } from '../core/diff.js'
+import { decodeText } from './text.js'
 import type { ArgsParse } from '../core/session.js'
 import type { ToolResult } from '../core/types.js'
 
@@ -53,21 +55,6 @@ function countOccurrences(content: string, needle: string): number {
   }
 }
 
-/**
- * The file as text, or why it is not text. A lossy decode would turn a byte it
- * cannot read into U+FFFD, write that replacement back and call it an edit, so
- * invalid UTF-8 is a refusal here the same way a NUL byte is. This is the
- * reference behaviour in `deepseek-harness` (`readForEdit`).
- */
-function decodeText(buffer: Buffer, rel: string): { text: string } | { error: string } {
-  if (buffer.includes(0)) return { error: `cannot edit ${rel}: binary file` }
-  try {
-    return { text: new TextDecoder('utf-8', { fatal: true }).decode(buffer) }
-  } catch {
-    return { error: `cannot edit ${rel}: not valid UTF-8 text` }
-  }
-}
-
 export const EDIT_TOOL = defineTool<EditArgs>({
   input: {
     name: 'edit',
@@ -100,8 +87,8 @@ export const EDIT_TOOL = defineTool<EditArgs>({
 
     let raw: string
     try {
-      const decoded = decodeText(await readFile(abs), rel)
-      if ('error' in decoded) return failed(decoded.error)
+      const decoded = decodeText(await readFile(abs))
+      if ('error' in decoded) return failed(`cannot edit ${rel}: ${decoded.error}`)
       raw = decoded.text
     } catch (err) {
       return failed(`could not read ${rel}: ${err instanceof Error ? err.message : String(err)}`)
@@ -124,7 +111,11 @@ export const EDIT_TOOL = defineTool<EditArgs>({
     } catch (err) {
       return failed(`could not write ${rel}: ${err instanceof Error ? err.message : String(err)}`)
     }
-    const done = `edited ${rel} (${replacements} ${replacements === 1 ? 'replacement' : 'replacements'})`
-    return { ok: true, summary: done, content: done }
+    // What changed, rather than how many times something matched. The window
+    // opens it as a diff and the model reads the same lines, so neither has to
+    // take the edit on trust.
+    const diff = unifiedDiff(rel, content, edited)
+    const done = `edited ${rel} (${replacements} ${replacements === 1 ? 'replacement' : 'replacements'}, ${statText(diff.stat)})`
+    return { ok: true, summary: done, content: `${done}\n\n${diffBlock(diff)}` }
   },
 })

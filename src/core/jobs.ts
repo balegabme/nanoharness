@@ -2,7 +2,7 @@
 import { randomUUID } from 'node:crypto'
 import { emptyUsage } from './types.js'
 import type { EventBus } from './event-bus.js'
-import type { TurnUsage } from './types.js'
+import type { ToolStats, TurnUsage } from './types.js'
 import type { AgentRole } from './agents.js'
 import type { SpawnMode } from './spawn.js'
 
@@ -38,6 +38,13 @@ export interface JobView {
   /** The job's own last word: a `job_update` note, or how it ended. */
   note: string
   usage: TurnUsage
+  /**
+   * Its own tool calls: how many, how many worked. Absent until the job ends,
+   * and still absent when it ended without the count reaching here, such as a
+   * job abandoned at app close. A zero count is a claim that it did nothing,
+   * which for a job that ran for a minute is the wrong thing to say.
+   */
+  tools?: ToolStats
   startedAt: number
   endedAt?: number
 }
@@ -54,6 +61,7 @@ export interface JobEnd {
   state: Exclude<JobState, 'running'>
   note: string
   usage?: TurnUsage
+  tools?: ToolStats
 }
 
 export class JobRegistry {
@@ -90,6 +98,7 @@ export class JobRegistry {
     job.state = end.state
     job.note = end.note
     if (end.usage !== undefined) job.usage = end.usage
+    if (end.tools !== undefined) job.tools = end.tools
     job.endedAt = Date.now()
     this.bus.emit({ type: 'job.finished', job: { ...job }, at: job.endedAt })
     // The event carries everything the entry held, and the transcript on disk

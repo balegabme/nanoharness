@@ -10,7 +10,7 @@ import { must } from './dom.js'
  * this machine's speakers, not part of the harness configuration.
  */
 
-export type Outcome = 'finished' | 'stopped' | 'error'
+export type Outcome = 'finished' | 'stopped' | 'error' | 'asking'
 
 const KEY = 'nanoharness.alerts'
 const toggle = must<HTMLButtonElement>('alerts')
@@ -23,6 +23,10 @@ const TONE: Record<Outcome, readonly number[]> = {
   finished: [660, 880],
   stopped: [660, 494],
   error: [330, 330],
+  // A turn that is asking for something stays stuck until somebody answers, so
+  // this one is longer and repeats: the other three are told to someone who is
+  // finished waiting, and this one has to reach someone who stopped watching.
+  asking: [880, 1175, 880, 1175],
 }
 
 /**
@@ -55,10 +59,17 @@ function blip(outcome: Outcome): void {
   window.setTimeout(() => void ctx.close(), 1000)
 }
 
+function toastBody(outcome: Outcome, session: string): string {
+  if (outcome === 'finished') return `${session} finished.`
+  if (outcome === 'stopped') return `${session} stopped.`
+  if (outcome === 'error') return `${session} failed.`
+  return 'A tool is waiting for your approval before the turn can go on.'
+}
+
 function toast(outcome: Outcome, session: string): void {
   if (typeof Notification === 'undefined') return
   if (Notification.permission === 'denied') return
-  const body = outcome === 'finished' ? `${session} finished.` : outcome === 'stopped' ? `${session} stopped.` : `${session} failed.`
+  const body = toastBody(outcome, session)
   const show = (): void => {
     new Notification('NanoHarness', { body, silent: true })
   }
@@ -78,8 +89,8 @@ function render(): void {
   toggle.classList.toggle('off', !enabled)
   toggle.setAttribute('aria-label', enabled ? 'Alerts on' : 'Alerts off')
   toggle.title = enabled
-    ? 'Sound and a desktop notification when a turn ends. Click to silence.'
-    : 'Turn endings are silent. Click to hear them.'
+    ? 'Sound and a desktop notification when a turn ends or needs your approval. Click to silence.'
+    : 'Turn endings and approval prompts are silent. Click to hear them.'
 }
 
 /**
@@ -87,7 +98,7 @@ function render(): void {
  * has focus — the person is already watching the answer arrive — but the blip
  * plays either way, because a turn that ends off-screen still ends.
  */
-export function announce(outcome: Outcome, session: string): void {
+export function announce(outcome: Outcome, session = ''): void {
   if (!enabled) return
   blip(outcome)
   if (!document.hasFocus()) toast(outcome, session)

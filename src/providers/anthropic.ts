@@ -1,4 +1,5 @@
 // doc: docs/harness/providers.md
+import { BAD_SSE, NO_BODY, ProviderError, retryAfterMs } from '../core/provider.js'
 import type { ChatProvider, ChatInput } from '../core/provider.js'
 import type { ChatChunk, ChatMessage, JsonSchema, ThinkingBlock, ToolCall, ToolInput, TurnUsage } from '../core/types.js'
 import { emptyUsage } from '../core/types.js'
@@ -86,9 +87,30 @@ interface StreamEvent {
   index?: number
   message?: { usage?: WireUsage }
   usage?: WireUsage
-  error?: { message?: string }
+  error?: { type?: string; message?: string }
   content_block?: { type?: string; id?: string; name?: string; data?: string }
   delta?: { type?: string; text?: string; thinking?: string; signature?: string; partial_json?: string }
+}
+
+/**
+ * The status each documented error type would have arrived as, had the failure
+ * happened before the response headers. A mid-stream error comes down the SSE
+ * channel with 200 already sent, so the type string is the only thing saying
+ * whether sending the request again is worth anything. An unlisted type is read
+ * as 500: what breaks halfway through a stream is nearly always the provider
+ * having trouble, and a request the provider refuses outright does not get this
+ * far.
+ */
+const ERROR_STATUS: Record<string, number> = {
+  invalid_request_error: 400,
+  authentication_error: 401,
+  billing_error: 403,
+  permission_error: 403,
+  not_found_error: 404,
+  request_too_large: 413,
+  rate_limit_error: 429,
+  api_error: 500,
+  overloaded_error: 529,
 }
 
 interface PendingTool {
@@ -128,9 +150,9 @@ export function createAnthropicProvider(opts: AnthropicOptions): ChatProvider {
       })
       if (!res.ok) {
         const text = await res.text()
-        throw new Error(`provider ${res.status}: ${text.slice(0, 200)}`)
+        throw new ProviderError(`provider ${res.status}: ${text.slice(0, 200)}`, res.status, retryAfterMs(res.headers.get('retry-after')))
       }
-      if (!res.body) throw new Error('no response body')
+      if (!res.body) throw new ProviderError(NO_BODY, res.status)
 
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
@@ -163,6 +185,10 @@ export function createAnthropicProvider(opts: AnthropicOptions): ChatProvider {
             switch (event.type) {
               case 'message_start':
                 applyUsage(usage, event.message?.usage)
+                // The prompt's cost, known before a token of the answer has
+                // arrived. It is the part a retry pays for twice, so it goes
+                // out now rather than at the end the request may not reach.
+                yield { kind: 'usage', usage: { ...usage } }
                 break
               case 'content_block_start': {
                 const block = event.content_block
@@ -208,9 +234,14 @@ export function createAnthropicProvider(opts: AnthropicOptions): ChatProvider {
               }
               case 'message_delta':
                 applyUsage(usage, event.usage)
+                yield { kind: 'usage', usage: { ...usage } }
                 break
               case 'error':
-                yield { kind: 'error', message: event.error?.message ?? 'provider sent an error event' }
+                yield {
+                  kind: 'error',
+                  message: event.error?.message ?? 'provider sent an error event',
+                  status: ERROR_STATUS[event.error?.type ?? ''] ?? 500,
+                }
                 break
               default:
                 break
@@ -287,7 +318,7 @@ function parseEvent(line: string): StreamEvent | null {
   try {
     return JSON.parse(data) as StreamEvent
   } catch {
-    throw new Error('provider sent malformed SSE chunk')
+    throw new Error(BAD_SSE)
   }
 }
 
@@ -315,8 +346,8 @@ export async function listModels(opts: AnthropicOptions, timeoutMs = 15_000): Pr
   })
   if (!res.ok) {
     const detail = (await res.text().catch(() => '')).slice(0, 200)
-    if (res.status === 404) throw new Error('this server has no /v1/models endpoint (404). Type the model id instead.')
-    throw new Error(`provider ${res.status}${detail === '' ? '' : `: ${detail}`}`)
+    if (res.status === 404) throw new ProviderError('this server has no /v1/models endpoint (404). Type the model id instead.', 404)
+    throw new ProviderError(`provider ${res.status}${detail === '' ? '' : `: ${detail}`}`, res.status)
   }
 
   const payload: unknown = await res.json()

@@ -4,7 +4,7 @@ import type { ActiveSelection, Effort, ProviderKind, ProviderRecord } from '../c
 import type { JobState, JobView } from '../core/jobs.js'
 import type { AccessIntent } from '../core/scope.js'
 import type { SpawnMode } from '../core/spawn.js'
-import type { AppEvent, McpServerStatus, SessionNote, TurnUsage } from '../core/types.js'
+import type { AppEvent, McpServerStatus, SessionNote, ToolStats, TurnUsage } from '../core/types.js'
 
 export const IPC_CHANNELS = {
   ping: 'ipc:ping',
@@ -96,6 +96,8 @@ export interface SessionView {
   updatedAt: number
   /** What this session has spent so far, across every launch it has run in. */
   usage?: TurnUsage
+  /** The subagents' share of `usage`. */
+  subagentUsage?: TurnUsage
 }
 
 /** Everything the sidebar draws itself from. */
@@ -145,6 +147,12 @@ export interface SubagentOpenResponse {
   state: JobState
   note: string
   usage: TurnUsage
+  /**
+   * What its tool calls came to: how many, how many failed. Absent on a
+   * subagent stored before the count existed, which is a line the window leaves
+   * out rather than a zero it makes up.
+   */
+  tools?: ToolStats
   startedAt: number
   endedAt: number
   messages: TranscriptMessage[]

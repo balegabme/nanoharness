@@ -1,7 +1,7 @@
 // doc: docs/harness/ui.md
 import { ChatView } from './chat.js'
 import { autoGrow, initComposer, seat, showDock } from './composer.js'
-import { message, must, relativeTime } from './dom.js'
+import { el, message, must, relativeTime } from './dom.js'
 import {
   bufferOf,
   forget,
@@ -13,6 +13,7 @@ import {
   jobById,
   spendingOf,
   stateLabel,
+  toolsText,
 } from './jobs.js'
 import { announce, initNotify } from './notify.js'
 import { enqueue, initPermission } from './permission.js'
@@ -29,8 +30,9 @@ import {
   workspaceOf,
 } from './sidebar.js'
 import type { AgentSummary, ConfigStatus, NanoBridge } from '../ipc/contract.js'
+import type { DiffOpen } from './chat.js'
 import type { JobView } from '../core/jobs.js'
-import type { McpServerStatus } from '../core/types.js'
+import type { McpServerStatus, ToolStats } from '../core/types.js'
 import type { AgentRole } from '../core/agents.js'
 import type { Effort } from '../core/config.js'
 
@@ -71,12 +73,19 @@ const subState = must<HTMLElement>('sub-state')
 const subMeta = must<HTMLElement>('sub-meta')
 const subTask = must<HTMLElement>('sub-task')
 const subCopy = must<HTMLButtonElement>('sub-copy')
+const diffView = must<HTMLElement>('diff-view')
+const diffPath = must<HTMLElement>('diff-path')
+const diffStat = must<HTMLElement>('diff-stat')
+const diffStream = must<HTMLElement>('diff-stream')
+const diffCopy = must<HTMLButtonElement>('diff-copy')
 
 let activeSessionId: string | null = null
 let busy = false
 let agents: AgentSummary[] = []
 /** The subagent on screen, or null when the conversation itself is. */
 let viewing: string | null = null
+/** The diff on screen, or null. It sits over whichever flow opened it. */
+let showing: DiffOpen | null = null
 
 /**
  * The conversation, and the subagent the user opened. Two views of the same
@@ -89,13 +98,59 @@ const chat = new ChatView({
   mark: must<HTMLElement>('stream-mark'),
   usageLine: must<HTMLElement>('usage-line'),
   openSubagent: id => void openSubagent(id),
+  openDiff,
 })
 
 const sub = new ChatView({
   stream: must<HTMLElement>('sub-stream'),
   tail: must<HTMLElement>('sub-tail'),
   usageLine: must<HTMLElement>('sub-usage'),
+  openDiff,
 })
+
+/**
+ * One diff, drawn a line at a time so the pane can colour what changed. The
+ * text came from `core/diff.ts` by way of the tool result, so the shapes here
+ * are the ones a unified diff has and nothing else has to be guessed.
+ */
+function drawDiff(diff: DiffOpen): void {
+  diffPath.textContent = diff.path
+  let added = 0
+  let removed = 0
+  const rows = document.createDocumentFragment()
+  for (const line of diff.text.split('\n')) {
+    const kind = lineKind(line)
+    if (kind === 'add') added += 1
+    if (kind === 'del') removed += 1
+    // An empty line with nothing in it collapses to no height, which breaks the
+    // column of the diff; a space keeps the row.
+    rows.append(el('div', `diff-line ${kind}`, line === '' ? ' ' : line))
+  }
+  diffStat.textContent = `+${added} −${removed}`
+  diffStream.replaceChildren(rows)
+  diffStream.scrollTop = 0
+}
+
+function lineKind(line: string): string {
+  if (line.startsWith('@@')) return 'hunk'
+  if (line.startsWith('+++') || line.startsWith('---')) return 'meta'
+  if (line.startsWith('+')) return 'add'
+  if (line.startsWith('-')) return 'del'
+  return 'same'
+}
+
+function openDiff(diff: DiffOpen): void {
+  showing = diff
+  diffCopy.textContent = 'Copy diff'
+  drawDiff(diff)
+  renderShell()
+}
+
+/** Back to the flow the diff was opened from, subagent or conversation. */
+function closeDiff(): void {
+  showing = null
+  renderShell()
+}
 
 /**
  * The MCP chip: how many servers this session is actually talking to, and how
@@ -160,6 +215,8 @@ interface SubagentHead {
   background: boolean
   state: JobView['state']
   note: string
+  /** Absent for a subagent stored before the harness counted tool calls. */
+  tools?: ToolStats
   startedAt: number
   endedAt?: number
 }
@@ -188,6 +245,9 @@ function drawSubHead(head: SubagentHead): void {
     `started ${relativeTime(head.startedAt)}`,
     `${head.state === 'running' ? 'running for' : 'ran'} ${ran(head)}`,
   ]
+  // What it did, rather than only how long it took. The count is settled when
+  // the job ends, so a running agent is not given a line reading nought.
+  if (head.tools !== undefined && head.state !== 'running') parts.push(toolsText(head.tools))
   subMeta.textContent = parts.join(' · ')
   subTask.textContent = head.task
   subCopy.hidden = head.state === 'running'
@@ -272,33 +332,71 @@ function closeSubagent(): void {
  */
 function syncChips(): void {
   for (const [select, label] of chipValues) {
-    label.textContent = select.selectedOptions[0]?.textContent ?? ''
-    label.title = label.textContent
+    const picked = select.selectedOptions[0]
+    label.textContent = picked?.textContent ?? ''
+    // The model chip shows a model id and nothing about where it runs, so the
+    // option's own title, which names the provider, is the one worth keeping.
+    // An option that carries no title of its own leaves the label's own text as
+    // the tooltip, which is what a chip clipped by a narrow window needs.
+    const title = picked?.title ?? ''
+    label.title = title === '' ? (label.textContent ?? '') : title
   }
 }
 
-/** The composer chips: what a turn will run, switchable without opening settings. */
+/**
+ * A picked model, and the provider that runs it. Two providers can offer the
+ * same model id, so the option's value has to carry both; the separator is a
+ * control character because a model id can hold anything a URL path can.
+ */
+const PICK = '\u001f'
+
+function modelKey(providerId: string, model: string): string {
+  return `${providerId}${PICK}${model}`
+}
+
+function modelPick(value: string): { providerId: string; model: string } | null {
+  const cut = value.indexOf(PICK)
+  return cut === -1 ? null : { providerId: value.slice(0, cut), model: value.slice(cut + 1) }
+}
+
+/**
+ * The composer chips: what a turn will run, switchable without opening settings.
+ *
+ * Every configured provider is in the model list, grouped by name. Switching
+ * provider is not a separate step taken somewhere else first: the thing being
+ * chosen is a model, and which endpoint serves it follows from the pick.
+ */
 function renderActive(status: ConfigStatus): void {
   const active = status.active
-  const provider = status.providers.find(p => p.id === active?.providerId)
-  const models = provider?.models ?? []
-  const list = models.length > 0 ? models : active === undefined ? [] : [active.model]
 
   modelSelect.replaceChildren()
-  for (const id of list) {
-    const option = document.createElement('option')
-    option.value = id
-    option.textContent = id
-    modelSelect.append(option)
+  let count = 0
+  for (const provider of status.providers) {
+    const models = new Set(provider.models)
+    // A provider with nothing ticked still runs the model it is active on, so
+    // that one is its group rather than an empty heading.
+    if (active !== undefined && provider.id === active.providerId) models.add(active.model)
+    if (models.size === 0) continue
+    const group = document.createElement('optgroup')
+    group.label = provider.name
+    for (const id of models) {
+      const option = document.createElement('option')
+      option.value = modelKey(provider.id, id)
+      option.textContent = id
+      option.title = `${provider.name} · ${provider.baseURL}`
+      group.append(option)
+      count += 1
+    }
+    modelSelect.append(group)
   }
-  if (active !== undefined) modelSelect.value = active.model
-  modelSelect.disabled = list.length === 0
-  if (list.length === 0) {
+  if (active !== undefined) modelSelect.value = modelKey(active.providerId, active.model)
+  modelSelect.disabled = count === 0
+  if (count === 0) {
     const option = document.createElement('option')
     option.textContent = 'not configured'
     modelSelect.append(option)
   }
-  modelSelect.title = provider === undefined ? 'Active model' : `${provider.name} · ${provider.baseURL}`
+  modelSelect.title = 'The model a turn runs on, from any provider you have configured'
   effortSelect.value = active?.effort ?? 'medium'
   effortSelect.disabled = active === undefined
   syncChips()
@@ -312,16 +410,25 @@ function renderActive(status: ConfigStatus): void {
  */
 function renderShell(): void {
   const open = activeSessionId !== null
-  const sideways = open && viewing !== null
-  stream.hidden = !open || sideways
+  // A diff sits over whichever flow opened it, so back from one goes to that
+  // flow rather than all the way home.
+  const onDiff = open && showing !== null
+  const sideways = open && viewing !== null && !onDiff
+  stream.hidden = !open || sideways || onDiff
   subView.hidden = !sideways
+  diffView.hidden = !onDiff
   hero.hidden = open
   seat(open)
-  // A subagent cannot be messaged: it was given its whole task when it started
-  // and it answers once. Leaving the composer over its flow would offer to send
-  // a message the subagent would never see.
-  showDock(!sideways)
-  backButton.hidden = !sideways
+  // Neither of these can be messaged: a subagent was given its whole task when
+  // it started and answers once, and a diff is a thing that already happened.
+  // Leaving the composer over either would offer to send a message into it.
+  showDock(!sideways && !onDiff)
+  backButton.hidden = !sideways && !onDiff
+
+  if (onDiff && showing !== null) {
+    titleLabel.textContent = showing.path
+    return
+  }
 
   if (sideways) {
     const job = subHead
@@ -441,15 +548,16 @@ async function openSession(id: string): Promise<void> {
     const opened = await nh.openSession(id)
     activeSessionId = id
     select(id)
-    // A subagent belongs to the session that started it, so opening another
-    // session is leaving it.
+    // A subagent and a diff both belong to the session that started them, so
+    // opening another session is leaving both.
+    showing = null
     closeSubagent()
     chat.renderTranscript(opened.messages, opened.notes)
     renderMcp(null)
     void refreshMcp(id)
     // What this session has already spent. Without it a re-opened session reads
     // as one that has cost nothing.
-    chat.showStoredUsage(opened.session.usage)
+    chat.showStoredUsage(opened.session.usage, opened.session.subagentUsage)
     renderShell()
     input.focus()
   } catch (err) {
@@ -463,12 +571,19 @@ async function openSession(id: string): Promise<void> {
   }
 }
 
-/** Switch model or effort from the composer, without opening settings. */
+/**
+ * Switch model, provider or effort from the composer, without opening settings.
+ * The pick carries the provider, so choosing a model from another one moves the
+ * session there in the same call.
+ */
 async function switchActive(): Promise<void> {
   const active = latestConfig()?.active
-  if (active === undefined) return
+  const picked = modelPick(modelSelect.value)
+  const providerId = picked?.providerId ?? active?.providerId
+  const model = picked?.model ?? active?.model
+  if (providerId === undefined || model === undefined) return
   try {
-    applyConfig(await nh.setActive({ providerId: active.providerId, model: modelSelect.value, effort: effortSelect.value as Effort }))
+    applyConfig(await nh.setActive({ providerId, model, effort: effortSelect.value as Effort }))
   } catch (err) {
     chat.errorBlock(message(err))
     await refreshConfig()
@@ -552,7 +667,20 @@ composer.addEventListener('click', () => {
 modelSelect.addEventListener('change', () => void switchActive())
 effortSelect.addEventListener('change', () => void switchActive())
 agentSelect.addEventListener('change', () => void switchAgent())
-backButton.addEventListener('click', () => closeSubagent())
+backButton.addEventListener('click', () => {
+  if (showing !== null) closeDiff()
+  else closeSubagent()
+})
+diffCopy.addEventListener('click', () => {
+  void navigator.clipboard
+    .writeText(showing?.text ?? '')
+    .then(() => {
+      diffCopy.textContent = 'Copied'
+    })
+    .catch(() => {
+      diffCopy.textContent = 'Copy failed'
+    })
+})
 subCopy.addEventListener('click', () => {
   copied = true
   void navigator.clipboard

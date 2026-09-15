@@ -7,7 +7,7 @@ its own, which is why the window can be rebuilt without touching the core.
 Files:
 - src/main/window.ts — BrowserWindow, the `app://` scheme, navigation lockdown
 - src/main/preload.ts — the context bridge, with ping, send, workspaces, sessions, rename, transcript paths, role, jobs, one subagent's stored conversation, agents, MCP status, secrets, config, permission answers, external links, onEvent
-- src/renderer/index.ts — the shell, which session is open, and the agent, model and effort chips
+- src/renderer/index.ts — the shell, which session is open, the agent, model and effort chips, and the diff pane
 - src/renderer/composer.ts — the composer in its two seats, and the height the flow clears
 - src/renderer/jobs.ts — the running subagents and the buffered stream of each one
 - src/renderer/sidebar.ts — folders and their sessions, search, add and delete
@@ -17,7 +17,7 @@ Files:
 - src/renderer/permission.ts — the modal a tool waits on when it reaches outside its folder
 - src/renderer/confirm.ts — the app's own yes/no and one-line-of-text sheets, in place of the browser's `confirm()` and `prompt()`
 - src/renderer/menu.ts — the right-click menu, one at a time, placed near the pointer, closed by the next thing the user does
-- src/renderer/notify.ts — the blip and desktop notification when a turn ends
+- src/renderer/notify.ts — the blip and desktop notification when a turn ends or asks for approval
 - src/renderer/dom.ts — the small DOM helpers the rest share
 
 `src/renderer/index.html` and `src/renderer/renderer.css` ship alongside and are
@@ -78,9 +78,15 @@ under it, which reads as broken rather than as ready.
 
 The running total sits in the topbar, to the right of the title, as a row of
 small pills: in, out, cached, hit rate, and tokens per second, plus reasoning
-and cache-written where there are any. Each pill is a bright number and a dim
-name, so the row reads as numbers first and labels second. Everything the hit
-rate divides by is on the row, so the percentage can be checked against the
+and cache-written where there are any. A turn that delegates gets one more, **by
+agents**, which is how much of the output was written by subagents this session
+started. A session can read fifty thousand out while having written a paragraph
+itself, and the single total cannot say which of those happened. The pill is quieter than the ones beside it, because
+it is an aside about `out` rather than a measure of its own. It is stored with
+the session's total, so a session re-opened a week later still shows the split
+rather than folding it back into one number. Each pill is a bright number and a
+dim name, so the row reads as numbers first and labels second. Everything the
+hit rate divides by is on the row, so the percentage can be checked against the
 numbers beside it.
 
 Neither number is taken off the clock in the window. The `usage` event carries
@@ -115,21 +121,34 @@ flight and ends the turn at the next boundary (`sessions.md` has the mechanics);
 the flow gets a "Stopped." rule across it, and the session can be continued.
 
 When a turn ends the app says so: a short two-note blip, and an OS notification
-if the window is not the one being looked at. The `alerts` chip is a bell,
-struck through when it is off, which is the state worth being able to read at a
-glance. It turns both off and remembers that in `localStorage`, because it is a
-preference about this machine's speakers rather than part of the harness
-configuration. The tone differs by outcome, rising for finished, falling for
-stopped, flat and low for an error, so a turn's ending is legible from the next
-room.
+if the window is not the one being looked at. A permission prompt rings too, and
+that one carries a question: a turn asking to leave its folder stays stopped for
+as long as nobody answers. Its tone is longer and repeats, since the other three
+are told to someone who has finished waiting and this one has to reach someone
+who stopped watching. Every ask rings, queued ones included, because each is a
+separate question. The `alerts` chip is a bell, struck through when it is off,
+which is the state worth being able to read at a glance. It turns both off and
+remembers that in `localStorage`, because it is a preference about this
+machine's speakers rather than part of the harness configuration. Approval
+prompts fall silent with everything else, since silence is a thing people ask
+for on purpose. The tone differs by outcome, rising for finished, falling
+for stopped, flat and low for an error, so a turn's ending is legible from the
+next room.
 
 A note block says what the run did, as its own rule across the flow, dim where
 an error block is red. The window uses it for anything that is about the run
 rather than about the conversation: a stop, a turn that came back with no answer
 at all, a call the harness refused because it was the third identical one, a
-background job starting and finishing. Without it, a turn that ends without an
-answer leaves the flow looking exactly like a finished turn, which reads as the
-agent giving up.
+background job starting and finishing, a request that failed and is being made
+again. Without it, a turn that ends without an answer leaves the flow looking
+exactly like a finished turn, which reads as the agent giving up.
+
+A retry takes back what the failed attempt drew. `round.started` marks the
+boundary and `round.retry` rolls the flow back to it, removing the half a
+paragraph, the thinking and the tool cards that belong to an answer which no
+longer exists, and then writes the note saying which attempt is coming. The
+alternative is leaving the reader to work out which half of two interleaved
+answers is the real one. `providers.md` has what counts as worth asking again.
 
 Re-opening a session replays its stored messages and tool calls, refusals
 included: a tool that was denied comes back marked failed rather than dressed
@@ -187,10 +206,18 @@ is still ticked, or falls back to the first ticked one if it is not, so a save
 cannot leave a provider with no model to run.
 
 Three chips on the composer are the fast path past the sheet entirely: the
-agent picker, a model picker holding that provider's ticked models, and an
-effort picker (`none`, `low`, `medium`, `high`, mapped per wire in
-`providers.md`). Changing any of them retires the live sessions, so the next
-message runs on what the chips say.
+agent picker, a model picker, and an effort picker (`none`, `low`, `medium`,
+`high`, mapped per wire in `providers.md`). Changing any of them retires the
+live sessions, so the next message runs on what the chips say.
+
+The model picker holds every configured provider's ticked models, grouped by
+provider name, and picking one from another provider moves the session there in
+the same call. There is no separate notion of a selected provider to change
+first: the thing being chosen is a model, and which endpoint serves it follows
+from the pick. Two providers can offer the same model id, so an option's value
+carries both and `setActive` is given the pair. A provider with nothing ticked
+still appears when it is the one running, showing the model it is active on,
+rather than as an empty heading.
 
 Each chip draws its own label and lays an invisible native `<select>` over it. A
 bare select sizes itself to its widest option, so one long model id would push
@@ -200,8 +227,8 @@ the rest keep their size. The agent chip switches the session's role and leaves
 effort alone: how hard to think is an answer the user already gave, and a role
 that moved the chip under their hand was overwriting it (see `agents.md`).
 
-Still to come with the rest of step 5: the command palette, keyboard map,
-snippet picker, and the diff view. Plan §13 has the full list.
+Still to come with the rest of step 5: the command palette, keyboard map, and
+the snippet picker. Plan §13 has the full list.
 
 ## Dialogs, pickers and the about pane
 
@@ -270,14 +297,18 @@ A subagent is opened from the thing that started it. There is no list of
 subagents anywhere in the window: the `spawn` tool call in the conversation is
 the subagent, so clicking that card opens it. The card, and a background job's
 notes, carry a `[subagent:<id>]` marker that `chat.ts` strips out of the visible
-text; the note gets an **Open subagent** button, and the card gets the button
-plus a click handler over its whole head. A tool card normally folds open on its
-arguments, which for a spawn are the least interesting thing about it, since the
-conversation it led to is the point, so the toggle is suppressed and the click
-shows the subagent instead. The marker is stored in the transcript, so a session
-reopened tomorrow opens last week's subagents exactly the way it opens today's.
+text; the note gets an **Open subagent** button, and the card gets a click
+handler over its whole head and no button at all. A tool card normally folds
+open on its arguments, which for a spawn are the least interesting thing about
+it, since the conversation it led to is the point, so the toggle is suppressed
+and the click shows the subagent instead. A badge on top of that is a second,
+smaller target for the click the whole row already takes; the note carries one
+because a note has no card-wide click to inherit. The card says what it is by
+lighting up under the pointer. The marker is stored in the transcript, so a
+session reopened tomorrow opens last week's subagents exactly the way it opens
+today's.
 
-A foreground spawn gets its button when the job starts rather than when it
+A foreground spawn becomes a way in when the job starts rather than when it
 answers. Its card sits there running while the parent's turn is blocked behind
 it, and until the answer lands that card is the only thing in the window naming
 the subagent: a minute of apparently nothing happening, with no way in. A
@@ -303,10 +334,11 @@ than somewhere else to navigate to.
 
 Above the flow sits what the tool card could not hold: the role and mode, the
 state, how long it has been going, the task as the parent phrased it, what the
-subagent has spent, and a copy button for the result, which for a background job
-is nowhere else in the window. The role and mode are there because those two
-words decide what the subagent could see: a `clone` carries the parent's prompt,
-tools and history, a `distinct` one starts from its task and nothing else.
+subagent has spent, how its tool calls went once it has finished, and a copy
+button for the result, which for a background job is nowhere else in the window.
+The role and mode are there because those two words decide what the subagent
+could see: a `clone` carries the parent's prompt, tools and history, a
+`distinct` one starts from its task and nothing else.
 Reading what a subagent said without knowing which it was is reading half of it.
 
 Only running subagents are held in memory. `jobs.ts` keeps the facts and the
@@ -317,6 +349,26 @@ screen is kept until the reader leaves it, so it does not blink out from under
 them. The result is that there is one path for a subagent that ended a second
 ago and one that ended last week, and both give the whole conversation rather
 than a summary.
+
+## Diffs
+
+An `edit` or a `write` hands back a unified diff of what it changed
+(`tools.md`), and the card in the flow keeps the line that says what happened,
+`edited src/core/session.ts (1 replacement, +12 −3)`, while the diff itself
+opens in a pane of its own. The card is clicked the same way a spawn card is:
+the whole head is the target, the fold is suppressed, and the topbar back button
+returns to the flow.
+
+The pane draws one row per line, coloured by what the line is, with the two file
+headers and the hunk markers set back as scaffolding. Nothing wraps: a diff is a
+column, and a line that folds onto the next one breaks the only thing making it
+readable, so the pane scrolls sideways instead. The path is the title, the
+change is counted beside it, and a copy button hands over the diff as text.
+
+A diff sits over whichever flow opened it, so an edit made by a subagent opens
+from the subagent's own view and back goes there rather than all the way home.
+The text comes out of the stored tool result, which means a session reopened
+next week opens its diffs the same way it opens its subagents.
 
 ## The answer, and the rest of the turn
 

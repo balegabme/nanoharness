@@ -31,6 +31,17 @@ export interface ChatHost {
    * view: a subagent cannot spawn, so nothing in it is ever a link.
    */
   openSubagent?(id: string): void
+  /**
+   * Show the change an edit or write made, on its own and full width. Absent
+   * where there is nowhere to put it.
+   */
+  openDiff?(diff: DiffOpen): void
+}
+
+/** A diff a tool result carried: the file it changed, and the unified text. */
+export interface DiffOpen {
+  path: string
+  text: string
 }
 
 /**
@@ -47,6 +58,24 @@ export function subagentId(text: string): string | null {
 /** The same text with the marker taken out: the button says it better. */
 function withoutMarker(text: string): string {
   return text.replace(SUBAGENT, '').replace(/[ \t]+\n/g, '\n').trim()
+}
+
+/** The tools whose result ends in a diff of what they changed. */
+const WRITES = new Set(['edit', 'write'])
+
+/** The fence `diffBlock` in `core/diff.ts` wraps a diff in. */
+const DIFF_FENCE = /```diff\n([\s\S]*?)\n```\s*$/
+
+/** The diff an edit or write put at the end of its result, if it did. */
+function toolDiff(text: string): DiffOpen | null {
+  const body = DIFF_FENCE.exec(text)?.[1]
+  if (body === undefined) return null
+  return { path: /^--- a\/(.*)$/m.exec(body)?.[1] ?? 'file', text: body }
+}
+
+/** The result with the diff taken out: the card opens it instead of listing it. */
+function withoutDiff(text: string): string {
+  return text.replace(DIFF_FENCE, '').trimEnd()
 }
 
 export function usageText(usage: TurnUsage): string {
@@ -94,6 +123,14 @@ export class ChatView {
   private assistantBlock: HTMLElement | null = null
   private thinkingBody: HTMLElement | null = null
   private thinkingCard: HTMLDetailsElement | null = null
+  /**
+   * Everything drawn since the current round started. A round that has to be
+   * asked for again throws its half-answer away, and this list is what "away"
+   * means on screen.
+   */
+  private roundNodes: HTMLElement[] = []
+  /** The subagents' share of the running total, as of the last usage event. */
+  private subagentSpend: TurnUsage | null = null
 
   /** Tokens per second for the turn on screen. `metrics.ts` has the arithmetic. */
   private readonly throughput = new Throughput()
@@ -107,6 +144,7 @@ export class ChatView {
     // The turn indicator stays the last thing in the flow, so a block that
     // arrives mid-turn goes above it rather than orphaning it up the page.
     stream.insertBefore(node, this.activity ?? this.host.tail)
+    this.roundNodes.push(node)
     if (this.host.mark !== undefined) this.host.mark.hidden = true
     if (pinned) stream.scrollTop = stream.scrollHeight
   }
@@ -153,6 +191,11 @@ export class ChatView {
     if (usage === null) return
 
     line.append(metric('in', String(usage.input)), metric('out', String(usage.output)), metric('cached', String(usage.cacheRead)))
+    // Whose output it was. A turn that hands its work to three agents pays for
+    // all of them, so the total can read fifty thousand with this session
+    // having written a paragraph; one number cannot say that.
+    const byAgents = this.subagentSpend?.output ?? 0
+    if (byAgents > 0) line.append(metric('by agents', String(byAgents), 'sub'))
     // Only Anthropic ever reports a cache write, and a row of pills reading 0
     // on every other provider is a column of noise.
     if (usage.cacheWrite > 0) line.append(metric('written', String(usage.cacheWrite)))
@@ -160,8 +203,10 @@ export class ChatView {
     if (usage.reasoning > 0) line.append(metric('reasoning', String(usage.reasoning)))
     const rate = this.throughput.value
     if (rate !== null) line.append(metric('tok/s', rate.toFixed(rate < 10 ? 1 : 0), 'rate'))
+    const share = byAgents > 0 ? `
+${byAgents} of the output was written by subagents this session started.` : ''
     line.title = `${usageText(usage)}
-Every turn added up, subagents included.`
+Every turn added up, subagents included.${share}`
   }
 
   /**
@@ -170,14 +215,16 @@ Every turn added up, subagents included.`
    * includes the agents this one started; the rate does not, for the reason
    * `metrics.ts` gives.
    */
-  noteUsage(usage: TurnUsage, streamMs?: number): void {
+  noteUsage(usage: TurnUsage, streamMs?: number, subagent?: TurnUsage): void {
     this.throughput.note(usage, streamMs)
+    if (subagent !== undefined) this.subagentSpend = subagent
     this.setUsage(usage)
   }
 
   /** What a re-opened session has already spent. Nothing was timed, so no rate. */
-  showStoredUsage(usage: TurnUsage | undefined): void {
+  showStoredUsage(usage: TurnUsage | undefined, subagent?: TurnUsage): void {
     this.throughput.seed(usage?.output ?? 0)
+    this.subagentSpend = subagent ?? null
     this.setUsage(usage ?? null)
   }
 
@@ -231,15 +278,15 @@ Every turn added up, subagents included.`
    * Make a `spawn` card open its subagent. The card is the subagent as far as
    * the reader is concerned, so the whole head of it is the way in: clicking
    * anywhere on it shows that conversation instead of folding the card open on
-   * the arguments, which are the least interesting thing about it. The button
-   * stays as the visible sign that the card does something other cards do not.
+   * the arguments, which are the least interesting thing about it. A button
+   * saying so would be a second target for the click the whole row already
+   * takes, which is why the card carries none.
    */
   private linkCard(card: HTMLDetailsElement, id: string): void {
     if (card.dataset.subagent === id) return
     card.dataset.subagent = id
     const summary = card.querySelector('summary')
     if (!(summary instanceof HTMLElement)) return
-    summary.append(this.openButton(id))
     summary.addEventListener('click', event => {
       // Without this the click also toggles the `<details>` it sits in, so the
       // card would fold open behind the view that just replaced it.
@@ -263,6 +310,46 @@ Every turn added up, subagents included.`
     if (card !== undefined) this.linkCard(card, id)
   }
 
+  /**
+   * Make an edit or write card open its diff. The change is the whole of what
+   * the card is about, so the head of it opens the change, the same way a spawn
+   * card opens the agent it started.
+   */
+  private linkDiff(card: HTMLDetailsElement, diff: DiffOpen): void {
+    if (this.host.openDiff === undefined || card.dataset.diff !== undefined) return
+    card.dataset.diff = diff.path
+    const summary = card.querySelector('summary')
+    if (!(summary instanceof HTMLElement)) return
+    summary.addEventListener('click', event => {
+      event.preventDefault()
+      this.host.openDiff?.(diff)
+    })
+  }
+
+  /**
+   * Take back what this round drew. The request failed part way through and is
+   * being made again from the top, so the half a paragraph and the tool cards
+   * already on screen belong to an answer that no longer exists.
+   */
+  private rollbackRound(): void {
+    for (const node of this.roundNodes) node.remove()
+    for (const [id, card] of this.toolCards) if (!card.isConnected) this.toolCards.delete(id)
+    this.startRound()
+  }
+
+  /**
+   * A fresh round draws into fresh blocks. The card the last round left open is
+   * not in `roundNodes` any more, so appending to it would put the new answer
+   * in a block that a rollback cannot take back.
+   */
+  private startRound(): void {
+    this.roundNodes = []
+    this.assistantBody = null
+    this.assistantBlock = null
+    this.thinkingBody = null
+    this.thinkingCard = null
+  }
+
   /** A finished thinking block, folded away. Live thinking is drawn by deltas. */
   private thinkingBlock(text: string): void {
     const card = el('details', 'block thinking')
@@ -280,6 +367,8 @@ Every turn added up, subagents included.`
     this.assistantBlock = null
     this.thinkingBody = null
     this.thinkingCard = null
+    this.roundNodes = []
+    this.subagentSpend = null
     this.throughput.seed(0)
     this.setUsage(null)
   }
@@ -291,6 +380,7 @@ Every turn added up, subagents included.`
     this.thinkingBody = null
     this.thinkingCard = null
     this.toolCards.clear()
+    this.roundNodes = []
     this.throughput.startTurn()
   }
 
@@ -325,10 +415,18 @@ Every turn added up, subagents included.`
     const summary = card.querySelector('summary')
     if (summary instanceof HTMLElement) summary.dataset.state = ok ? 'done' : 'failed'
     const id = subagentId(text)
-    card.append(el('pre', undefined, id === null ? text : withoutMarker(text)))
+    // The diff is the long half of an edit's result and the half worth a whole
+    // pane, so the card keeps the line that says what changed and hands the
+    // rest to the view that can show it properly. Only the two tools that write
+    // one are asked: a `read` of a patch file ends in a diff fence too, and that
+    // card is showing a file rather than a change it made.
+    const diff = ok && WRITES.has(card.querySelector('.tool-name')?.textContent ?? '') ? toolDiff(text) : null
+    if (id !== null) card.append(el('pre', undefined, withoutMarker(text)))
+    else card.append(el('pre', undefined, diff === null ? text : withoutDiff(text)))
     // A foreground spawn was already linked when its job started; `linkCard`
     // leaves that one alone.
     if (id !== null) this.linkCard(card, id)
+    else if (diff !== null) this.linkDiff(card, diff)
   }
 
   /**
@@ -425,7 +523,14 @@ Every turn added up, subagents included.`
       case 'usage':
         // The running total belongs beside the session's name, not as another
         // block pushing the conversation up.
-        this.noteUsage(event.usage, event.streamMs)
+        this.noteUsage(event.usage, event.streamMs, event.subagent)
+        break
+      case 'round.started':
+        this.startRound()
+        break
+      case 'round.retry':
+        this.rollbackRound()
+        this.noteBlock(event.text)
         break
       case 'session.error':
         this.errorBlock(event.message)

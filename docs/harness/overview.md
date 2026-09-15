@@ -80,6 +80,12 @@ second rate and the renderer cannot tell generating from waiting on a tool. A
 subagent's usage arrives with no `streamMs`, since those tokens came off a
 stream this session never timed.
 
+A turn that delegates also carries `subagent`, the part of the same totals that
+subagents of this session spent. It is a share of `usage` and not an addition to
+it, so the two are never summed; the window shows it as a `by agents` pill, and
+the stored session keeps it beside the total so a session opened a week later
+still knows which of its output it wrote itself.
+
 Each completed turn is also appended to `usage.jsonl` in the OS user-data dir,
 never the repo. `nh usage` reads it back — see `cli.md`.
 

@@ -713,9 +713,70 @@ body {
   flex: none;
 }
 
+/* One file's diff, in the place the conversation is drawn. It borrows the
+   subagent view's head, because it is the same idea: something opened from the
+   flow, with the flow one step behind it. */
+.diff-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: var(--s3) var(--s6) 0;
+  animation: rise var(--nh-base) var(--nh-ease);
+}
+
+.diff-view .job-mode {
+  font-family: var(--nh-font-mono);
+}
+
+.diff-stat {
+  color: var(--nh-label-caption);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+
+/* A diff is a column: every line starts at the same place or the eye cannot
+   follow a change down the page, so nothing here wraps and the pane scrolls
+   sideways instead. */
+.diff-stream {
+  margin-top: var(--s2);
+  padding: var(--s2) 0 var(--s4);
+  overflow: auto;
+  font: 400 12px/1.6 var(--nh-font-mono);
+}
+
+.diff-line {
+  padding: 0 var(--s3);
+  white-space: pre;
+  color: var(--nh-label-secondary);
+}
+
+.diff-line.add {
+  background: color-mix(in srgb, var(--nh-state-ok) 14%, transparent);
+  color: var(--nh-state-ok);
+}
+
+.diff-line.del {
+  background: color-mix(in srgb, var(--nh-state-error) 14%, transparent);
+  color: var(--nh-state-error);
+}
+
+/* The two lines naming the file, and the ones counting off each hunk. They are
+   scaffolding rather than content, so they sit back. */
+.diff-line.meta,
+.diff-line.hunk {
+  color: var(--nh-label-caption);
+}
+
+.diff-line.hunk {
+  margin-top: var(--s1);
+  border-top: 1px solid var(--nh-border-l1);
+}
+
 /* The thread from "an agent did something here" to the conversation it had.
-   It sits in a tool card's own row and in the note a background job leaves,
-   so it is sized to a row rather than to the page. */
+   A spawn tool card is clickable end to end and needs no button, so this is
+   what the note a background job leaves carries: sized to a row, not a page. */
 .open-subagent {
   flex: none;
   margin-left: var(--s2);
@@ -738,19 +799,18 @@ body {
   background: var(--nh-hover);
 }
 
-/* A spawn card opens its subagent rather than folding open: the whole head is
-   the target, and it says so on hover instead of leaving the button as the one
-   part of the row that does anything. */
-.block.tool[data-subagent] > summary {
+/* A spawn card opens its subagent and an edit card opens its diff, rather than
+   folding open on arguments nobody reads. The whole head is the target, which
+   is why neither carries a button: a badge would be a second, smaller target
+   for the click the row already takes. */
+.block.tool[data-subagent] > summary,
+.block.tool[data-diff] > summary {
   cursor: pointer;
 }
 
-.block.tool[data-subagent] > summary:hover {
+.block.tool[data-subagent] > summary:hover,
+.block.tool[data-diff] > summary:hover {
   background: var(--nh-hover);
-}
-
-.block.tool[data-subagent] > summary:hover .open-subagent {
-  border-color: var(--nh-accent);
 }
 
 .side-foot {
@@ -1429,6 +1489,17 @@ details.block pre + pre {
 .metric.rate b,
 .metric.hit b {
   color: var(--nh-accent);
+}
+
+/* How much of the output was written by agents this session started. It is an
+   aside about the pill beside it rather than a measure of its own, so it is
+   quieter than either. */
+.metric.sub {
+  color: var(--nh-label-caption);
+}
+
+.metric.sub b {
+  color: var(--nh-label-tertiary);
 }
 
 /* Send is a circle, and it is the only accent-filled control in the window. */

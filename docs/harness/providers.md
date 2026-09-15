@@ -209,3 +209,46 @@ OpenAI-compatible proxies do not implement it. Failures come back as values, not
 exceptions — a typo in a URL is an expected outcome of a settings screen — and
 an unreachable host is named with its address and error code instead of Node's
 bare `fetch failed`.
+
+## When a request fails
+
+A round is asked for up to five times. Both wires throw `ProviderError`, which
+carries the HTTP status where there was one, and `isRetryable` in
+`src/core/provider.ts` decides from that: 408, 409, 425, 429, 500, 502, 503, 504
+and 529 are worth asking again, a 400 or a 401 would be refused the same way
+however often it was sent, and an `AbortError` is the user pressing Stop. A
+socket that drops mid-stream, a malformed SSE chunk and a `fetch failed` are all
+retried too, since none of them is an answer. The waits are 0.5s, 1.5s, 4s and
+8s, each shortened by a random part of its last quarter so that several windows
+coming off the same rate limit do not all return on the same tick. A
+`Retry-After` header replaces the schedule for that attempt and is honoured up
+to a minute, past which the provider is asking for longer than a turn should
+hang on one header. Stop cuts a wait short: a person who has pressed it does not
+get another attempt made on their behalf.
+
+The harder failure arrives after the headers. Anthropic reports an
+overloaded model as an `error` event inside a stream whose status was 200, so
+there is no status to read; the event's `type` is what says whether asking again
+is worth anything. `ERROR_STATUS` in `src/providers/anthropic.ts` maps each
+documented type to the status the same failure would have carried had it come
+back before the stream started: `overloaded_error` to 529, `rate_limit_error` to
+429, `invalid_request_error` to 400. The session throws that as a
+`ProviderError`, so one rule decides both cases. A type not on the list is read
+as 500, because what breaks halfway through a stream is nearly always the
+provider having trouble. `src/providers/failure.test.ts` holds that table to its
+word.
+
+A retry starts the round from the top, which means whatever had already streamed
+is thrown away: half a sentence of one answer with another answer welded onto it
+is worse than either. Nothing partial reaches the transcript, because the
+transcript is written when a round returns, and the window is told to take back
+what it drew by the `round.retry` event. What a failed attempt was charged for
+is carried onto the round that succeeds, so a rate-limited turn still counts the
+prompt it paid to have read twice. That only works where the wire says what it
+has spent before it finishes: Anthropic reports the prompt's cost in
+`message_start`, and the provider passes it on as a `usage` chunk, so an attempt
+that breaks after that still says what it cost. An OpenAI-compatible stream
+reports usage once, in its last chunk, so an attempt that never gets there
+carries nothing and the successful round's own count is all there is. Each retry
+leaves a note in the flow saying which attempt is being made, and the fifth
+failure ends the turn with the error.

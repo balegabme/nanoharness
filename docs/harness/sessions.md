@@ -140,6 +140,13 @@ note, which is what the window follows to open the child's conversation (see
 It is written for the case where something has already gone wrong, so it is
 written even when the subagent throws.
 
+Stored with that transcript is the subagent's tool count: how many calls it
+made, how many worked and how many came back an error. It travels out of a
+failure as well as a success, so a job that made forty calls before it broke is
+not filed as one that made none. A file written before the count existed has
+none, and the line is left out where a zero would read as a claim (see
+`agents.md`).
+
 Re-opening a session rebuilds it with that transcript as history, so the model
 picks up the thread, and hands it back its notes so the window reads the way it
 did live: a turn that stopped looks stopped, a turn that failed looks failed,

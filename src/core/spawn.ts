@@ -1,11 +1,10 @@
 // doc: docs/harness/agents.md
 import { EventBus } from './event-bus.js'
 import { Session } from './session.js'
-import { emptyUsage } from './types.js'
 import type { Tool } from './session.js'
 import type { AccessGate } from './scope.js'
 import type { ChatProvider } from './provider.js'
-import type { ChatMessage, SessionNote, TurnUsage } from './types.js'
+import type { ChatMessage, SessionNote, ToolStats, TurnUsage } from './types.js'
 import type { Effort } from './config.js'
 import type { AgentRole } from './agents.js'
 import type { JobRegistry, JobView } from './jobs.js'
@@ -39,6 +38,24 @@ export interface SpawnRequest {
   task: string
 }
 
+/**
+ * A subagent that threw, carrying what it had already spent and done. The job
+ * row and the conversation on disk are written from two different places, and
+ * the child session is gone by the time the row is finished; without this the
+ * row says "no tool calls" for an agent whose stored conversation shows forty.
+ * The message is the original failure's, since that is what the parent reads.
+ */
+class SubagentFailure extends Error {
+  constructor(
+    cause: unknown,
+    readonly usage: TurnUsage,
+    readonly tools: ToolStats,
+  ) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause })
+    this.name = 'SubagentFailure'
+  }
+}
+
 export interface SpawnResult {
   /**
    * The job's id, which is also the subagent's session id and the name of its
@@ -50,6 +67,8 @@ export interface SpawnResult {
   /** The mode it actually ran in, which is not always the one asked for. */
   mode: SpawnMode
   usage: TurnUsage
+  /** How much tool work went into the summary above. */
+  tools: ToolStats
   /** True when the user's stop ended it rather than the agent finishing. */
   stopped: boolean
 }
@@ -74,6 +93,7 @@ export interface SubagentRecord {
   /** Its last word: the answer, or why it ended. */
   note: string
   usage: TurnUsage
+  tools: ToolStats
   messages: ChatMessage[]
   notes: SessionNote[]
 }
@@ -228,10 +248,10 @@ export function createSpawnHost(deps: SpawnDeps): SpawnHost {
       const answer = lastAnswer(child.transcript)
       const stopped = child.interrupted
       await store(request, slot, child, stopped ? 'stopped' : 'done', stopped ? 'Stopped.' : answer, usage)
-      return { id: slot.id, summary: answer, mode: request.mode, usage, stopped }
+      return { id: slot.id, summary: answer, mode: request.mode, usage, tools: child.toolStats, stopped }
     } catch (err) {
       await store(request, slot, child, 'failed', fail(err), child.spent)
-      throw err
+      throw new SubagentFailure(err, child.spent, child.toolStats)
     } finally {
       live.delete(slot.id)
     }
@@ -248,7 +268,7 @@ export function createSpawnHost(deps: SpawnDeps): SpawnHost {
   ): Promise<void> {
     if (deps.save === undefined) return
     try {
-      await deps.save(slot, { request, state, note, usage, messages: child.transcript, notes: child.notes })
+      await deps.save(slot, { request, state, note, usage, tools: child.toolStats, messages: child.transcript, notes: child.notes })
     } catch (err) {
       // This runs on all three ways out, so the sentence says which one it was:
       // a subagent that failed or was stopped is exactly the one whose
@@ -274,6 +294,16 @@ export function createSpawnHost(deps: SpawnDeps): SpawnHost {
     return err instanceof Error ? err.message : String(err)
   }
 
+  /**
+   * What a failed job had spent and done, when the failure kept a record of it.
+   * A failure from anywhere else leaves both out rather than filing zeroes,
+   * which the row would draw as an agent that did nothing.
+   */
+  function ledger(err: unknown): { usage?: TurnUsage; tools?: ToolStats } {
+    if (err instanceof SubagentFailure) return { usage: err.usage, tools: err.tools }
+    return {}
+  }
+
   return {
     /**
      * A foreground subagent gets a job entry too, so the blocking case is a row
@@ -289,10 +319,11 @@ export function createSpawnHost(deps: SpawnDeps): SpawnHost {
           state: result.stopped ? 'stopped' : 'done',
           note: headline(result.summary),
           usage: result.usage,
+          tools: result.tools,
         })
         return result
       } catch (err) {
-        deps.jobs.finish(job.id, { state: 'failed', note: fail(err), usage: emptyUsage() })
+        deps.jobs.finish(job.id, { state: 'failed', note: fail(err), ...ledger(err) })
         throw err
       }
     },
@@ -307,13 +338,13 @@ export function createSpawnHost(deps: SpawnDeps): SpawnHost {
       void execute(request, slot)
         .then(result => {
           const state = result.stopped ? 'stopped' : 'done'
-          deps.jobs.finish(job.id, { state, note: headline(result.summary), usage: result.usage })
+          deps.jobs.finish(job.id, { state, note: headline(result.summary), usage: result.usage, tools: result.tools })
           // After `finish`, so the row is already in its final state when the
           // parent is handed the thing that row is about.
           deps.finished?.(slot, { request, state, answer: result.summary })
         })
         .catch((err: unknown) => {
-          deps.jobs.finish(job.id, { state: 'failed', note: fail(err), usage: emptyUsage() })
+          deps.jobs.finish(job.id, { state: 'failed', note: fail(err), ...ledger(err) })
           deps.finished?.(slot, { request, state: 'failed', answer: fail(err) })
         })
       return job

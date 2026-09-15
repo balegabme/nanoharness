@@ -198,6 +198,19 @@ message, with a line of usage appended so the conversation shows what the
 delegation cost, and a `[subagent:<id>]` marker that ties the result to the
 child's own stored transcript.
 
+That line also says how much tool work went into the answer: how many calls the
+subagent made, how many worked and how many came back an error. An agent that
+answered a code question without opening a file and one that opened forty and
+failed on nine hand back paragraphs that read the same, and the count is the
+difference between them. It is kept with the subagent's transcript, so it is
+there on the head of a subagent reopened next week as well as in the card that
+started it, and a background job's closing note carries it too. A subagent that
+threw carries its count out on the failure itself, because the row is finished
+after the child session is gone, and a job that made forty calls before it broke
+would otherwise be filed as one that made none. A subagent stored before the
+count existed has no count, and the line is left out rather than filled with a
+zero.
+
 That message comes back whole. There is no length limit on an answer: the
 model's own output limit is the bound, and that is a real one in the right
 place. A second limit inside the harness would only remove the end of a finding,

@@ -64,9 +64,10 @@
 
       <main class="main">
         <header class="topbar">
-          <!-- Shown only while a subagent is open: the conversation is one step
-               behind it, not a separate place to navigate to. -->
-          <button class="icon-btn back" id="back" type="button" title="Back to the conversation" aria-label="Back to the conversation" hidden>
+          <!-- Shown while a subagent or a diff is open. Both sit one step in
+               front of the flow that opened them, so this goes back a step
+               rather than to a place of its own. -->
+          <button class="icon-btn back" id="back" type="button" title="Back" aria-label="Back" hidden>
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M15 5l-7 7 7 7" />
             </svg>
@@ -108,6 +109,21 @@
             <section class="stream sub-stream" id="sub-stream">
               <div class="sub-tail" id="sub-tail"></div>
             </section>
+          </div>
+
+          <!--
+            One file's diff, in the place the conversation is drawn. The card in
+            the flow keeps the line saying what changed; this is the change
+            itself, with the room to read it.
+          -->
+          <div class="diff-view" id="diff-view" hidden>
+            <header class="sub-head">
+              <span class="job-mode" id="diff-path"></span>
+              <span class="diff-stat" id="diff-stat"></span>
+              <span class="spacer"></span>
+              <button class="btn sm outline" id="diff-copy" type="button">Copy diff</button>
+            </header>
+            <section class="stream diff-stream" id="diff-stream"></section>
           </div>
 
           <section class="hero" id="hero">

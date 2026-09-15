@@ -5,7 +5,7 @@ import { SPAWN_MODES, isSpawnMode } from '../core/spawn.js'
 import type { ArgsParse } from '../core/session.js'
 import type { AgentRole } from '../core/agents.js'
 import type { SpawnMode } from '../core/spawn.js'
-import type { ToolResult } from '../core/types.js'
+import type { ToolResult, ToolStats } from '../core/types.js'
 
 type SpawnArgs = { role: AgentRole; mode: SpawnMode; task: string; background: boolean }
 
@@ -23,6 +23,17 @@ function parseArgs(args: Record<string, unknown>): ArgsParse<SpawnArgs> {
 }
 
 const roles = AGENT_ROLES.map(role => `${role} (${AGENTS[role].purpose})`).join('; ')
+
+/**
+ * What the subagent did to reach its answer, as the line under its card: how
+ * many calls it made, how many worked, how many came back an error.
+ * `docs/harness/agents.md` says why an answer alone is not enough to go on.
+ */
+export function toolsText(tools: ToolStats): string {
+  if (tools.calls === 0) return 'no tool calls'
+  const plural = tools.calls === 1 ? 'tool call' : 'tool calls'
+  return `${tools.calls} ${plural}, ${tools.ok} ok, ${tools.failed} failed`
+}
 
 export const SPAWN_TOOL = defineTool<SpawnArgs>({
   input: {
@@ -77,7 +88,7 @@ export const SPAWN_TOOL = defineTool<SpawnArgs>({
     }
 
     const result = await spawn.run({ role, mode, task })
-    const cost = `[${role}/${result.mode}: in ${result.usage.input}, out ${result.usage.output}, cached ${result.usage.cacheRead}] [subagent:${result.id}]`
+    const cost = `[${role}/${result.mode}: ${toolsText(result.tools)} · in ${result.usage.input}, out ${result.usage.output}, cached ${result.usage.cacheRead}] [subagent:${result.id}]`
     return { ok: true, summary: result.summary, content: `${result.summary}\n\n${cost}` }
   },
 })

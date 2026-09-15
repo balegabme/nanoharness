@@ -1,5 +1,6 @@
 // doc: docs/harness/ui.md
 import { message, must } from './dom.js'
+import { announce } from './notify.js'
 import type { NanoBridge, PermissionDecision } from '../ipc/contract.js'
 import type { AppEvent } from '../core/types.js'
 
@@ -57,6 +58,10 @@ function show(ask: Ask): void {
   }
   if (!dialog.open) dialog.showModal()
   denyButton.focus()
+  // The turn is parked until this is answered, and a modal on a window nobody
+  // is looking at parks it for as long as that takes. Every ask rings, queued
+  // ones included: each is a separate question.
+  announce('asking')
 }
 
 function next(): void {

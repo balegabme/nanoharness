@@ -16,6 +16,21 @@ export interface ToolCall {
   args: string
 }
 
+/**
+ * How much tool work an agent did. A subagent hands back one paragraph, and
+ * these three numbers are what that paragraph was built out of: how many calls
+ * it took to write, and how many of them came back an error.
+ */
+export interface ToolStats {
+  calls: number
+  ok: number
+  failed: number
+}
+
+export function emptyToolStats(): ToolStats {
+  return { calls: 0, ok: 0, failed: 0 }
+}
+
 export interface JsonSchema {
   type: 'string' | 'number' | 'boolean' | 'object' | 'array' | 'null'
   description?: string
@@ -100,8 +115,18 @@ export type AppEvent =
   // subagent's usage, because that total arrives from a stream nobody timed
   // here and folding it into a rate would divide one agent's tokens by another
   // agent's clock.
-  | { type: 'usage'; sessionId: string; turn: number; usage: TurnUsage; streamMs?: number; at: number }
+  // `subagent` is the part of `usage` that subagents of this session spent.
+  // A turn that hands its work to three agents pays for all of them, and
+  // without the split the counter reads as one number nobody can account for.
+  | { type: 'usage'; sessionId: string; turn: number; usage: TurnUsage; subagent?: TurnUsage; streamMs?: number; at: number }
   | { type: 'session.error'; sessionId: string; turn: number; message: string; at: number }
+  // A round is about to be asked for. The window uses it as the boundary it
+  // rolls back to when the round has to be asked for again.
+  | { type: 'round.started'; sessionId: string; turn: number; at: number }
+  // The request failed and is being made again. Whatever this round had already
+  // streamed is gone: the window drops it, because the answer that arrives next
+  // starts from the top rather than carrying on.
+  | { type: 'round.retry'; sessionId: string; turn: number; attempt: number; of: number; text: string; at: number }
   | { type: 'session.finished'; sessionId: string; turn: number; at: number }
   | { type: 'session.stopped'; sessionId: string; turn: number; at: number }
   // Something about the run rather than about the conversation: a loop the
@@ -152,5 +177,13 @@ export type ChatChunk =
   // `usageProblem` is set when the provider sent a usage report that could not
   // be read: the answer stands, this turn's cost is unknown, and the session
   // says so. See `noteUsageProblem` in `session.ts`.
+  // What this request has cost so far, as a running total rather than a delta.
+  // A wire that knows the prompt's cost before it has finished answering sends
+  // it, so a request that breaks halfway can still say what it charged for.
+  | { kind: 'usage'; usage: TurnUsage }
   | { kind: 'done'; usage: TurnUsage; usageProblem?: string }
-  | { kind: 'error'; message: string }
+  // `status` is the HTTP status the failure would have carried had it arrived
+  // as one. A stream that breaks halfway is reported inside the stream, with
+  // 200 already on the response, so without this the session cannot tell an
+  // overloaded provider from a malformed request. See `isRetryable`.
+  | { kind: 'error'; message: string; status?: number }

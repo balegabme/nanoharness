@@ -5,10 +5,11 @@ import { basename, join } from 'node:path'
 import { isAgentRole } from '../core/agents.js'
 import { realResolve } from '../core/scope.js'
 import { userDataDir } from '../core/usage-log.js'
+import { emptyUsage } from '../core/types.js'
 import type { AgentRole } from '../core/agents.js'
 import type { JobState } from '../core/jobs.js'
 import type { SpawnMode } from '../core/spawn.js'
-import type { ChatMessage, SessionNote, TurnUsage } from '../core/types.js'
+import type { ChatMessage, SessionNote, ToolStats, TurnUsage } from '../core/types.js'
 import type { SessionView, TranscriptMessage, WorkspaceStatus, WorkspaceView } from '../ipc/contract.js'
 
 /**
@@ -36,6 +37,8 @@ interface StoredSession {
   updatedAt: number
   /** Every turn this session has ever run, added up. */
   usage?: TurnUsage
+  /** The subagents' share of `usage`, so a re-opened session keeps the split. */
+  subagentUsage?: TurnUsage
 }
 
 interface WorkspaceState {
@@ -84,6 +87,12 @@ export interface StoredSubagent {
   state: JobState
   note: string
   usage: TurnUsage
+  /**
+   * What its tool calls came to: how many, how many failed. Absent on a
+   * subagent stored before the count existed, which is a line the window leaves
+   * out rather than a zero it makes up.
+   */
+  tools?: ToolStats
   startedAt: number
   endedAt: number
   messages: ChatMessage[]
@@ -103,7 +112,12 @@ export async function loadSubagent(sessionId: string, jobId: string): Promise<St
   if (text === null) return null
   try {
     const parsed = JSON.parse(text) as StoredSubagent
-    return typeof parsed.id === 'string' && Array.isArray(parsed.messages) ? parsed : null
+    if (typeof parsed.id !== 'string' || !Array.isArray(parsed.messages)) return null
+    // A file may have no count at all, or three numbers that are not numbers.
+    // The window draws whatever is here, so a field that is not three numbers
+    // is dropped instead of being handed on to be read as a count.
+    if (!isToolStats(parsed.tools)) delete parsed.tools
+    return parsed
   } catch {
     return null
   }
@@ -133,7 +147,7 @@ export function parseState(parsed: unknown): WorkspaceState {
   if (Array.isArray(raw.sessions)) {
     for (const entry of raw.sessions) {
       if (typeof entry !== 'object' || entry === null) continue
-      const { id, workspaceId, title, role, createdAt, updatedAt, usage } = entry as Record<string, unknown>
+      const { id, workspaceId, title, role, createdAt, updatedAt, usage, subagentUsage } = entry as Record<string, unknown>
       const [i, w] = [str(id), str(workspaceId)]
       if (i === null || w === null) continue
       // A session whose workspace is gone would be unreachable in the sidebar.
@@ -152,6 +166,7 @@ export function parseState(parsed: unknown): WorkspaceState {
         // file cannot say, so they start the count again rather than claim a
         // total that is not true.
         ...(isUsage(usage) ? { usage } : {}),
+        ...(isUsage(subagentUsage) ? { subagentUsage } : {}),
       })
     }
   }
@@ -165,6 +180,12 @@ function isUsage(value: unknown): value is TurnUsage {
   if (typeof value !== 'object' || value === null) return false
   const raw = value as Record<string, unknown>
   return USAGE_KEYS.every(key => typeof raw[key] === 'number')
+}
+
+function isToolStats(value: unknown): value is ToolStats {
+  if (typeof value !== 'object' || value === null) return false
+  const raw = value as Record<string, unknown>
+  return ['calls', 'ok', 'failed'].every(key => typeof raw[key] === 'number')
 }
 
 async function readState(): Promise<WorkspaceState> {
@@ -270,9 +291,13 @@ export async function setSessionRole(id: string, role: AgentRole): Promise<Sessi
 }
 
 /** What a session has spent so far, for seeding it when it is rebuilt. */
-export async function sessionUsage(id: string): Promise<TurnUsage | null> {
+export async function sessionUsage(id: string): Promise<{ total: TurnUsage; subagents: TurnUsage } | null> {
   const state = await readState()
-  return state.sessions.find(s => s.id === id)?.usage ?? null
+  const stored = state.sessions.find(s => s.id === id)
+  if (stored?.usage === undefined) return null
+  // A session stored before the split was kept has a total and no breakdown of
+  // it. Zero is the only honest answer: the tokens are in the total either way.
+  return { total: stored.usage, subagents: stored.subagentUsage ?? emptyUsage() }
 }
 
 /**
@@ -282,11 +307,12 @@ export async function sessionUsage(id: string): Promise<TurnUsage | null> {
  * land on the parent's counter with no turn left to store them: without this
  * the window and the file disagree until the next message is sent.
  */
-export async function setSessionUsage(id: string, usage: TurnUsage): Promise<void> {
+export async function setSessionUsage(id: string, usage: TurnUsage, subagentUsage: TurnUsage): Promise<void> {
   const state = await readState()
   const session = state.sessions.find(s => s.id === id)
   if (session === undefined) return
   session.usage = usage
+  session.subagentUsage = subagentUsage
   await writeState(state)
 }
 
@@ -308,7 +334,12 @@ export async function sessionRoot(id: string): Promise<string | null> {
  * A session is named after the first thing asked of it, which is what the user
  * will recognise in the sidebar. Later messages only move it up the list.
  */
-export async function noteTurn(id: string, firstText: string, usage?: TurnUsage): Promise<SessionView | null> {
+export async function noteTurn(
+  id: string,
+  firstText: string,
+  usage?: TurnUsage,
+  subagentUsage?: TurnUsage,
+): Promise<SessionView | null> {
   const state = await readState()
   const session = state.sessions.find(s => s.id === id)
   if (session === undefined) return null
@@ -316,6 +347,7 @@ export async function noteTurn(id: string, firstText: string, usage?: TurnUsage)
   // The session's own running total, so re-opening it shows what it has cost
   // rather than starting the count at zero.
   if (usage !== undefined) session.usage = usage
+  if (subagentUsage !== undefined) session.subagentUsage = subagentUsage
   if (session.title === 'New session') {
     const line = firstText.trim().replace(/\s+/g, ' ')
     if (line !== '') session.title = line.length > TITLE_MAX ? `${line.slice(0, TITLE_MAX - 1)}…` : line

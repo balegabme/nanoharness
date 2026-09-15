@@ -1,4 +1,5 @@
 // doc: docs/harness/providers.md
+import { BAD_SSE, NO_BODY, ProviderError, retryAfterMs } from '../core/provider.js'
 import type { ChatProvider, ChatInput } from '../core/provider.js'
 import type { ChatChunk, ChatMessage, JsonSchema, ToolInput, TurnUsage } from '../core/types.js'
 import { emptyUsage } from '../core/types.js'
@@ -93,9 +94,9 @@ export function createOpenAIProvider(opts: OpenAIOptions): ChatProvider {
       })
       if (!res.ok) {
         const text = await res.text()
-        throw new Error(`provider ${res.status}: ${text.slice(0, 200)}`)
+        throw new ProviderError(`provider ${res.status}: ${text.slice(0, 200)}`, res.status, retryAfterMs(res.headers.get('retry-after')))
       }
-      if (!res.body) throw new Error('no response body')
+      if (!res.body) throw new ProviderError(NO_BODY, res.status)
 
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
@@ -192,7 +193,7 @@ function parseWire(line: string): WireChunk | null {
   try {
     json = JSON.parse(data)
   } catch {
-    throw new Error('provider sent malformed SSE chunk')
+    throw new Error(BAD_SSE)
   }
   const delta = json.choices?.[0]?.delta
   // A null usage is a server saying it has none, which is not a malformed
@@ -307,8 +308,8 @@ export async function listModels(opts: OpenAIOptions, timeoutMs = 15_000): Promi
   })
   if (!res.ok) {
     const detail = (await res.text().catch(() => '')).slice(0, 200)
-    if (res.status === 404) throw new Error(`this server has no /v1/models endpoint (404). Type the model id instead.`)
-    throw new Error(`provider ${res.status}${detail === '' ? '' : `: ${detail}`}`)
+    if (res.status === 404) throw new ProviderError('this server has no /v1/models endpoint (404). Type the model id instead.', 404)
+    throw new ProviderError(`provider ${res.status}${detail === '' ? '' : `: ${detail}`}`, res.status)
   }
 
   const payload: unknown = await res.json()

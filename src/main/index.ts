@@ -10,7 +10,7 @@ import { READ_TOOL } from '../tools/read.js'
 import { WRITE_TOOL } from '../tools/write.js'
 import { EDIT_TOOL } from '../tools/edit.js'
 import { LOG_IMPROVEMENT_TOOL } from '../tools/log-improvement.js'
-import { SPAWN_TOOL } from '../tools/spawn.js'
+import { SPAWN_TOOL, toolsText } from '../tools/spawn.js'
 import { JOB_UPDATE_TOOL } from '../tools/job-update.js'
 import { AGENTS, AGENT_ROLES, HARNESS_HANDOFF, agentPrompt, isAgentRole, roleContext } from '../core/agents.js'
 import { EventBus } from '../core/event-bus.js'
@@ -85,6 +85,8 @@ const EVENT_TYPES: AppEvent['type'][] = [
   'tool_result',
   'usage',
   'session.error',
+  'round.started',
+  'round.retry',
   'session.finished',
   'session.stopped',
   'session.note',
@@ -267,16 +269,22 @@ function jobsFor(sender: WebContents): JobRegistry {
     // as it now stands, or the window and the file disagree until the next
     // message is sent.
     if (parent !== undefined) {
-      void setSessionUsage(event.job.sessionId, parent.spent).catch((err: unknown) => {
+      void setSessionUsage(event.job.sessionId, parent.spent, parent.spentBySubagents).catch((err: unknown) => {
         process.stderr.write(`session usage: ${err instanceof Error ? err.message : String(err)}\n`)
       })
     }
     if (!event.job.background) return
     const first = event.job.note?.split('\n')[0] ?? ''
-    // The note names the subagent, so the parent's own transcript points at the
-    // conversation the subagent had rather than only at what it concluded.
+    // What it did to get there, alongside what it concluded. The note names the
+    // subagent, so the parent's own transcript points back at the conversation
+    // the subagent had.
     parent?.note(
-      `Background ${event.job.role} ${event.job.state}${first === '' ? '' : `: ${first}`} [subagent:${event.job.id}]`,
+      [
+        `Background ${event.job.role} ${event.job.state}`,
+        event.job.tools === undefined ? '' : ` (${toolsText(event.job.tools)})`,
+        first === '' ? '' : `: ${first}`,
+        ` [subagent:${event.job.id}]`,
+      ].join(''),
     )
   })
   const registry = new JobRegistry(bus)
@@ -489,7 +497,7 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
       access,
       history: await loadTranscript(sessionId),
       secrets,
-      ...(spent === null ? {} : { usage: spent }),
+      ...(spent === null ? {} : { usage: spent.total, subagentUsage: spent.subagents }),
       spawn: createSpawnHost({
         sessionId,
         role,
@@ -520,6 +528,7 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
             state: record.state,
             note: record.note,
             usage: record.usage,
+            tools: record.tools,
             startedAt: job?.startedAt ?? Date.now(),
             endedAt: Date.now(),
             messages: record.messages,
@@ -809,7 +818,7 @@ app.whenReady().then(() => {
     // answer is not a message, and a crash mid-turn should leave the session
     // exactly as it was before the message was sent.
     await saveTranscript(req.sessionId, session.transcript, session.notes)
-    const updated = await noteTurn(req.sessionId, text, usage)
+    const updated = await noteTurn(req.sessionId, text, usage, session.spentBySubagents)
 
     // One line per completed turn, so `nh usage` has something to read. A log
     // that cannot be written is worth a warning and no more than that.

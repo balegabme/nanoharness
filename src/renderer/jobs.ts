@@ -1,5 +1,5 @@
 // doc: docs/harness/ui.md
-import type { AppEvent, TurnUsage } from '../core/types.js'
+import type { AppEvent, ToolStats, TurnUsage } from '../core/types.js'
 import type { JobView } from '../core/jobs.js'
 import type { NanoBridge } from '../ipc/contract.js'
 
@@ -74,6 +74,20 @@ export function agentName(role: JobView['role']): string {
 
 export function stateLabel(state: JobView['state']): string {
   return LABEL[state]
+}
+
+/**
+ * What a subagent did to reach its answer, as the line under its card.
+ * `docs/harness/agents.md` says why an answer alone is not enough to go on.
+ *
+ * `tools/spawn.ts` writes the same line for the model. The renderer is its own
+ * bundle and takes no runtime import from `core/` or `tools/` (a type import is
+ * erased at build time, so those are fine; a call is a real import), which is
+ * why this function exists twice. Change one and change the other.
+ */
+export function toolsText(tools: ToolStats): string {
+  if (tools.calls === 0) return 'no tool calls'
+  return `${tools.calls} tool call${tools.calls === 1 ? '' : 's'}, ${tools.ok} ok, ${tools.failed} failed`
 }
 
 /** True when this id is a subagent's, so its stream is not the open session's. */

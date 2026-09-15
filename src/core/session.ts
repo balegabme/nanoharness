@@ -1,12 +1,13 @@
 // doc: docs/harness/overview.md
 import { EventBus } from './event-bus.js'
+import { ProviderError, RETRY_AFTER_CAP_MS, isRetryable } from './provider.js'
 import type { ChatProvider } from './provider.js'
 import type { Effort } from './config.js'
 import { workspaceGate } from './scope.js'
 import type { AccessGate } from './scope.js'
-import { emptyUsage } from './types.js'
+import { emptyToolStats, emptyUsage } from './types.js'
 import { SecretVault } from './secrets.js'
-import type { ChatMessage, SessionNote, ThinkingBlock, ToolCall, ToolInput, ToolResult, TurnUsage } from './types.js'
+import type { ChatMessage, SessionNote, ThinkingBlock, ToolCall, ToolInput, ToolResult, ToolStats, TurnUsage } from './types.js'
 import type { SpawnHost } from './spawn.js'
 import type { JobRegistry } from './jobs.js'
 
@@ -96,6 +97,36 @@ const REPEAT_ABORT = 6
 /** Failures in a row after which the model is told it is thrashing. Not a stop. */
 const FAILURE_NUDGE = 5
 
+/**
+ * How many times one round is asked for before the turn gives up.
+ *
+ * A provider that answers 429 or drops the socket has said nothing about the
+ * conversation, so the same request is worth making again. Five attempts covers
+ * a rate limit that clears and a gateway that restarts; past that the fault is
+ * not going away on its own and the user should be told rather than watched
+ * over for another minute.
+ */
+const ROUND_ATTEMPTS = 5
+
+/** Waits between attempts, in milliseconds. One entry per gap, so four. */
+const BACKOFF_MS = [500, 1500, 4000, 8000]
+
+/**
+ * How long to wait before attempt number `attempt + 1`.
+ *
+ * A provider that sent `Retry-After` is answered on its own terms, capped so a
+ * header asking for an hour does not hang the turn on one. Otherwise the
+ * schedule above applies, spread over a random part of the last quarter: five
+ * windows all retrying on the same 500ms tick is the same thundering herd that
+ * rate-limited them, and the spread is what breaks the lockstep (plan §11).
+ */
+function backoffFor(err: unknown, attempt: number): number {
+  const asked = err instanceof ProviderError ? err.retryAfterMs : undefined
+  if (asked !== undefined) return Math.min(asked, RETRY_AFTER_CAP_MS)
+  const base = BACKOFF_MS[attempt - 1] ?? 8000
+  return Math.round(base * (0.75 + Math.random() * 0.25))
+}
+
 export interface SessionOptions {
   sessionId: string
   cwd: string
@@ -112,6 +143,8 @@ export interface SessionOptions {
   job?: { id: string; jobs: JobRegistry }
   /** What this session had already spent before it was rebuilt. */
   usage?: TurnUsage
+  /** The subagents' share of `usage`, so a rebuild does not lose the split. */
+  subagentUsage?: TurnUsage
   /**
    * The keys the user pasted. The model holds placeholders for them; this is
    * the only object that can turn one back into a value, and it does so for
@@ -139,6 +172,14 @@ export class Session {
   private usageProblemNoted = false
   private totalUsage = emptyUsage()
   private turnUsage = emptyUsage()
+  /**
+   * The part of `totalUsage` that subagents spent. Kept apart because a turn
+   * that delegates can spend fifty thousand tokens without this session
+   * generating more than a paragraph, and one number cannot say that.
+   */
+  private subagentUsage: TurnUsage = emptyUsage()
+  /** What this session's own tool calls came to, for whoever started it. */
+  private readonly tally = emptyToolStats()
   // Stop is cooperative: the in-flight request is aborted and the loop ends at
   // the next boundary, leaving the transcript in a shape the model can be
   // asked to continue from.
@@ -172,6 +213,10 @@ export class Session {
     // one. `usage-log.ts` drops old lines instead, because it adds totals
     // across sessions.
     this.totalUsage = { ...(options.usage ?? emptyUsage()) }
+    // Seeded beside the total it is part of. Left at zero, the first usage
+    // event of a rebuilt session would report that subagents had spent nothing
+    // and the next turn would write that over the stored breakdown.
+    this.subagentUsage = { ...(options.subagentUsage ?? emptyUsage()) }
     // A resumed session keeps its own system prompt, not the stored one: the
     // prompt is built fresh each launch and may have changed since.
     for (const message of options.history ?? []) {
@@ -310,6 +355,16 @@ export class Session {
     return { ...this.totalUsage }
   }
 
+  /** The subagents' share of `spent`. Zero for a session that delegated nothing. */
+  get spentBySubagents(): TurnUsage {
+    return { ...this.subagentUsage }
+  }
+
+  /** How many tool calls this session made, and how they went. */
+  get toolStats(): ToolStats {
+    return { ...this.tally }
+  }
+
   /**
    * Tokens a subagent of this session spent. A subagent is billed to whoever
    * started it, so its usage lands in the same total and leaves by the same
@@ -323,11 +378,13 @@ export class Session {
    */
   addSubagentUsage(delta: TurnUsage): void {
     this.addUsage(delta)
+    addInto(this.subagentUsage, delta)
     this.bus.emit({
       type: 'usage',
       sessionId: this.options.sessionId,
       turn: this.turn,
       usage: { ...this.totalUsage },
+      subagent: { ...this.subagentUsage },
       at: Date.now(),
     })
   }
@@ -385,7 +442,15 @@ export class Session {
     for (;;) {
       const { text, toolCalls, usage, thinking, streamMs } = await this.drainRound()
       this.addUsage(usage)
-      this.bus.emit({ type: 'usage', sessionId, turn: this.turn, usage: { ...this.totalUsage }, streamMs, at: Date.now() })
+      this.bus.emit({
+        type: 'usage',
+        sessionId,
+        turn: this.turn,
+        usage: { ...this.totalUsage },
+        subagent: { ...this.subagentUsage },
+        streamMs,
+        at: Date.now(),
+      })
 
       // An assistant message with no text, no tool calls and no thinking draws
       // a blank in the window, and some providers refuse to take it back. The
@@ -447,7 +512,76 @@ export class Session {
     }
   }
 
+  /**
+   * One round, asked for as many times as it takes or until `ROUND_ATTEMPTS` is
+   * out.
+   *
+   * A retry throws away whatever the failed attempt had already streamed, which
+   * is why the window is told: half an answer left on screen under a second,
+   * different answer is worse than no answer at all. What the attempt was
+   * charged for is kept, though, and carried into the round that eventually
+   * succeeds, since a counter that showed only the attempt that worked would
+   * under-report every rate-limited turn.
+   *
+   * That count is whatever the wire reported before it broke. Anthropic sends
+   * the prompt's cost at `message_start`, which arrives as a `usage` chunk; an
+   * OpenAI-compatible stream reports at the end, so an attempt that never got
+   * there carries nothing and there is nothing to carry.
+   */
   private async drainRound(): Promise<{ text: string; toolCalls: ToolCall[]; usage: TurnUsage; thinking: ThinkingBlock[]; streamMs: number }> {
+    const sessionId = this.options.sessionId
+    const carried = emptyUsage()
+    for (let attempt = 1; ; attempt += 1) {
+      const spent = emptyUsage()
+      this.bus.emit({ type: 'round.started', sessionId, turn: this.turn, at: Date.now() })
+      try {
+        const round = await this.attemptRound(spent)
+        // A fresh total rather than a running one: `round.usage` is the object
+        // the provider handed over, and the caller reads it again.
+        const usage = emptyUsage()
+        addInto(usage, round.usage)
+        addInto(usage, carried)
+        return { ...round, usage }
+      } catch (err) {
+        addInto(carried, spent)
+        if (this.stopped || attempt >= ROUND_ATTEMPTS || !isRetryable(err)) throw err
+        const why = this.secrets.redact(err instanceof Error ? err.message : String(err))
+        const text = `The request failed (${why}). Asking again: attempt ${attempt + 1} of ${ROUND_ATTEMPTS}.`
+        // Journalled without an event of its own, because `round.retry` is the
+        // event and carries the same words. Replay reads it back from here.
+        this.record('note', text)
+        this.bus.emit({ type: 'round.retry', sessionId, turn: this.turn, attempt: attempt + 1, of: ROUND_ATTEMPTS, text, at: Date.now() })
+        await this.pause(backoffFor(err, attempt))
+        // Stop pressed during the wait. Another attempt would spend the
+        // person's money on an answer they have already said they do not want,
+        // and rethrowing would end the turn as an error rather than as the stop
+        // it was. An empty round is what an aborted stream hands back, so the
+        // loop winds down the one way it knows.
+        if (this.stopped) return { text: '', toolCalls: [], usage: carried, thinking: [], streamMs: 0 }
+      }
+    }
+  }
+
+  /** Wait between attempts, cut short if the person presses Stop. */
+  private async pause(ms: number): Promise<void> {
+    const signal = this.controller?.signal
+    if (signal?.aborted === true) return
+    await new Promise<void>(resolve => {
+      const timer = setTimeout(done, ms)
+      function done(): void {
+        clearTimeout(timer)
+        signal?.removeEventListener('abort', done)
+        resolve()
+      }
+      signal?.addEventListener('abort', done, { once: true })
+    })
+  }
+
+  /**
+   * One request. `spent` is filled in as the provider reports usage, so a round
+   * that fails halfway still says what it cost on its way out.
+   */
+  private async attemptRound(spent: TurnUsage): Promise<{ text: string; toolCalls: ToolCall[]; usage: TurnUsage; thinking: ThinkingBlock[]; streamMs: number }> {
     let text = ''
     const toolCalls: ToolCall[] = []
     const thinking: ThinkingBlock[] = []
@@ -492,12 +626,19 @@ export class Session {
             toolCalls.push(chunk.tool)
             this.bus.emit({ type: 'tool_call', sessionId: this.options.sessionId, call: chunk.tool, at: Date.now() })
             break
+          case 'usage':
+            copyInto(spent, chunk.usage)
+            break
           case 'done':
             usage = chunk.usage
+            copyInto(spent, chunk.usage)
             if (chunk.usageProblem !== undefined) this.noteUsageProblem(chunk.usageProblem)
             break
           case 'error':
-            throw new Error(chunk.message)
+            // As a ProviderError, so a provider that fell over halfway through
+            // a stream is retried on the same terms as one that refused the
+            // request outright.
+            throw new ProviderError(chunk.message, chunk.status)
         }
       }
     } catch (err) {
@@ -561,6 +702,9 @@ export class Session {
 
   /** The window, the transcript and the failure count for one finished call. */
   private commit(call: ToolCall, result: ToolResult): void {
+    this.tally.calls += 1
+    if (result.ok) this.tally.ok += 1
+    else this.tally.failed += 1
     this.failures = result.ok ? 0 : this.failures + 1
     // Debugging is mostly failures, so a run of them does not end the turn. It
     // is still worth saying out loud, because a model that cannot see the
@@ -657,12 +801,25 @@ export class Session {
   }
 
   private addUsage(u: TurnUsage): void {
-    for (const target of [this.totalUsage, this.turnUsage]) {
-      target.input += u.input
-      target.output += u.output
-      target.cacheRead += u.cacheRead
-      target.cacheWrite += u.cacheWrite
-      target.reasoning += u.reasoning
-    }
+    addInto(this.totalUsage, u)
+    addInto(this.turnUsage, u)
   }
+}
+
+/** Overwrite a usage report with another, in place. */
+function copyInto(target: TurnUsage, source: TurnUsage): void {
+  target.input = source.input
+  target.output = source.output
+  target.cacheRead = source.cacheRead
+  target.cacheWrite = source.cacheWrite
+  target.reasoning = source.reasoning
+}
+
+/** Add one usage report into a running total, in place. */
+function addInto(target: TurnUsage, delta: TurnUsage): void {
+  target.input += delta.input
+  target.output += delta.output
+  target.cacheRead += delta.cacheRead
+  target.cacheWrite += delta.cacheWrite
+  target.reasoning += delta.reasoning
 }

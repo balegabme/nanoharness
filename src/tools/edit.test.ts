@@ -121,6 +121,27 @@ describe('edit', () => {
     await rm(root, { recursive: true, force: true })
   })
 
+  it('hands back the diff of what it changed, so neither end has to take it on trust', async () => {
+    const lines = ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten']
+    const { root } = await fixture(`${lines.join('\n')}\n`)
+
+    const result = await edit(root, { path: 'note.txt', old_string: 'three', new_string: 'THREE' })
+
+    expect(result.summary).toContain('+1 −1')
+    expect(result.ok).toBe(true)
+    const content = result.content ?? ''
+    expect(content).toContain('```diff')
+    expect(content).toContain('--- a/note.txt')
+    expect(content).toContain('-three')
+    expect(content).toContain('+THREE')
+    // Three lines of context either side, and none of the file beyond that: the
+    // diff is read by the model as well as by the window, and the rest of the
+    // file is what it is already paying to have read once.
+    expect(content).toContain(' six')
+    expect(content).not.toContain(' seven')
+    await rm(root, { recursive: true, force: true })
+  })
+
   it('refuses a file that is not there', async () => {
     const root = await mkdtemp(join(tmpdir(), 'nh-edit-'))
 
