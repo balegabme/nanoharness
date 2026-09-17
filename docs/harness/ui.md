@@ -37,7 +37,7 @@ half-written message and the caret survive the move.
 | [ + New session ]  +----------------------------------------+
 | [ search        ]  | you                                    |
 | FOLDERS         +  | thinking >                             |
-| v nanoharness  3   | read  src/core/session.ts        done  |
+| v nanoharness  3   | read  src/core/session.ts           ✓  |
 |     fix the gate   | assistant                              |
 |     add a tool     | . . .  0:07                            |
 | > notes        1   |  +- composer -------------------------+|
@@ -134,6 +134,24 @@ prompts fall silent with everything else, since silence is a thing people ask
 for on purpose. The tone differs by outcome, rising for finished, falling
 for stopped, flat and low for an error, so a turn's ending is legible from the
 next room.
+
+A finished tool call is marked: a check for one that worked, a cross for one
+that failed, in the same green and red as the dot beside the tool name. The
+state of twenty cards is read down the column in one pass, and a glyph survives
+that reading where the words `done` and `failed` have to be taken in one at a
+time. A running call keeps its word, since any glyph for it reads as a third
+result.
+
+Every turn ends on a summary line under the answer: how many tool calls the turn
+took and how many failed, which files `edit` and `write` left different, and how
+long it ran. A `bash` call that writes a file is invisible to the count, so the
+line claims only what those two tools touched, and a long list is cut short
+after twelve paths with the rest counted. It is the dimmest thing in the flow,
+because the numbers are worth a glance and never worth a stop, and it is drawn
+as its own kind of block rather than as a note for that reason. The line is
+stored with the transcript, so a session opened next week still shows what each
+turn cost; `sessions.md` has the shape. Every ending gets one, an error and a
+stop included.
 
 A note block says what the run did, as its own rule across the flow, dim where
 an error block is red. The window uses it for anything that is about the run

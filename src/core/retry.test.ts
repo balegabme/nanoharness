@@ -6,7 +6,7 @@ import { Session } from './session.js'
 import { ProviderError } from './provider.js'
 import { emptyUsage } from './types.js'
 import type { ChatProvider } from './provider.js'
-import type { AppEvent, ChatChunk } from './types.js'
+import type { AppEvent, ChatChunk, SessionNote } from './types.js'
 
 /**
  * A round that fails is asked for again. These tests pin the parts of that which
@@ -14,6 +14,15 @@ import type { AppEvent, ChatChunk } from './types.js'
  * thrown away rather than stitched onto the one that replaces it, and a refusal
  * the provider will repeat is not asked five times.
  */
+
+/**
+ * The journal minus the line every turn ends on. A test about how a turn ended
+ * is about what the harness had to say, and every turn ends on a summary either
+ * way.
+ */
+function said(session: Session): SessionNote[] {
+  return session.notes.filter(note => note.kind !== 'summary')
+}
 
 /** One round's worth of stream: what it yields, and whether it then breaks. */
 interface Step {
@@ -101,7 +110,7 @@ describe('a request that breaks part way through', () => {
     expect(JSON.stringify(session.transcript)).not.toContain('I looked at the file and it')
     const retry = events.find(event => event.type === 'round.retry')
     expect(retry).toMatchObject({ attempt: 2, of: 5 })
-    expect(session.notes.map(note => note.kind)).toEqual(['note'])
+    expect(session.notes.map(note => note.kind)).toEqual(['note', 'summary'])
     expect(events.some(event => event.type === 'session.finished')).toBe(true)
   })
 })
@@ -129,7 +138,7 @@ describe('an error the provider sends down the stream itself', () => {
 
     expect(provider.rounds).toBe(1)
     expect(events.some(event => event.type === 'round.retry')).toBe(false)
-    expect(session.notes.at(-1)?.text).toContain('max_tokens too large')
+    expect(said(session).at(-1)?.text).toContain('max_tokens too large')
   })
 })
 
@@ -142,7 +151,7 @@ describe('a request the provider refuses', () => {
     expect(provider.rounds).toBe(1)
     expect(events.some(event => event.type === 'round.retry')).toBe(false)
     expect(events.some(event => event.type === 'session.error')).toBe(true)
-    expect(session.notes.map(note => note.kind)).toEqual(['error'])
+    expect(session.notes.map(note => note.kind)).toEqual(['error', 'summary'])
   })
 })
 
@@ -231,7 +240,7 @@ describe('Stop pressed while the harness is waiting to try again', () => {
     expect(session.interrupted).toBe(true)
     expect(events.some(event => event.type === 'session.stopped')).toBe(true)
     expect(events.some(event => event.type === 'session.error')).toBe(false)
-    expect(session.notes.at(-1)?.kind).toBe('stopped')
+    expect(said(session).at(-1)?.kind).toBe('stopped')
   })
 })
 
@@ -244,7 +253,7 @@ describe('a provider that stays down', () => {
     expect(provider.rounds).toBe(5)
     expect(events.filter(event => event.type === 'round.retry')).toHaveLength(4)
     expect(events.filter(event => event.type === 'round.started')).toHaveLength(5)
-    const failed = session.notes.at(-1)
+    const failed = said(session).at(-1)
     expect(failed?.kind).toBe('error')
     expect(failed?.text).toContain('bad gateway')
   })

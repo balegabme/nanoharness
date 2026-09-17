@@ -133,6 +133,10 @@ export type AppEvent =
   // harness broke, a turn that ended without an answer, a background job that
   // reported back. A turn never ends without one of these or an answer.
   | { type: 'session.note'; sessionId: string; turn: number; text: string; at: number }
+  // What the turn that just ended came to: its tool calls, the files it left
+  // different, and how long it ran. It is its own event because the window draws
+  // it quietly under the answer, where a note is drawn in the flow to be read.
+  | { type: 'session.summary'; sessionId: string; turn: number; text: string; at: number }
   | { type: 'permission.request'; sessionId: string; id: string; intent: 'read' | 'write' | 'run'; paths: string[]; command?: string; root: string; at: number }
   // Which MCP servers this session ended up with, once its hub has finished
   // dialling. The window asks for the same thing when a session is opened; this
@@ -155,7 +159,7 @@ export type AppEvent =
  * puts it back in the right place on replay.
  */
 export interface SessionNote {
-  kind: 'error' | 'stopped' | 'note'
+  kind: 'error' | 'stopped' | 'note' | 'summary'
   text: string
   turn: number
   after: number

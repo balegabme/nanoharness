@@ -112,6 +112,72 @@ const ROUND_ATTEMPTS = 5
 const BACKOFF_MS = [500, 1500, 4000, 8000]
 
 /**
+ * The tools whose `path` argument names a file the turn changed. A `bash` call
+ * can write a file too, and nothing here can see that it did, so the summary
+ * says these are the files `edit` and `write` touched and claims nothing wider.
+ *
+ * `chat.ts` keeps the same two names for its own question, which is which
+ * results end in a diff. The renderer is a separate bundle and takes no runtime
+ * import from `core/`, so the list exists twice. Change one and change the other.
+ */
+const WRITERS = new Set(['edit', 'write'])
+
+/** Paths listed before the line gives up and counts the rest. */
+const FILES_LISTED = 12
+
+/**
+ * The file a finished call changed, or null when it changed none. The arguments
+ * arrive as the JSON string the model wrote, so a call whose arguments never
+ * parsed is one the tool refused; it reached here as a failure and is not asked.
+ */
+function writtenPath(call: ToolCall): string | null {
+  if (!WRITERS.has(call.name)) return null
+  try {
+    const parsed: unknown = JSON.parse(call.args)
+    if (typeof parsed !== 'object' || parsed === null) return null
+    const path = (parsed as { path?: unknown }).path
+    return typeof path === 'string' && path !== '' ? path : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * A duration as the summary says it: `2m 14s` over a minute, seconds under one,
+ * and `<1s` for a turn that came back before the first tick. Rounding that one
+ * to `0s` reads as a clock that is not running.
+ */
+function elapsedText(ms: number): string {
+  if (ms < 1000) return '<1s'
+  const seconds = Math.round(ms / 1000)
+  if (seconds < 60) return `${seconds}s`
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+}
+
+/** The files a turn changed, with a long list cut short rather than stored whole. */
+function fileList(files: readonly string[]): string {
+  if (files.length === 0) return ''
+  const head = files.slice(0, FILES_LISTED).join(', ')
+  const rest = files.length - FILES_LISTED
+  const named = rest > 0 ? `${head}, and ${rest} more` : head
+  return ` · ${files.length} file${files.length === 1 ? '' : 's'} changed: ${named}`
+}
+
+/**
+ * The line a turn ends on: how much tool work it took, which files came out of
+ * it different, and how long the user waited. It is built here because it is
+ * stored with the transcript, so a session re-opened next week shows the line it
+ * showed live. The model is never sent it.
+ */
+function turnSummary(tools: ToolStats, files: readonly string[], ms: number): string {
+  const calls =
+    tools.calls === 0
+      ? 'no tool calls'
+      : `${tools.calls} tool call${tools.calls === 1 ? '' : 's'}, ${tools.ok} ok, ${tools.failed} failed`
+  return `${calls}${fileList(files)} · ${elapsedText(ms)}`
+}
+
+/**
  * How long to wait before attempt number `attempt + 1`.
  *
  * A provider that sent `Retry-After` is answered on its own terms, capped so a
@@ -180,6 +246,15 @@ export class Session {
   private subagentUsage: TurnUsage = emptyUsage()
   /** What this session's own tool calls came to, for whoever started it. */
   private readonly tally = emptyToolStats()
+  /**
+   * The same three numbers for the turn running now, plus the files it changed
+   * and when it started. The session-wide `tally` cannot answer "what did that
+   * last message cost me", which is the question a user asks with the answer
+   * still on screen, so the turn keeps its own count.
+   */
+  private turnTally = emptyToolStats()
+  private readonly turnFiles = new Set<string>()
+  private turnStartedAt = 0
   // Stop is cooperative: the in-flight request is aborted and the loop ends at
   // the next boundary, leaving the transcript in a shape the model can be
   // asked to continue from.
@@ -246,6 +321,21 @@ export class Session {
     const safe = this.secrets.redact(text)
     this.record('note', safe)
     this.bus.emit({ type: 'session.note', sessionId: this.options.sessionId, turn: this.turn, text: safe, at: Date.now() })
+  }
+
+  /**
+   * What the turn came to. It goes to the window as an event and to the stored
+   * transcript as a note of its own kind. `docs/harness/ui.md` says why it is
+   * not simply another note.
+   */
+  private summarize(text: string): void {
+    // The paths came from tool arguments, which hold `{{secret:name}}` and never
+    // a value, so this scrub should find nothing. `note` and `fault` scrub on the
+    // same reasoning; a stored string that skips the boundary is the one that
+    // eventually carries something.
+    const safe = this.secrets.redact(text)
+    this.record('summary', safe)
+    this.bus.emit({ type: 'session.summary', sessionId: this.options.sessionId, turn: this.turn, text: safe, at: Date.now() })
   }
 
   /**
@@ -402,6 +492,9 @@ export class Session {
   async run(userText: string): Promise<TurnUsage> {
     this.turn += 1
     this.turnUsage = emptyUsage()
+    this.turnTally = emptyToolStats()
+    this.turnFiles.clear()
+    this.turnStartedAt = Date.now()
     this.stopped = false
     this.controller = new AbortController()
     const sessionId = this.options.sessionId
@@ -422,6 +515,11 @@ export class Session {
       throw err
     } finally {
       this.controller = null
+      // What the turn came to, before anything else is folded in, so the line
+      // lands under the turn it is about. Every way out of a turn passes here,
+      // including the error and the stop, which are the endings whose cost the
+      // user most wants to see.
+      this.summarize(turnSummary(this.turnTally, [...this.turnFiles], Date.now() - this.turnStartedAt))
       // A job that finished during the last round of the turn queued its answer
       // and then found no round left to be folded into. The transcript is
       // balanced here on every path out, and the caller writes it immediately
@@ -703,8 +801,16 @@ export class Session {
   /** The window, the transcript and the failure count for one finished call. */
   private commit(call: ToolCall, result: ToolResult): void {
     this.tally.calls += 1
-    if (result.ok) this.tally.ok += 1
-    else this.tally.failed += 1
+    this.turnTally.calls += 1
+    if (result.ok) {
+      this.tally.ok += 1
+      this.turnTally.ok += 1
+      const path = writtenPath(call)
+      if (path !== null) this.turnFiles.add(path)
+    } else {
+      this.tally.failed += 1
+      this.turnTally.failed += 1
+    }
     this.failures = result.ok ? 0 : this.failures + 1
     // Debugging is mostly failures, so a run of them does not end the turn. It
     // is still worth saying out loud, because a model that cannot see the

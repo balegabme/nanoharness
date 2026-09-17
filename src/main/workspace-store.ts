@@ -370,7 +370,7 @@ async function readSession(id: string): Promise<{ messages: ChatMessage[]; notes
   }
 }
 
-const NOTE_KINDS: readonly string[] = ['error', 'stopped', 'note']
+const NOTE_KINDS: readonly string[] = ['error', 'stopped', 'note', 'summary']
 
 /** A note from an older or a corrupt file is dropped rather than rendered raw. */
 function isNote(value: unknown): value is SessionNote {

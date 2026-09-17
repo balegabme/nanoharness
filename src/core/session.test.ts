@@ -5,10 +5,11 @@ import { join } from 'node:path'
 import { Session, defineTool } from './session.js'
 import { emptyUsage } from './types.js'
 import { BASH_TOOL } from '../tools/bash.js'
+import { WRITE_TOOL } from '../tools/write.js'
 import { READ_TOOL } from '../tools/read.js'
 import type { Tool } from './session.js'
 import type { ChatInput, ChatProvider } from './provider.js'
-import type { AppEvent, ChatChunk, ToolResult } from './types.js'
+import type { AppEvent, ChatChunk, SessionNote, ToolResult } from './types.js'
 
 /**
  * How a turn ends. Every ending here is one a user has actually seen: a long
@@ -17,6 +18,15 @@ import type { AppEvent, ChatChunk, ToolResult } from './types.js'
  * journal, because those are what the window draws and what the session file
  * keeps.
  */
+
+/**
+ * The journal minus the line every turn ends on. A test about how a turn ended
+ * is about what the harness had to say, and every turn ends on a summary either
+ * way.
+ */
+function said(session: Session): SessionNote[] {
+  return session.notes.filter(note => note.kind !== 'summary')
+}
 
 /** Rounds in order, because these tests are about the loop, not about routing. */
 class RoundProvider implements ChatProvider {
@@ -80,7 +90,7 @@ describe('a turn that needs a lot of calls', () => {
 
     expect(counting.runs).toBe(20)
     expect(s.transcript.at(-1)).toMatchObject({ role: 'assistant', content: 'twenty files, all read' })
-    expect(s.notes).toEqual([])
+    expect(said(s)).toEqual([])
     expect(events.some(event => event.type === 'session.finished')).toBe(true)
     await rm(cwd, { recursive: true, force: true })
   })
@@ -104,7 +114,7 @@ describe('a model asking for the same thing over and over', () => {
 
     // And the turn stops rather than spinning: one note, on screen and in the
     // session file, that says this is what happened.
-    const stuck = s.notes.at(-1)
+    const stuck = said(s).at(-1)
     expect(stuck?.kind).toBe('note')
     expect(stuck?.text).toContain('round in circles')
     expect(events.some(event => event.type === 'session.note')).toBe(true)
@@ -141,8 +151,8 @@ describe('a turn that comes back with nothing', () => {
 
     await s.run('what changed?')
 
-    expect(s.notes).toHaveLength(1)
-    expect(s.notes[0]?.text).toContain('ended without an answer')
+    expect(said(s)).toHaveLength(1)
+    expect(said(s)[0]?.text).toContain('ended without an answer')
     // Nothing empty is written down: a blank assistant message is a block some
     // providers refuse to be sent back.
     expect(s.transcript.filter(message => message.role === 'assistant')).toEqual([])
@@ -255,6 +265,43 @@ describe('a message that asks for several tool calls', () => {
   })
 })
 
+describe('the line a turn ends on', () => {
+  it('says what the turn cost: its calls, the files it changed, and how long it ran', async () => {
+    const provider = new RoundProvider(round => {
+      if (round === 1) {
+        return [
+          { kind: 'tool', tool: { id: 'w1', name: 'write', args: JSON.stringify({ path: 'notes/one.txt', content: 'one' }) } },
+          { kind: 'tool', tool: { id: 'w2', name: 'write', args: JSON.stringify({ path: 'notes/two.txt', content: 'two' }) } },
+          { kind: 'done', usage: emptyUsage() },
+        ]
+      }
+      // A write outside the session's folder is refused, so the turn has a
+      // failure in it and nothing is added to the list of files it changed.
+      if (round === 2) return call('write', { path: '../escape.txt', content: 'nope' }, 'w3')
+      return say('both files written')
+    })
+    const { session: s, cwd } = await session(provider, [WRITE_TOOL])
+
+    await s.run('write two files')
+
+    const summary = s.notes.at(-1)
+    expect(summary?.kind).toBe('summary')
+    expect(summary?.text).toContain('3 tool calls, 2 ok, 1 failed')
+    expect(summary?.text).toContain('2 files changed: notes/one.txt, notes/two.txt')
+    // A mock provider answers in under a tick, which is the one duration that
+    // has to read as a time rather than as a stopped clock.
+    expect(summary?.text.endsWith('· <1s')).toBe(true)
+    // The summary sits after everything the turn wrote, so a re-opened session
+    // draws it under the answer rather than in the middle of the turn.
+    expect(summary?.after).toBe(s.transcript.length)
+
+    // The next turn counts itself, not the one before it.
+    await s.run('and now say nothing')
+    expect(s.notes.at(-1)?.text).toContain('no tool calls')
+    await rm(cwd, { recursive: true, force: true })
+  })
+})
+
 describe('the notes a session keeps', () => {
   it('come back where they happened when the session is re-opened', async () => {
     const provider = new RoundProvider(round => (round === 1 ? call('count', { step: 1 }, 'c1') : say('done')))
@@ -263,7 +310,7 @@ describe('the notes a session keeps', () => {
     await s.run('do a thing')
     s.note('Background builder finished: wrote two files')
 
-    const [note] = s.notes
+    const note = s.notes.at(-1)
     expect(note?.after).toBe(s.transcript.length)
 
     // A rebuilt session is handed its stored notes and reports them again, so

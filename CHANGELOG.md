@@ -105,6 +105,12 @@ the git log; none of the three is repeated here.
   a tool call in the middle of a turn does not drag it down.
 - End-of-turn blip and a desktop notification when the window is not in front,
   both silenced by the `alerts` bell.
+- A finished tool call is marked with a check or a cross where it used to say
+  `done` or `failed`. A running one still says so.
+- Every turn ends on a summary line under the answer: the tool calls it took and
+  how many failed, the files `edit` and `write` left different, and how long it
+  ran. The line is stored with the transcript, so a re-opened session still
+  shows what each turn cost.
 - Nothing is drawn by the browser: the app has its own confirm and prompt
   sheets, and styles the native select popups through `appearance: base-select`.
 - Three layers of design tokens — a raw ramp, aliases naming what a colour is

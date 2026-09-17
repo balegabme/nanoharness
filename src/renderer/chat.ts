@@ -248,6 +248,17 @@ Every turn added up, subagents included.${share}`
     this.block('error', 'error').textContent = text
   }
 
+  /**
+   * What the turn came to, under the answer it belongs to: how many tool calls
+   * it took, which files it left different, and how long it ran. It is drawn
+   * dimmer than a note, for the reason `docs/harness/ui.md` gives.
+   */
+  summaryBlock(text: string): void {
+    const wrapper = el('div', 'block summary')
+    wrapper.textContent = text
+    this.append(wrapper)
+  }
+
   /** A line about the run itself rather than about the conversation. */
   noteBlock(text: string): void {
     const id = subagentId(text)
@@ -453,6 +464,7 @@ Every turn added up, subagents included.${share}`
         if (note === undefined || note.after > upto) return
         next += 1
         if (note.kind === 'error') this.errorBlock(note.text)
+        else if (note.kind === 'summary') this.summaryBlock(note.text)
         else this.noteBlock(note.text)
       }
     }
@@ -549,6 +561,9 @@ Every turn added up, subagents included.${share}`
         // Why a turn ended the way it did, in the flow rather than in a log
         // nobody opens.
         this.noteBlock(event.text)
+        break
+      case 'session.summary':
+        this.summaryBlock(event.text)
         break
       case 'session.started':
       case 'permission.request':

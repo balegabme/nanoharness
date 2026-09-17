@@ -123,7 +123,9 @@ reasoned for twelve thousand tokens and stored none of it is a transcript with
 the explanation cut out, which is exactly the part you want when the turn went
 wrong. The notes are everything else the window drew: an error, a stop, a turn
 that ended without an answer, a repeated call the harness refused, a background
-job starting and finishing. Each note carries `after`, the number of messages
+job starting and finishing, and the summary line every turn ends on. The summary
+is a kind of its own, for the reason `ui.md` gives. Each note carries `after`,
+the number of messages
 written when it happened, so a re-opened session puts it back between the same
 two blocks the user saw it between. A file written before notes existed, or one
 whose notes are unreadable, opens as a conversation with no notes and no error.

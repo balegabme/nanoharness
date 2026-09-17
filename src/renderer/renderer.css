@@ -1155,6 +1155,19 @@ body {
   background: var(--nh-border-l1);
 }
 
+/* What the turn came to, under the answer. It is the quietest thing in the flow
+   on purpose, so it carries no rule, no label and no border, only dim text.
+   `ui.md` says why. The file list can run long, so it wraps. */
+.block.summary {
+  padding: 0 var(--s2);
+  color: var(--nh-label-caption);
+  font-family: var(--nh-font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  opacity: 0.75;
+  overflow-wrap: anywhere;
+}
+
 /* Disclosure rows: tool calls and thinking. Closed they are one line; the
    whole row is the hit target. */
 details.block {
@@ -1262,7 +1275,12 @@ details.block pre + pre {
   font: 400 11px var(--nh-font-sans);
 }
 
+/* A finished call is marked, not spelled out. The state of twenty cards is read
+   down the column in one pass, and a glyph survives that reading where the words
+   "done" and "failed" have to be taken in one at a time. A running call keeps
+   its word: it is a state, and any glyph for it reads as a third result. */
 .tool.ok > summary::after {
+  content: '\002713';
   color: var(--nh-state-ok);
 }
 
@@ -1271,6 +1289,7 @@ details.block pre + pre {
 }
 
 .tool.failed > summary::after {
+  content: '\002715';
   color: var(--nh-state-error);
 }
 

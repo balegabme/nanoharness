@@ -77,25 +77,34 @@ import type {
 const require = createRequire(import.meta.url)
 const pkg = require('../../package.json') as { version: string }
 
-const EVENT_TYPES: AppEvent['type'][] = [
-  'session.started',
-  'text_delta',
-  'thinking_delta',
-  'tool_call',
-  'tool_result',
-  'usage',
-  'session.error',
-  'round.started',
-  'round.retry',
-  'session.finished',
-  'session.stopped',
-  'session.note',
-  'permission.request',
-  'mcp.status',
-  'job.started',
-  'job.update',
-  'job.finished',
-]
+/**
+ * Every event forwarded to the window, which is every event there is. It is
+ * written as a keyed object rather than a list because a list can be short by
+ * one: an event type added to `AppEvent` and forgotten here reaches nothing and
+ * fails nowhere. Leave one out of this object and the build stops.
+ */
+const FORWARDED: Record<AppEvent['type'], true> = {
+  'session.started': true,
+  text_delta: true,
+  thinking_delta: true,
+  tool_call: true,
+  tool_result: true,
+  usage: true,
+  'session.error': true,
+  'round.started': true,
+  'round.retry': true,
+  'session.finished': true,
+  'session.stopped': true,
+  'session.note': true,
+  'session.summary': true,
+  'permission.request': true,
+  'mcp.status': true,
+  'job.started': true,
+  'job.update': true,
+  'job.finished': true,
+}
+
+const EVENT_TYPES = Object.keys(FORWARDED) as AppEvent['type'][]
 
 /**
  * Where this build's own source is, when it is on disk to be read. A packaged
