@@ -4,7 +4,8 @@ import type { ChatProvider, ChatInput } from '../core/provider.js'
 import type { ChatChunk, ChatMessage, JsonSchema, ThinkingBlock, ToolCall, ToolInput, TurnUsage } from '../core/types.js'
 import { emptyUsage } from '../core/types.js'
 import { endpointURL } from '../core/config.js'
-import type { Effort } from '../core/config.js'
+import { readOffers } from './model-facts.js'
+import type { Effort, ModelOffer } from '../core/config.js'
 
 interface AnthropicOptions {
   apiKey: string
@@ -20,10 +21,9 @@ interface AnthropicOptions {
 const VERSION = '2023-06-01'
 
 /**
- * Anthropic's own API authenticates with `x-api-key`; several
- * Anthropic-compatible gateways (z.ai, and anything driven by Claude Code's
- * `ANTHROPIC_AUTH_TOKEN`) read a bearer token instead. Both headers carry the
- * same key, so one endpoint's convention does not have to be guessed at.
+ * The documented API authenticates with `x-api-key`; several compatible
+ * gateways read a bearer token instead. Both headers carry the same key, so one
+ * endpoint's convention does not have to be guessed at.
  */
 function authHeaders(apiKey: string): Record<string, string> {
   return { 'x-api-key': apiKey, authorization: `Bearer ${apiKey}` }
@@ -33,18 +33,36 @@ function authHeaders(apiKey: string): Record<string, string> {
  * Thinking budgets per effort level. The API demands at least 1,024 tokens and
  * a budget strictly below `max_tokens`, so the two are picked together rather
  * than left to collide (plan §11).
+ *
+ * The scale is the seven levels OpenAI-compatible servers accept, mapped onto
+ * budgets: `minimal` is the API floor of 1,024 tokens, `low` through `high`
+ * double each other, and the two levels above `high` add 16,384 tokens each.
+ *
+ * `max_tokens` is the budget plus room for an answer, which on the top two
+ * levels is more output than several Claude models will produce. The model's
+ * own ceiling is passed in where the endpoint published one, and the request is
+ * cut to fit inside it, keeping the answer's room where there is enough to keep
+ * and splitting the ceiling down the middle where there is not.
  */
-const BUDGETS: Record<Effort, number> = { none: 0, low: 4096, medium: 16384, high: 32768 }
+const BUDGETS: Record<Effort, number> = { none: 0, minimal: 1024, low: 4096, medium: 16384, high: 32768, xhigh: 49152, max: 65536 }
 const BASE_MAX_TOKENS = 8192
+const MIN_BUDGET = 1024
 
-export function budgetFor(effort: Effort): number {
-  return BUDGETS[effort]
+/** The thinking budget for this level on a model that will produce `ceiling` tokens at most. */
+export function budgetFor(effort: Effort, ceiling?: number): number {
+  const budget = BUDGETS[effort]
+  if (budget === 0 || ceiling === undefined || budget + BASE_MAX_TOKENS <= ceiling) return budget
+  const spare = ceiling - BASE_MAX_TOKENS
+  const room = Math.floor(spare >= MIN_BUDGET ? spare : ceiling / 2)
+  // Under the API's floor there is no budget worth sending. Thinking is dropped
+  // and the whole ceiling answers, which beats a request the model refuses.
+  return room < MIN_BUDGET ? 0 : room
 }
 
-export function maxTokensFor(effort: Effort, requested?: number): number {
-  const budget = BUDGETS[effort]
-  const floor = budget === 0 ? BASE_MAX_TOKENS : budget + BASE_MAX_TOKENS
-  return Math.max(requested ?? 0, floor)
+export function maxTokensFor(effort: Effort, ceiling?: number): number {
+  const budget = budgetFor(effort, ceiling)
+  const wanted = budget === 0 ? BASE_MAX_TOKENS : budget + BASE_MAX_TOKENS
+  return ceiling === undefined ? wanted : Math.min(wanted, ceiling)
 }
 
 type ContentBlock =
@@ -123,11 +141,12 @@ export function createAnthropicProvider(opts: AnthropicOptions): ChatProvider {
   return {
     async *stream(input: ChatInput): AsyncGenerator<ChatChunk> {
       const effort: Effort = input.effort ?? 'medium'
-      const budget = budgetFor(effort)
+      const budget = budgetFor(effort, input.maxTokens)
       const body: WireRequest = {
         model: input.model,
         // Unlike the OpenAI wire this field is required, and a thinking budget
-        // has to stay strictly under it, so both are derived from the effort.
+        // has to stay strictly under it, so both are derived from the effort
+        // and from what this model will produce.
         max_tokens: maxTokensFor(effort, input.maxTokens),
         messages: toWireMessages(input.messages),
         stream: true,
@@ -339,7 +358,7 @@ function applyUsage(usage: TurnUsage, wire: WireUsage | undefined): void {
  * OpenAI counterpart: reaching it proves the endpoint answers and the key is
  * accepted, and the ids fill the model picker.
  */
-export async function listModels(opts: AnthropicOptions, timeoutMs = 15_000): Promise<string[]> {
+export async function listModels(opts: AnthropicOptions, timeoutMs = 15_000): Promise<ModelOffer[]> {
   const res = await fetch(endpointURL(opts.baseURL, 'v1', 'models'), {
     headers: { 'anthropic-version': VERSION, ...authHeaders(opts.apiKey) },
     signal: AbortSignal.timeout(timeoutMs),
@@ -354,9 +373,5 @@ export async function listModels(opts: AnthropicOptions, timeoutMs = 15_000): Pr
   if (typeof payload !== 'object' || payload === null) throw new Error('model list was not an object')
   const data = (payload as { data?: unknown }).data
   if (!Array.isArray(data)) throw new Error('model list had no `data` array')
-
-  const ids = data
-    .map(entry => (typeof entry === 'object' && entry !== null ? (entry as { id?: unknown }).id : undefined))
-    .filter((id): id is string => typeof id === 'string' && id.trim() !== '')
-  return [...new Set(ids)].sort((a, b) => a.localeCompare(b))
+  return readOffers(data)
 }

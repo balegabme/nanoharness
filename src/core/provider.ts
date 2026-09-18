@@ -11,7 +11,11 @@ export interface ChatInput {
   messages: ChatMessage[]
   tools: ToolInput[]
   effort?: Effort
-  /** Anthropic requires a ceiling; OpenAI-compatible endpoints ignore it. */
+  /**
+   * The most output this model will produce, where anyone has said. Anthropic
+   * requires a ceiling on every request and the thinking budget is fitted
+   * inside this one; OpenAI-compatible endpoints ignore it.
+   */
   maxTokens?: number
   /** Aborted when the person hits Stop. The provider passes it to `fetch`. */
   signal?: AbortSignal

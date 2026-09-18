@@ -10,6 +10,7 @@ import { READ_TOOL } from '../tools/read.js'
 import type { Tool } from './session.js'
 import type { ChatInput, ChatProvider } from './provider.js'
 import type { AppEvent, ChatChunk, SessionNote, ToolResult } from './types.js'
+import type { ModelFacts } from './config.js'
 
 /**
  * How a turn ends. Every ending here is one a user has actually seen: a long
@@ -68,9 +69,13 @@ function counter(): { tool: Tool; runs: number } {
   }
 }
 
-async function session(provider: ChatProvider, tools: Tool[]): Promise<{ session: Session; events: AppEvent[]; cwd: string }> {
+async function session(provider: ChatProvider, tools: Tool[], facts?: ModelFacts): Promise<{ session: Session; events: AppEvent[]; cwd: string }> {
   const cwd = await mkdtemp(join(tmpdir(), 'nh-session-'))
-  const built = new Session({ sessionId: 'test', cwd, model: 'test-model', systemPrompt: 'You are a test.' }, provider, tools)
+  const built = new Session(
+    { sessionId: 'test', cwd, model: 'test-model', systemPrompt: 'You are a test.', ...(facts === undefined ? {} : { facts }) },
+    provider,
+    tools,
+  )
   const events: AppEvent[] = []
   for (const type of ['session.note', 'session.finished', 'tool_result'] as const) {
     built.bus.on(type, event => void events.push(event))
@@ -140,6 +145,49 @@ describe('a provider whose usage report cannot be read', () => {
     const errors = s.notes.filter(note => note.kind === 'error')
     expect(errors).toHaveLength(1)
     expect(errors[0]?.text).toContain('cost is unknown')
+    await rm(cwd, { recursive: true, force: true })
+  })
+
+  it('leaves the cost off the turn line rather than printing a priced model as $0', async () => {
+    const problem: ChatChunk = { kind: 'done', usage: emptyUsage(), usageProblem: 'usage arrived without prompt_tokens' }
+    const provider = new RoundProvider(() => [{ kind: 'text', text: 'the answer' }, problem])
+    const { session: s, cwd } = await session(provider, [], { input: 3, output: 15 })
+
+    await s.run('first')
+
+    // The turn already said the cost is unknown. A $0 on the same turn's line
+    // would be the harness contradicting itself, and $0 reads as free.
+    // The rest of the line is still there; the cost is the one part left off.
+    const summary = s.notes.filter(note => note.kind === 'summary').at(-1)
+    expect(summary?.text).toBe('no tool calls · <1s')
+    expect(summary?.text).not.toContain('$')
+    await rm(cwd, { recursive: true, force: true })
+  })
+
+  it('prices a turn whose report did arrive', async () => {
+    const counted: ChatChunk = { kind: 'done', usage: { ...emptyUsage(), input: 1_000_000, output: 1_000_000 } }
+    const provider = new RoundProvider(() => [{ kind: 'text', text: 'the answer' }, counted])
+    const { session: s, cwd } = await session(provider, [], { input: 3, output: 15 })
+
+    await s.run('first')
+
+    expect(s.notes.filter(note => note.kind === 'summary').at(-1)?.text).toContain('$18.00')
+    await rm(cwd, { recursive: true, force: true })
+  })
+})
+
+/**
+ * The ceiling the endpoint published travels with the model into every request,
+ * because a model handed more than it will produce refuses the round.
+ */
+describe('a model with a published output ceiling', () => {
+  it('builds the request inside it', async () => {
+    const provider = new RoundProvider(() => say('the answer'))
+    const { session: s, cwd } = await session(provider, [], { input: 3, output: 15, maxOutput: 64_000 })
+
+    await s.run('first')
+
+    expect(provider.seen[0]?.maxTokens).toBe(64_000)
     await rm(cwd, { recursive: true, force: true })
   })
 })

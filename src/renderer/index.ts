@@ -18,6 +18,7 @@ import {
 import { announce, initNotify } from './notify.js'
 import { enqueue, initPermission } from './permission.js'
 import { applyConfig, initSettings, latestConfig, openSettings, refreshConfig } from './settings.js'
+import { clampEffort, EFFORT_LABEL, EFFORTS, factGaps, resolveFacts, WARN } from './facts.js'
 import {
   currentStatus,
   initSidebar,
@@ -52,6 +53,7 @@ const input = must<HTMLTextAreaElement>('input')
 const sendButton = must<HTMLButtonElement>('send')
 const modelSelect = must<HTMLSelectElement>('model-select')
 const effortSelect = must<HTMLSelectElement>('effort-select')
+const effortChip = must<HTMLElement>('effort-chip')
 const agentSelect = must<HTMLSelectElement>('agent-select')
 const chipValues = new Map<HTMLSelectElement, HTMLElement>([
   [must<HTMLSelectElement>('agent-select'), must<HTMLElement>('agent-value')],
@@ -397,10 +399,62 @@ function renderActive(status: ConfigStatus): void {
     modelSelect.append(option)
   }
   modelSelect.title = 'The model a turn runs on, from any provider you have configured'
-  effortSelect.value = active?.effort ?? 'medium'
-  effortSelect.disabled = active === undefined
+  // What the running total is worth, at the rate of whatever is selected now.
+  const facts = active === undefined ? null : resolveFacts(status.providers.find(p => p.id === active.providerId), active.model)
+  chat.setFacts(facts)
+  sub.setFacts(facts)
+  renderEfforts(status)
   syncChips()
   renderShell()
+}
+
+/** The selection whose effort was last written back, so it is not written twice. */
+let corrected: { providerId: string; model: string; effort: Effort } | null = null
+
+/** Which levels this provider says this model takes, or all of them. */
+function offeredEfforts(status: ConfigStatus | null, providerId: string | undefined, model: string | undefined): readonly Effort[] {
+  if (status === null || providerId === undefined || model === undefined) return EFFORTS
+  return resolveFacts(status.providers.find(p => p.id === providerId), model).efforts ?? EFFORTS
+}
+
+/**
+ * The effort chip's options, built from what the provider said about the model
+ * now selected. A model nobody has described keeps all seven levels and wears
+ * the warning mark: there is no list to narrow by, and hiding levels on a guess
+ * would take away one the model has.
+ */
+function renderEfforts(status: ConfigStatus): void {
+  const active = status.active
+  const offered = offeredEfforts(status, active?.providerId, active?.model)
+  const provider = status.providers.find(p => p.id === active?.providerId)
+  const unknown = active !== undefined && factGaps(resolveFacts(provider, active.model)).includes('efforts')
+
+  effortSelect.replaceChildren()
+  for (const effort of offered) {
+    const option = document.createElement('option')
+    option.value = effort
+    option.textContent = unknown ? `${EFFORT_LABEL[effort]} ${WARN}` : EFFORT_LABEL[effort]
+    effortSelect.append(option)
+  }
+  const wanted = active?.effort ?? 'medium'
+  const settled = clampEffort(offered, wanted)
+  effortSelect.value = settled
+  effortSelect.disabled = active === undefined
+  effortChip.classList.toggle('unknown', unknown)
+  effortSelect.title = unknown
+    ? `${WARN} ${provider?.name ?? 'This endpoint'} did not say which levels ${active?.model ?? 'this model'} takes, so all of them are on offer. Settings has a field for them.`
+    : 'How hard the model thinks. OpenAI-compatible: reasoning_effort. Anthropic-compatible: a thinking token budget.'
+  // The saved level is not one this model takes, which is what switching to a
+  // narrower model looks like. Write the clamped one back, so what runs is what
+  // the chip says. A successful write comes back equal and stops this, but a
+  // rejected one comes back unchanged and would ask again forever, so each
+  // selection is only ever corrected once.
+  const fresh =
+    corrected === null || corrected.providerId !== active?.providerId || corrected.model !== active.model || corrected.effort !== wanted
+  if (active !== undefined && settled !== wanted && fresh) {
+    corrected = { providerId: active.providerId, model: active.model, effort: wanted }
+    void switchActive()
+  }
 }
 
 /**
@@ -582,8 +636,12 @@ async function switchActive(): Promise<void> {
   const providerId = picked?.providerId ?? active?.providerId
   const model = picked?.model ?? active?.model
   if (providerId === undefined || model === undefined) return
+  // The chip still holds the levels of the model being left, so a pick that
+  // moves to a narrower model has to be clamped here rather than sent and
+  // refused.
+  const effort = clampEffort(offeredEfforts(latestConfig(), providerId, model), effortSelect.value as Effort)
   try {
-    applyConfig(await nh.setActive({ providerId, model, effort: effortSelect.value as Effort }))
+    applyConfig(await nh.setActive({ providerId, model, effort }))
   } catch (err) {
     chat.errorBlock(message(err))
     await refreshConfig()

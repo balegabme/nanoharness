@@ -2,7 +2,8 @@
 import { EventBus } from './event-bus.js'
 import { ProviderError, RETRY_AFTER_CAP_MS, isRetryable } from './provider.js'
 import type { ChatProvider } from './provider.js'
-import type { Effort } from './config.js'
+import type { Effort, ModelFacts } from './config.js'
+import { costOf, moneyText } from './cost.js'
 import { workspaceGate } from './scope.js'
 import type { AccessGate } from './scope.js'
 import { emptyToolStats, emptyUsage } from './types.js'
@@ -169,12 +170,13 @@ function fileList(files: readonly string[]): string {
  * stored with the transcript, so a session re-opened next week shows the line it
  * showed live. The model is never sent it.
  */
-function turnSummary(tools: ToolStats, files: readonly string[], ms: number): string {
+function turnSummary(tools: ToolStats, files: readonly string[], ms: number, spent: number | null): string {
   const calls =
     tools.calls === 0
       ? 'no tool calls'
       : `${tools.calls} tool call${tools.calls === 1 ? '' : 's'}, ${tools.ok} ok, ${tools.failed} failed`
-  return `${calls}${fileList(files)} · ${elapsedText(ms)}`
+  const cost = spent === null ? '' : ` · ${moneyText(spent)}`
+  return `${calls}${fileList(files)} · ${elapsedText(ms)}${cost}`
 }
 
 /**
@@ -199,6 +201,13 @@ export interface SessionOptions {
   model: string
   systemPrompt: string
   effort?: Effort
+  /**
+   * What is known about this model: what it charges, so a turn can say what it
+   * cost, and the most output it will produce, so a request is built inside
+   * that. Absent when nobody has described it, which leaves the cost off the
+   * line rather than guessed at.
+   */
+  facts?: ModelFacts
   /** Defaults to a hard block outside `cwd`; the app passes one that can ask. */
   access?: AccessGate
   /** Messages from an earlier run of this session, replayed as history. */
@@ -236,6 +245,8 @@ export class Session {
    * and it is the same fact each time.
    */
   private usageProblemNoted = false
+  /** Set for the turn in hand, so its summary line does not price a report it could not read. */
+  private turnUsageProblem = false
   private totalUsage = emptyUsage()
   private turnUsage = emptyUsage()
   /**
@@ -360,6 +371,7 @@ export class Session {
    * loud, once.
    */
   private noteUsageProblem(problem: string): void {
+    this.turnUsageProblem = true
     if (this.usageProblemNoted) return
     this.usageProblemNoted = true
     this.fault(`the provider's usage report could not be read (${problem}); this turn's cost is unknown`)
@@ -492,6 +504,7 @@ export class Session {
   async run(userText: string): Promise<TurnUsage> {
     this.turn += 1
     this.turnUsage = emptyUsage()
+    this.turnUsageProblem = false
     this.turnTally = emptyToolStats()
     this.turnFiles.clear()
     this.turnStartedAt = Date.now()
@@ -519,7 +532,17 @@ export class Session {
       // lands under the turn it is about. Every way out of a turn passes here,
       // including the error and the stop, which are the endings whose cost the
       // user most wants to see.
-      this.summarize(turnSummary(this.turnTally, [...this.turnFiles], Date.now() - this.turnStartedAt))
+      // Priced from the model that actually ran the turn, which is why this is
+      // here and not in the window: the window knows only what is selected now.
+      const facts = this.options.facts
+      // A turn whose usage nobody reported is not a turn that cost nothing, so
+      // the cost is left off the line rather than printed as $0. The tokens are
+      // the test: a report that failed to parse leaves them at zero, and so
+      // does a provider that sends no report at all.
+      const counted = this.turnUsage.input + this.turnUsage.output + this.turnUsage.cacheRead + this.turnUsage.cacheWrite
+      const known = facts !== undefined && counted > 0 && !this.turnUsageProblem
+      const spent = known ? costOf(this.turnUsage, facts) : null
+      this.summarize(turnSummary(this.turnTally, [...this.turnFiles], Date.now() - this.turnStartedAt, spent))
       // A job that finished during the last round of the turn queued its answer
       // and then found no round left to be folded into. The transcript is
       // balanced here on every path out, and the caller writes it immediately
@@ -695,6 +718,7 @@ export class Session {
       messages: this.messages,
       tools: this.tools.map(t => t.input),
       ...(this.options.effort === undefined ? {} : { effort: this.options.effort }),
+      ...(this.options.facts?.maxOutput === undefined ? {} : { maxTokens: this.options.facts.maxOutput }),
       ...(this.controller === null ? {} : { signal: this.controller.signal }),
     })
 

@@ -74,7 +74,7 @@ describe('what a turn cost', () => {
     expect(cacheHitRate(usage)).toBeCloseTo(0.9, 5)
   })
 
-  it('reads DeepSeek\'s own cache field, which is not prompt_tokens_details', async () => {
+  it('reads the other cache field, the one that is not prompt_tokens_details', async () => {
     const usage = await openai([
       'data: {"choices":[{"delta":{"content":"ok"}}]}',
       'data: {"usage":{"prompt_tokens":800,"completion_tokens":20,"prompt_cache_hit_tokens":600,"prompt_cache_miss_tokens":200}}',
@@ -85,7 +85,7 @@ describe('what a turn cost', () => {
     expect(cacheHitRate(usage)).toBeCloseTo(0.75, 5)
   })
 
-  it('leaves the Anthropic counts alone, because that wire already reports them apart', async () => {
+  it('leaves the counts on the other wire alone, because it already reports them apart', async () => {
     const usage = await anthropic([
       'event: message_start',
       'data: {"type":"message_start","message":{"usage":{"input_tokens":1000,"cache_read_input_tokens":9000,"cache_creation_input_tokens":0}}}',
@@ -156,9 +156,9 @@ describe('what a turn cost', () => {
     expect(done.usageProblem).toContain('cached_tokens')
   })
 
-  it('prefers prompt_tokens_details over the DeepSeek field when a server sends both', async () => {
-    // OpenRouter fronts DeepSeek and can pass both spellings through. They are
-    // read in a fixed order so one turn is not counted one way and the next
+  it('prefers prompt_tokens_details over the other field when a server sends both', async () => {
+    // A gateway fronting another endpoint can pass both spellings through. They
+    // are read in a fixed order so one turn is not counted one way and the next
     // another; the standard field wins.
     const usage = await openai([
       'data: {"usage":{"prompt_tokens":1000,"completion_tokens":10,"prompt_cache_hit_tokens":250,"prompt_tokens_details":{"cached_tokens":400}}}',

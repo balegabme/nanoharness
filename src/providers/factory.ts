@@ -2,7 +2,7 @@
 import { createAnthropicProvider, listModels as listAnthropicModels } from './anthropic.js'
 import { createOpenAIProvider, listModels as listOpenAIModels } from './openai.js'
 import type { ChatProvider } from '../core/provider.js'
-import type { ProviderKind } from '../core/config.js'
+import type { ModelOffer, ProviderKind } from '../core/config.js'
 
 export interface Endpoint {
   kind: ProviderKind
@@ -22,7 +22,7 @@ export function createProvider(endpoint: Endpoint): ChatProvider {
     : createOpenAIProvider({ baseURL, apiKey })
 }
 
-export async function listModelsFor(endpoint: Endpoint, timeoutMs?: number): Promise<string[]> {
+export async function listModelsFor(endpoint: Endpoint, timeoutMs?: number): Promise<ModelOffer[]> {
   const { baseURL, apiKey } = endpoint
   return endpoint.kind === 'anthropic'
     ? listAnthropicModels({ baseURL, apiKey }, timeoutMs)

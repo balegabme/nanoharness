@@ -12,6 +12,7 @@ Files:
 - src/renderer/jobs.ts — the running subagents and the buffered stream of each one
 - src/renderer/sidebar.ts — folders and their sessions, search, add and delete
 - src/renderer/metrics.ts — tokens per second and the cache hit rate, kept away from the DOM so both can be tested
+- src/renderer/facts.ts — the effort scale, what a model takes and what it costs; a copy of what src/core/config.ts and src/core/cost.ts define, held against them by src/providers/model-facts.test.ts
 - src/renderer/chat.ts — the message flow, drawn the same for the main agent and for an opened subagent, with streamed text, thinking, tool rows, notes and replayed transcripts
 - src/renderer/settings.ts — the settings sheet, with the provider list, form, probe and model ticking
 - src/renderer/permission.ts — the modal a tool waits on when it reaches outside its folder
@@ -77,8 +78,12 @@ started but not answered yet is otherwise a blank rectangle with a composer
 under it, which reads as broken rather than as ready.
 
 The running total sits in the topbar, to the right of the title, as a row of
-small pills: in, out, cached, hit rate, and tokens per second, plus reasoning
-and cache-written where there are any. A turn that delegates gets one more, **by
+small pills: in, out, cached, what it has spent, hit rate, and tokens per
+second, plus reasoning and cache-written where there are any. The spend appears
+only once a model has a price, and it is the session's whole total put through
+the rate of the model selected now, so a session that switched models is an
+estimate; the tooltip says as much. The exact figure for one turn is on that
+turn's own summary line, priced by the model that ran it. A turn that delegates gets one more, **by
 agents**, which is how much of the output was written by subagents this session
 started. A session can read fifty thousand out while having written a paragraph
 itself, and the single total cannot say which of those happened. The pill is quieter than the ones beside it, because
@@ -223,10 +228,40 @@ composer is the one place to change it, and saving keeps the running model if it
 is still ticked, or falls back to the first ticked one if it is not, so a save
 cannot leave a provider with no model to run.
 
+Each model in the fetched list carries what the fetch found out about it: its
+price per million tokens, and the effort levels it takes. A model nobody has
+described is marked ⚠ and reads what is missing beside its id, because the mark
+has to say what to do about it — and what to do is the cogwheel at the end of
+the row, which opens the levels and the four prices for that model: in, out,
+and the two halves of the cache, which fall back to the input rate when they are
+left blank. The cogwheel stays lit while its fields are open. Typed
+answers outrank the endpoint field by field and survive the next fetch, so
+correcting one wrong price does not throw away an effort list that was right.
+**Clear what I typed** goes back to whatever the endpoint said, which for a
+model it did not describe is the way back to "nobody has said". A price the
+endpoint did give cannot be un-said from here; what can be done to it is to type
+a different one. Leaving a model unmarked-up costs
+nothing: it keeps all seven levels and shows no price.
+
+Fetching the models of a provider that is already saved writes the answer to
+disk on the spot, so the prices and effort levels are stored without a second
+click; the offered list stays on screen with the unticked models still there to
+tick. A provider being added for the first time is not saved by a fetch, because
+the form is still being typed and a Fetch is a look at an endpoint rather than a
+decision to keep it.
+
 Three chips on the composer are the fast path past the sheet entirely: the
-agent picker, a model picker, and an effort picker (`none`, `low`, `medium`,
-`high`, mapped per wire in `providers.md`). Changing any of them retires the
-live sessions, so the next message runs on what the chips say.
+agent picker, a model picker, and an effort picker. Changing any of them retires
+the live sessions, so the next message runs on what the chips say.
+
+The effort picker is built from the model now selected, not from a fixed list.
+The scale has seven levels and no model takes all of them, so offering the same
+seven everywhere meant offering levels the provider would refuse and hiding ones
+it had. What a model takes is a fact about that model, read from the endpoint and
+kept per provider; `providers.md` covers where it comes from and what happens
+when nobody supplies it. Switching to a narrower model clamps the level to the
+nearest one it does take, ties going to the quieter of the two, and writes that
+back — so what a turn runs on is what the chip says.
 
 The model picker holds every configured provider's ticked models, grouped by
 provider name, and picking one from another provider moves the session there in
@@ -305,9 +340,10 @@ the rule, the three answers and why a prompt per path stops being read.
 ## Session model
 
 One live `Session` per session id, built on first use and reused after, so a
-conversation keeps its history in memory and its transcript on disk. Settings
-writes retire the live ones; the stored transcript is what makes that lossless.
-`sessions.md` has the storage and scoping rules.
+conversation keeps its history in memory and its transcript on disk. A settings
+write that changes what a session was built from retires the live ones; the
+stored transcript is what makes that lossless. `sessions.md` has the storage
+and scoping rules.
 
 ## Subagents
 

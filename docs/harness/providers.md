@@ -14,6 +14,8 @@ Files:
 - src/core/provider.ts — interface
 - src/core/config.ts — the provider registry: records, effort, resolution, validation
 - src/main/config-store.ts — settings on disk, keys encrypted by the OS
+- src/providers/model-facts.ts — what a `/models` answer says about each model, where it says anything
+- src/core/cost.ts — what a run of tokens came to, at one model's prices
 
 ## OpenAI provider
 
@@ -42,10 +44,11 @@ line, and `input` means the same thing afterwards.
 `completion_tokens` already contains the reasoning tokens, so `reasoning` is a
 breakdown of `output` rather than a sixth figure to add to it.
 
-The cached count has two spellings. OpenAI sends
-`prompt_tokens_details.cached_tokens`; DeepSeek sends `prompt_cache_hit_tokens`
-at the top level instead, with `prompt_cache_miss_tokens` beside it. Both are
-read, OpenAI's first. A usage report that arrives without its two totals, or
+The cached count has two spellings. The documented one is
+`prompt_tokens_details.cached_tokens`; some servers send
+`prompt_cache_hit_tokens` at the top level instead, with
+`prompt_cache_miss_tokens` beside it. Both are read, the documented one
+first. A usage report that arrives without its two totals, or
 with more cached tokens than prompt tokens, is rejected rather than smoothed
 over: the session keeps the answer and records one fault saying the turn's cost
 is unknown. Capping the count or defaulting it to zero would put a number true
@@ -60,10 +63,10 @@ Key: passed via `Authorization: Bearer`. Effort rides as `reasoning_effort`,
 left out entirely at `none`, because which values a family accepts varies and an
 unknown one either 400s or is silently dropped.
 
-Thinking has no standard field on this wire. DeepSeek and vLLM send
-`reasoning_content`, OpenRouter sends `reasoning`, OpenAI itself sends neither;
-all the known spellings are read, and the thinking block simply stays empty
-against a server that streams none.
+Thinking has no standard field on this wire. Servers that stream it send it as
+`reasoning_content` or as `reasoning`, and the documented shape has neither;
+both spellings are read, and the thinking block stays empty against a server
+that streams none.
 
 ## Anthropic provider
 
@@ -112,24 +115,134 @@ leaking into the session loop:
 
 ## Effort
 
-One neutral scale — `none`, `low`, `medium`, `high` — because the two wires
-express the same idea in different units. The mapping is not invented; each side
-uses the field its own API documents:
+One neutral scale — `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`
+— because the two wires express the same idea in different units. The mapping is
+not invented; each side uses the field its own API documents:
 
 | effort | OpenAI-compatible | Anthropic-compatible |
 |---|---|---|
 | `none` | `reasoning_effort` omitted | no `thinking` field |
+| `minimal` | `reasoning_effort: "minimal"` | `thinking.budget_tokens: 1024` |
 | `low` | `reasoning_effort: "low"` | `thinking.budget_tokens: 4096` |
 | `medium` | `reasoning_effort: "medium"` | `thinking.budget_tokens: 16384` |
 | `high` | `reasoning_effort: "high"` | `thinking.budget_tokens: 32768` |
+| `xhigh` | `reasoning_effort: "xhigh"` | `thinking.budget_tokens: 49152` |
+| `max` | `reasoning_effort: "max"` | `thinking.budget_tokens: 65536` |
 
-`reasoning_effort` is passed through as the same word the API takes. Newer
-families accept more values than these four (`minimal`, `xhigh`), older ones
-accept none at all; the ledger holds the per-family allow-list plan §11 asks
-for. Anthropic has no effort word — it takes a token budget — so the four levels
-become budgets. The floor is the API's own: a budget must be at least 1,024
-tokens and strictly below `max_tokens`, which is why `max_tokens` is derived
-from the budget rather than set independently.
+`reasoning_effort` is passed through as the same word the API takes; `none`
+leaves the field out. No model takes all six words: families differ, and a value
+a model does not know comes back as a 400 or is dropped without a word. Which ones a model does take is a fact about
+that model, so it is read from the endpoint and kept per model rather than
+guessed from the id — see [Model facts](#model-facts).
+
+Anthropic has no effort word — it takes a token budget — so the levels become
+budgets. The floor is the API's own: a budget must be at least 1,024 tokens and
+strictly below `max_tokens`, which is why `max_tokens` is derived from the budget
+rather than set independently. The four original levels kept their budgets when
+the scale was widened, so a session that ran at `medium` still thinks exactly as
+hard as it did.
+
+The top two levels want more output than several Claude models will produce, so
+the request is fitted to the model's own ceiling where anyone has said what it is
+(`maxOutput`, below). `max_tokens` never exceeds it; the budget keeps the answer
+its 8,192 tokens where the ceiling is roomy enough, splits the ceiling in half
+where it is not, and drops to no thinking at all where half is under the API's
+floor. A model nobody has described is asked the way it always was, and a model
+that wants less says so in the error.
+
+## Model facts
+
+Three things about a model are worth knowing before a turn runs on it: which
+effort levels it takes, what it charges, and the most output it will produce.
+`readFacts`
+(`src/providers/model-facts.ts`) reads both out of the `/models` answer, and
+`ModelFacts` in `src/core/config.ts` is what comes back. Prices are stored as US
+dollars per million tokens, because that is the unit vendors quote; every wire
+that carries a price sends dollars per token, and the multiplication happens
+once, here.
+
+There is no standard for any of this. The two documented answers carry an id, an
+owner, a timestamp and sometimes a display name, and nothing about money or
+thinking. Servers that do answer those questions each picked their own field
+names, so the reader knows every spelling anyone has been seen to use:
+
+| shape | prices | effort levels | ceiling |
+|---|---|---|---|
+| a `capabilities` block | — | `capabilities.effort.<level>.supported` | `max_tokens` |
+| a `pricing` block | `pricing.prompt`, `.completion`, `.input_cache_read`, sometimes as strings | — | — |
+| reasoning metadata | — | `metadata.reasoning.supported_efforts` | — |
+| per-token costs | `model_info.input_cost_per_token` and friends, or the same names at the top level | — | — |
+
+A `capabilities` block is the one shape that states the levels outright, so it
+is read first. `none` is added to whatever it names, because on that wire the
+level is the thinking block left out of the request and no model needs
+permission for that; `minimal` is not added, because it is a budget the list does
+not mention and inventing it here is how a 400 arrives mid-turn. A model whose
+`capabilities.thinking.supported` is false takes `none` and nothing else. A
+`capabilities` block that says nothing about effort leaves the levels unknown,
+which marks the model rather than guessing for it.
+
+A field that only says whether a model reasons at all, as `supported_parameters`
+does, is read by nothing: it never names the levels, and turning "reasons" into
+a list of seven would be inventing the answer.
+
+### When nothing describes a model
+
+Most endpoints are in none of those rows. Asked directly, many answer with the
+bare shape — an id, an object type, a timestamp, an owner — and nothing about
+price or thinking. Nothing else is consulted when that happens. The harness
+talks to the endpoints the user configured and to nothing else (plan §16), so a
+third-party price list is not fetched behind their back, and a figure from one
+would in any case be the published rate rather than what this key is billed:
+the same model id at a subscription address and a pay-per-token address of one
+vendor is two different prices.
+
+A model no shape describes ends up with no facts, which is the common case and
+not an error. The settings screen marks it, the composer keeps offering every
+level, and the user can type the answer in: `overrides` on the provider record
+holds what they typed, wins over the endpoint field by field, and survives the
+next fetch. `resolveFacts` does that merge, so one wrong price corrected by hand
+does not throw away an effort list the endpoint got right.
+
+Fetching the models of a provider that is already saved stores what came back
+straight away, key and URL having just been proved by the same call. The ticked
+list, the prices and the effort levels are on disk before the user gets to the
+Save button. A provider being typed in for the first time is left alone until
+they press it.
+
+A settings write that changes the active provider's record — its address, wire
+kind, key or allowlist — or moves the active selection retires the live
+sessions, which rebuild from the stored transcript on their next turn. A write
+that touches another provider's fields, or one carrying nothing but prices and
+effort levels, leaves them running: **Fetch models** makes that write on its
+own, and a fetch must not end a turn running on a different endpoint. The next
+session to be built reads what was learned.
+
+Typing a different address or switching the wire holds the fetched facts and
+the typed corrections out of the save, and `saveProvider` drops what the
+endpoint that is gone had stored when it lands. A field put back before a fetch
+takes them up again. They described the endpoint that used to be there, and the
+same model id at two addresses of one vendor is two different prices.
+
+Effort levels are stored in the order the scale runs, whichever order they
+arrived in. Endpoints tend to list them alphabetically; the composer's picker
+reads the list top to bottom.
+
+## What a turn cost
+
+`costOf` (`src/core/cost.ts`) prices a `TurnUsage` against one model's
+`ModelFacts` and returns dollars, or `null` when the model has no price. Input,
+output and both halves of the cache are charged at their own rate; a cache rate
+nobody has given falls back to the input rate, which is what a provider that
+bills cached reads as ordinary input does. Reasoning tokens are left out on
+purpose: every provider that reports them has already counted them inside the
+output figure, so charging them again would double the most expensive half of
+the bill.
+
+A turn is priced by the model that ran it, in `Session.run`, and the figure goes
+into the summary line stored with the transcript. The running total in the
+corner of the window is priced by whatever model is selected now, so a session
+that changed models mid-way reads as an estimate; its tooltip says so.
 
 ## Configuration
 
@@ -149,8 +262,8 @@ is usable. `resolveConfig` (`src/core/config.ts`) reads what was saved:
 | `<user-data>/credentials.bin` | every API key, encrypted by the OS, indexed by provider id |
 
 A **provider record** is `{id, name, kind, baseURL, models}` — as many as the
-user wants, mixing kinds freely: a local vLLM, an OpenRouter key, z.ai and an
-Anthropic account side by side. The **active selection** is
+user wants, mixing kinds freely: a local server, a gateway and a vendor account
+side by side. The **active selection** is
 `{providerId, model, effort}`: which of them a turn actually runs, switchable
 from the header without opening settings.
 
@@ -159,18 +272,17 @@ from the header without opening settings.
 The base URL must be an absolute `http(s)` URL; trailing slashes are stripped.
 
 The two ecosystems disagree about who owns the version segment. OpenAI clients
-take a base that already ends in it (`https://api.deepseek.com/v1`,
-`https://api.z.ai/api/paas/v4`), Anthropic clients take one without it and add
-`/v1` themselves (`https://api.z.ai/api/anthropic`). People paste whichever
-their provider's page showed them, so `endpointURL` adds the version only when
-the base does not already end in one:
+take a base that already ends in it, Anthropic clients take one without it and
+add `/v1` themselves, and a gateway's path counts as part of the base either
+way. People paste whichever their provider's page showed them, so `endpointURL`
+adds the version only when the base does not already end in one:
 
 | pasted | reaches |
 |---|---|
-| `https://api.deepseek.com/v1` | `https://api.deepseek.com/v1/chat/completions` |
-| `https://api.deepseek.com` | `https://api.deepseek.com/v1/chat/completions` |
-| `https://api.z.ai/api/paas/v4` | `https://api.z.ai/api/paas/v4/chat/completions` |
-| `https://api.z.ai/api/anthropic` | `https://api.z.ai/api/anthropic/v1/messages` |
+| `https://host/v1` | `https://host/v1/chat/completions` |
+| `https://host` | `https://host/v1/chat/completions` |
+| `https://host/api/paas/v4` | `https://host/api/paas/v4/chat/completions` |
+| `https://host/api/anthropic` | `https://host/api/anthropic/v1/messages` |
 
 What does **not** belong in the field is the endpoint path itself: the base ends
 before `/chat/completions` or `/messages`. The settings screen says so under the
@@ -188,22 +300,25 @@ Electron `safeStorage` (DPAPI on Windows, Keychain on macOS, libsecret on
 Linux). Where the OS has no such store, the app refuses to save a key rather
 than falling back to plaintext. Neither file is ever written to the repo.
 
-`models` is the allowlist the user ticked for that provider. Saving refuses an
+`facts` is what the last fetch reported for each model and `overrides` is what
+the user typed over it; both are keyed by model id and both are absent until
+there is something to hold. `models` is the allowlist the user ticked for that
+provider. Saving refuses an
 active model that is not on it, so a session can only ever run something chosen
 on purpose. An empty list means no list — the model is whatever is typed, which
 is how a proxy without `/v1/models` still works.
 
-Every settings write retires the live sessions, so the next turn is built
-against the new endpoint, model or effort rather than the one the window
-started with.
+A settings write that changes the active provider's record or the selection
+retires the live sessions, so the next turn is built against the new endpoint,
+model or effort rather than the one the window started with.
 
 ## Listing models
 
 `listModels` calls `GET {baseURL}/models` — the same path on both wires, each
 with its own auth headers, and the same version rule as every other endpoint —
-and returns sorted, de-duplicated ids. The settings
-screen uses it for both its buttons: reaching the endpoint at all
-is the connection test, and the ids are the model picker. A 404 is reported as
+and returns sorted, de-duplicated ids, each with whatever the answer said about
+it. The settings screen uses it for both its buttons: reaching the endpoint at
+all is the connection test, and the ids are the model picker. A 404 is reported as
 "this server has no model list" rather than as a failure, because plenty of
 OpenAI-compatible proxies do not implement it. Failures come back as values, not
 exceptions — a typo in a URL is an expected outcome of a settings screen — and

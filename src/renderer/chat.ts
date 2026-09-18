@@ -1,8 +1,10 @@
 // doc: docs/harness/ui.md
 import { el, pretty } from './dom.js'
+import { costOf, moneyText } from './facts.js'
 import { hitText, promptTokens, Throughput } from './metrics.js'
 import type { TranscriptMessage } from '../ipc/contract.js'
 import type { AppEvent, SessionNote, TurnUsage } from '../core/types.js'
+import type { ModelFacts } from '../core/config.js'
 
 /**
  * The message flow. It is append-only and streams as the turn runs: thinking
@@ -131,6 +133,10 @@ export class ChatView {
   private roundNodes: HTMLElement[] = []
   /** The subagents' share of the running total, as of the last usage event. */
   private subagentSpend: TurnUsage | null = null
+  /** What the selected model charges, or null while nobody has priced it. */
+  private facts: ModelFacts | null = null
+  /** The totals the usage line is showing, so a repricing can redraw them. */
+  private lastUsage: TurnUsage | null = null
 
   /** Tokens per second for the turn on screen. `metrics.ts` has the arithmetic. */
   private readonly throughput = new Throughput()
@@ -185,6 +191,7 @@ export class ChatView {
    * noticing, cache hit and throughput, carry the accent.
    */
   setUsage(usage: TurnUsage | null): void {
+    this.lastUsage = usage
     const line = this.host.usageLine
     line.replaceChildren()
     line.hidden = usage === null
@@ -199,14 +206,21 @@ export class ChatView {
     // Only Anthropic ever reports a cache write, and a row of pills reading 0
     // on every other provider is a column of noise.
     if (usage.cacheWrite > 0) line.append(metric('written', String(usage.cacheWrite)))
+    const spent = this.facts === null ? null : costOf(usage, this.facts)
+    if (spent !== null) line.append(metric('spent', moneyText(spent), 'cost'))
     if (promptTokens(usage) > 0) line.append(metric('hit', hitText(usage), 'hit'))
     if (usage.reasoning > 0) line.append(metric('reasoning', String(usage.reasoning)))
     const rate = this.throughput.value
     if (rate !== null) line.append(metric('tok/s', rate.toFixed(rate < 10 ? 1 : 0), 'rate'))
     const share = byAgents > 0 ? `
 ${byAgents} of the output was written by subagents this session started.` : ''
+    // The per-turn figure under each answer is priced by the model that ran
+    // that turn. This one prices every token at what the model selected now
+    // charges, so a session that changed models reads as an estimate.
+    const priced = spent === null ? '' : `
+Priced at the rate of the model selected now.`
     line.title = `${usageText(usage)}
-Every turn added up, subagents included.${share}`
+Every turn added up, subagents included.${share}${priced}`
   }
 
   /**
@@ -219,6 +233,16 @@ Every turn added up, subagents included.${share}`
     this.throughput.note(usage, streamMs)
     if (subagent !== undefined) this.subagentSpend = subagent
     this.setUsage(usage)
+  }
+
+  /**
+   * What the model now selected charges, so the running total can carry a
+   * price. The window hands this down because the selection lives there, and
+   * the view redraws so a model switch repriced the line without a new turn.
+   */
+  setFacts(facts: ModelFacts | null): void {
+    this.facts = facts
+    if (this.lastUsage !== null) this.setUsage(this.lastUsage)
   }
 
   /** What a re-opened session has already spent. Nothing was timed, so no rate. */

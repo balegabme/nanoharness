@@ -23,6 +23,7 @@ import { hasUnknownSecret, secretsBlock } from '../core/secrets.js'
 import { flushSecrets, forgetSecret, secretList, secretVault } from './secret-store.js'
 import { Session } from '../core/session.js'
 import { appendUsage } from '../core/usage-log.js'
+import { resolveFacts } from '../core/config.js'
 import { emptyUsage } from '../core/types.js'
 import { IPC_CHANNELS } from '../ipc/contract.js'
 import { configStatus, deleteProvider, loadProviderConfig, probeProvider, saveProvider, setActive } from './config-store.js'
@@ -198,10 +199,12 @@ function epochOf(sessionId: string): number {
 }
 
 /**
- * Drop live sessions and close what they opened. Every settings write does
- * this, so the next turn rebuilds against the new configuration; the stored
- * transcript is what makes it lossless. Leaking an MCP subprocess per save
- * would be a process pile-up nobody sees until the machine slows down.
+ * Drop live sessions and close what they opened, so the next turn rebuilds
+ * against the configuration as it stands; the stored transcript is what makes
+ * it lossless. A settings write that changes what a session is built from does
+ * this, and one carrying only prices and effort levels does not. Leaking an MCP
+ * subprocess per save would be a process pile-up nobody sees until the machine
+ * slows down.
  *
  * Resolves when every server has actually exited, which is what quitting needs;
  * a settings write does not wait.
@@ -356,8 +359,8 @@ function sessionFor(sender: WebContents, sessionId: string): Promise<Session> {
 
 /**
  * What each open session has already been allowed, keyed by session id. A live
- * `Session` is retired and rebuilt whenever settings are saved, a secret is
- * captured or the role is switched; the user's answers were about the session,
+ * `Session` is retired and rebuilt whenever what it was built from changes, a
+ * secret is captured or the role is switched; the user's answers were about the session,
  * not about the process that happened to build it, so they outlive the
  * rebuild. Deleting a session forgets them with it.
  */
@@ -502,6 +505,7 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
       cwd: root,
       model: config.model,
       effort: config.effort,
+      facts: resolveFacts(config.provider, config.model),
       systemPrompt,
       access,
       history: await loadTranscript(sessionId),
@@ -512,6 +516,7 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
         role,
         cwd: root,
         model: config.model,
+        facts: resolveFacts(config.provider, config.model),
         provider,
         access,
         jobs: jobsFor(sender),
@@ -653,12 +658,14 @@ app.whenReady().then(() => {
 
   ipcMain.handle(IPC_CHANNELS.configProbe, (_event: IpcMainInvokeEvent, req: ConfigProbeRequest): Promise<ConfigProbeResult> => probeProvider(req))
 
-  // Every settings write retires the live sessions: they hold a provider built
-  // from the old configuration, so the next turn rebuilds against the new one.
-  // The stored transcript is what makes that lossless.
+  // A settings write that changes what a session is built from retires the live
+  // sessions: they hold a provider built from the old configuration, so the next
+  // turn rebuilds against the new one. The stored transcript is what makes that
+  // lossless. A write that only carries prices and effort levels leaves them
+  // running, because Fetch models stores those on its own and a turn in flight
+  // should not end because somebody looked at the model list.
   ipcMain.handle(IPC_CHANNELS.configSaveProvider, async (_event: IpcMainInvokeEvent, req: ProviderSaveRequest): Promise<ConfigStatus> => {
-    await saveProvider(req)
-    void retire()
+    if (await saveProvider(req)) void retire()
     return configStatus()
   })
 

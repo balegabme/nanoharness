@@ -303,9 +303,9 @@ is every place one can be: the end of a round, the end of the turn, the top of
 the next turn before the user's own message, and immediately when no turn is
 running at all. So a job started early in a long turn is usable before that turn
 ends, one that finishes in the turn's last round is not stranded there, and one
-that lands while the user is away is written to the transcript on the spot. A
-session is retired whenever settings are saved, and a queue nothing is coming to
-drain loses what is in it. The `spawn` description says all of this, so the model
+that lands while the user is away is written to the transcript on the spot.
+Saving settings can retire the session, and a queue nothing is coming to drain
+loses what is in it. The `spawn` description says all of this, so the model
 does not go looking for an output file.
 
 The foreground case has an entry too. Without one it is the least visible thing

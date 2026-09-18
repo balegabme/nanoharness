@@ -4,6 +4,8 @@ import type { ChatProvider, ChatInput } from '../core/provider.js'
 import type { ChatChunk, ChatMessage, JsonSchema, ToolInput, TurnUsage } from '../core/types.js'
 import { emptyUsage } from '../core/types.js'
 import { endpointURL } from '../core/config.js'
+import { readOffers } from './model-facts.js'
+import type { ModelOffer } from '../core/config.js'
 
 interface OpenAIOptions {
   apiKey: string
@@ -12,10 +14,10 @@ interface OpenAIOptions {
 
 interface WireDelta {
   content?: string
-  // Thinking has no standard field on this wire. DeepSeek and vLLM send
-  // `reasoning_content`, OpenRouter sends `reasoning`, and OpenAI itself sends
-  // neither, so all the known spellings are read and the block simply stays
-  // empty where a server streams nothing.
+  // Thinking has no standard field on this wire. Servers that stream it use
+  // one of these two names and the documented shape uses neither, so both
+  // spellings are read and the block stays empty where a server streams
+  // nothing.
   reasoning_content?: string
   reasoning?: string
   tool_calls?: { index: number; id?: string; function?: { name?: string; arguments?: string } }[]
@@ -246,7 +248,7 @@ class UsageError extends Error {}
 /**
  * Validate the usage object and resolve its optional fields. The two
  * `*_details` objects are optional in the spec, a server with caching switched
- * off sends no cached count at all, and DeepSeek spells one of them
+ * off sends no cached count at all, and some servers spell that count
  * `prompt_cache_hit_tokens` instead; those absences mean zero and are settled
  * here. A payload missing its totals, or one that reports more cached tokens
  * than prompt tokens, comes back as an error: the cost is written to an
@@ -284,10 +286,10 @@ function cachedTokens(u: Record<string, unknown>): number {
     if (typeof standard !== 'number') throw new UsageError('cached_tokens was not a number')
     return standard
   }
-  const deepseek = u.prompt_cache_hit_tokens
-  if (deepseek !== undefined) {
-    if (typeof deepseek !== 'number') throw new UsageError('prompt_cache_hit_tokens was not a number')
-    return deepseek
+  const hits = u.prompt_cache_hit_tokens
+  if (hits !== undefined) {
+    if (typeof hits !== 'number') throw new UsageError('prompt_cache_hit_tokens was not a number')
+    return hits
   }
   return 0
 }
@@ -301,7 +303,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
  * is accepted. Not every OpenAI-compatible proxy implements it, so a 404 has to
  * read as "this server has no model list", not "your settings are wrong".
  */
-export async function listModels(opts: OpenAIOptions, timeoutMs = 15_000): Promise<string[]> {
+export async function listModels(opts: OpenAIOptions, timeoutMs = 15_000): Promise<ModelOffer[]> {
   const res = await fetch(endpointURL(opts.baseURL, 'v1', 'models'), {
     headers: { authorization: `Bearer ${opts.apiKey}` },
     signal: AbortSignal.timeout(timeoutMs),
@@ -316,9 +318,5 @@ export async function listModels(opts: OpenAIOptions, timeoutMs = 15_000): Promi
   if (typeof payload !== 'object' || payload === null) throw new Error('model list was not an object')
   const data = (payload as { data?: unknown }).data
   if (!Array.isArray(data)) throw new Error('model list had no `data` array')
-
-  const ids = data
-    .map(entry => (typeof entry === 'object' && entry !== null ? (entry as { id?: unknown }).id : undefined))
-    .filter((id): id is string => typeof id === 'string' && id.trim() !== '')
-  return [...new Set(ids)].sort((a, b) => a.localeCompare(b))
+  return readOffers(data)
 }

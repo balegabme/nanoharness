@@ -297,11 +297,13 @@ which supersedes `provider-schemas-summary.md`
   `input_json_delta.partial_json` (concatenate, parse at `content_block_stop`),
   `thinking_delta`, `signature_delta`.
 - Reasoning: OpenAI `reasoning_effort` values **vary by family**
-  (`none|minimal|low|medium|high|xhigh|max`; o1-mini has none) — maintain a per-model
-  allow-list; invalid values 400 or silently drop. Anthropic
+  (`none|minimal|low|medium|high|xhigh|max`; o1-mini has none) — offer the levels the
+  endpoint names for the model, all seven (marked) where it names none;
+  invalid values 400 or silently drop. Anthropic
   `thinking: {type:"enabled", budget_tokens: N}` with **N ≥ 1,024 and N < max_tokens**
   (interleaved-thinking lifts the ceiling to the context window). Effort
-  `none|low|medium|high` → `reasoning_effort` / budget (0 / 4k / 16k / 32k, clamped).
+  `none|minimal|low|medium|high|xhigh|max` → `reasoning_effort` / budget
+  (0 / 1k / 4k / 16k / 32k / 48k / 64k, clamped to what the model takes).
 - Usage fields: OpenAI `usage.prompt_tokens_details.cached_tokens` +
   `completion_tokens_details.reasoning_tokens`; Anthropic
   `usage.cache_creation_input_tokens` + `cache_read_input_tokens` (+ ephemeral 5m/1h split).
@@ -500,7 +502,9 @@ no keys on runners).
   `.gitignore` belt-and-suspenders (`.env*`, `dist/`, `node_modules/`, `*.log`,
   `.nanoharness/cache/`).
 - Zero telemetry. No outbound network calls except user-configured provider/MCP endpoints.
-  Error reports are never auto-uploaded.
+  Prices and effort levels come out of the endpoint's own `/models` answer or stay unknown
+  for the user to fill in; no third-party model database is consulted. Error reports are
+  never auto-uploaded.
 - `examples/`, `snippets/`, and docs use placeholder keys only; gitleaks gate catches
   regressions.
 - Release: signed git tags + npm publish + desktop installers (electron-builder) from CI on tag.

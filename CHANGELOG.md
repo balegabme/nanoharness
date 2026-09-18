@@ -22,8 +22,26 @@ the git log; none of the three is repeated here.
 - OpenAI-compatible and Anthropic-compatible streaming providers, as wire
   formats rather than vendors. As many configured providers as you want, of
   either kind, side by side.
-- Thinking effort as one neutral setting (`none`, `low`, `medium`, `high`),
-  mapped to `reasoning_effort` or to a thinking budget.
+- Thinking effort as one neutral setting (`none`, `minimal`, `low`, `medium`,
+  `high`, `xhigh`, `max`), mapped to `reasoning_effort` or to a thinking budget.
+  The picker offers the levels the selected model takes, read from the endpoint;
+  switching to a model with a narrower set clamps to the nearest level it has.
+- Each fetched model carries the effort levels it takes, its price per million
+  tokens, and the most output it will produce, wherever the endpoint's `/models`
+  answer says so. Every spelling of those fields anyone has been seen to use is
+  read, and nothing outside the configured endpoint is consulted. A model it
+  describes with none of them is marked with a warning in settings and can be
+  described by hand there. A typed answer outranks the endpoint, field by field,
+  and survives the next fetch. Fetching the models of a provider already saved
+  stores what came back on the spot, so there is no second click to keep it.
+- What a turn cost, from the model's prices and the tokens it used. Input,
+  output and both halves of the cache are charged at their own rate; reasoning
+  tokens are not charged again, because the output count already holds them. The
+  figure ends the turn's summary line, and the running total in the topbar
+  carries what the session has spent.
+- An Anthropic request is built inside the model's own output ceiling, so the
+  two highest effort levels no longer ask a smaller model for more tokens than
+  it will produce and lose the round to a 400.
 - Thinking is stored and replayed where the provider signed it.
 - A system prompt built per session, naming the workspace root, the platform,
   the shell and the date.

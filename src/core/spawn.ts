@@ -5,7 +5,7 @@ import type { Tool } from './session.js'
 import type { AccessGate } from './scope.js'
 import type { ChatProvider } from './provider.js'
 import type { ChatMessage, SessionNote, ToolStats, TurnUsage } from './types.js'
-import type { Effort } from './config.js'
+import type { Effort, ModelFacts } from './config.js'
 import type { AgentRole } from './agents.js'
 import type { JobRegistry, JobView } from './jobs.js'
 import type { SecretVault } from './secrets.js'
@@ -119,6 +119,8 @@ export interface SpawnDeps {
   role: AgentRole
   cwd: string
   model: string
+  /** What is known about that model, so a subagent's turns are priced and capped like the parent's. */
+  facts?: ModelFacts
   provider: ChatProvider
   /** The parent's gate: a subagent is held to exactly the parent's boundary. */
   access: AccessGate
@@ -229,6 +231,7 @@ export function createSpawnHost(deps: SpawnDeps): SpawnHost {
         cwd: deps.cwd,
         model: deps.model,
         systemPrompt: setup.systemPrompt,
+        ...(deps.facts === undefined ? {} : { facts: deps.facts }),
         access: deps.access,
         ...(setup.effort === undefined ? {} : { effort: setup.effort }),
         ...(setup.history === undefined ? {} : { history: setup.history }),

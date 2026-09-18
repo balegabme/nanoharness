@@ -1510,6 +1510,11 @@ details.block pre + pre {
   color: var(--nh-accent);
 }
 
+/* Money reads at a glance, so it is the brightest thing on the line. */
+.metric.cost b {
+  color: var(--nh-label-primary);
+}
+
 /* How much of the output was written by agents this session started. It is an
    aside about the pill beside it rather than a measure of its own, so it is
    quieter than either. */
@@ -2216,11 +2221,14 @@ button.chip:hover:enabled,
   font-size: 12px;
 }
 
+/* One model per line rather than a grid of ids. A row now carries what the
+   model costs and which effort levels it takes, and those do not fit in a
+   240px column beside the id. */
 .model-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 2px var(--s3);
-  max-height: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 320px;
   overflow-y: auto;
 }
 
@@ -2244,6 +2252,114 @@ button.chip:hover:enabled,
 
 .model-row input {
   accent-color: var(--nh-accent-500);
+}
+
+.model-id {
+  flex: none;
+}
+
+/* What the fetch found out about the model, to the right of its id. Dim, because
+   the id is what the row is for. */
+.model-detail {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--nh-label-caption);
+  font-family: var(--nh-font-sans);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Nobody has said what this model takes or costs. Amber rather than red: it is
+   a gap the user can fill, and nothing is broken while it is open. */
+.model-detail.unknown {
+  color: var(--nh-state-warn);
+}
+
+/* The tick and the model's name. The cogwheel is the row's other half and sits
+   outside this, so that pressing it does not tick the box. */
+.model-pick {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+
+/* The cogwheel that opens a model's own settings. The row is a line of text
+   rather than a bar of chrome, so it takes a smaller target than the rest. */
+.model-edit-open {
+  width: 24px;
+  height: 24px;
+}
+
+/* Dim until the row is under the pointer: twenty of these down a list is a lot
+   of chrome for a thing most users never touch. The keyboard is the exception,
+   because a focus ring nobody can see is worse than the clutter. */
+.model-row:not(:hover) .model-edit-open:not(:focus-visible) {
+  opacity: 0.55;
+}
+
+/* Open, the cogwheel stays lit so the fields below have something to belong to. */
+.model-edit-open.on {
+  background: var(--nh-hover);
+  color: var(--nh-label-primary);
+  opacity: 1;
+}
+
+/* The fields behind the cogwheel, indented under the row they belong to. */
+.model-edit {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  margin: 0 0 var(--s2) calc(var(--s3) + var(--s2));
+  padding: var(--s2) var(--s3);
+  border-left: 2px solid var(--nh-state-warn);
+  background: var(--nh-bg-layer-1);
+  font-family: var(--nh-font-sans);
+}
+
+.model-edit-label {
+  width: 100%;
+  color: var(--nh-label-tertiary);
+  font-size: 11px;
+}
+
+.model-efforts,
+.model-costs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.effort-box,
+.price-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--nh-label-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.price-field input {
+  width: 84px;
+  padding: 2px var(--s2);
+  border: 1px solid var(--nh-border-l2);
+  border-radius: var(--nh-radius-chip);
+  background: var(--nh-bg-layer-2);
+  color: var(--nh-label-primary);
+  font: 400 12px var(--nh-font-mono);
+}
+
+/* The effort chip when the harness is offering every level because nobody said
+   which ones exist. The mark is on the options too, so the reason travels with
+   the list once it is open. */
+.chip-select.unknown {
+  color: var(--nh-state-warn);
 }
 
 .providers {

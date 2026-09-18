@@ -223,9 +223,10 @@ commands" so the size of the grant is on the label.
 
 Grants live in memory. Closing the app forgets them; nothing on disk records
 that a session was ever allowed out of its folder. A grant also outlives the
-live session being rebuilt, which happens on every settings save, secret
-capture and role switch, because it was an answer about that session. Deleting
-the session forgets it.
+live session being rebuilt, which happens when a settings write changes what
+the session was built from, when a secret is captured and when the role is
+switched, because it was an answer about that session. Deleting the session
+forgets it.
 
 One directory is readable without a prompt: the NanoHarness checkout itself,
 when the app is running from source. The harness editor is the one role told in

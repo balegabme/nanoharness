@@ -95,9 +95,10 @@ Renderer talks to the main process over typed channels (`src/ipc/contract.ts`).
 `config:get` reports whether a session can start at all and lists the configured
 providers. `config:save-provider`, `config:delete-provider` and
 `config:set-active` change them — the first two edit the registry, the third
-switches provider, model or effort from the header — and each retires the live
-sessions so the next turn picks up the change. `config:probe` asks an endpoint
-what it offers, which doubles as the connection test.
+switches provider, model or effort from the header. A write that changes what a
+running session was built from retires it, so the next turn picks up the
+change. `config:probe` asks an endpoint what it offers, which doubles as the
+connection test.
 
 `workspace:list`, `workspace:add` and `workspace:remove` are the folders in the
 sidebar; `session:create`, `session:open` and `session:delete` are the

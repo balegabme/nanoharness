@@ -8,13 +8,123 @@ export type ProviderKind = 'openai' | 'anthropic'
  * How hard the model should think. One neutral scale across vendors: OpenAI
  * gets `reasoning_effort`, Anthropic gets a thinking budget, and a model that
  * supports neither ignores it (plan §11).
+ *
+ * These are every value an OpenAI-compatible server accepts today. Which of
+ * them a given model accepts varies by family, and an unknown one comes back as
+ * a 400 or is dropped without a word, so the picker narrows this list per model
+ * from `ModelFacts` instead of offering all seven everywhere.
  */
-export type Effort = 'none' | 'low' | 'medium' | 'high'
+export type Effort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
-export const EFFORTS: readonly Effort[] = ['none', 'low', 'medium', 'high']
+export const EFFORTS: readonly Effort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 
 export function isEffort(value: unknown): value is Effort {
   return typeof value === 'string' && (EFFORTS as readonly string[]).includes(value)
+}
+
+/**
+ * A list of levels in the order the scale runs, low to high. Endpoints answer in
+ * whatever order they please — Anthropic's block is alphabetical — and this list
+ * becomes the picker in the composer, where `max, low, high` would be a scale
+ * nobody can read.
+ */
+export function sortEfforts(efforts: readonly Effort[]): Effort[] {
+  return EFFORTS.filter(effort => efforts.includes(effort))
+}
+
+/**
+ * The nearest level a model actually takes, when the one in hand is not one.
+ * Switching to a narrower model is how that happens, and a level the provider
+ * does not know is a 400 mid-turn, so nothing sends an unclamped one.
+ *
+ * src/renderer/facts.ts holds the same function for the window, which cannot
+ * import this file; src/providers/model-facts.test.ts fails when they drift.
+ */
+export function clampEffort(offered: readonly Effort[], wanted: Effort): Effort {
+  if (offered.includes(wanted)) return wanted
+  const from = EFFORTS.indexOf(wanted)
+  let best: Effort | undefined
+  let nearest = Number.POSITIVE_INFINITY
+  // The nearest level on the scale, so leaving a model for one with no `max`
+  // lands on `high` rather than back at `none`. Walking only downwards would
+  // strand `minimal` at the bottom on a model whose lowest level is `low`.
+  for (const effort of EFFORTS) {
+    if (!offered.includes(effort)) continue
+    const distance = Math.abs(EFFORTS.indexOf(effort) - from)
+    // Ties go to the quieter level, since EFFORTS is walked low to high and the
+    // cheaper of two equally close levels is the safer thing to pick for
+    // somebody who did not choose it.
+    if (distance < nearest) {
+      best = effort
+      nearest = distance
+    }
+  }
+  return best ?? wanted
+}
+
+/**
+ * What is known about one model: which effort levels it takes, and what it
+ * charges. Every field is optional because most endpoints answer `/v1/models`
+ * with an id, an owner and a timestamp and nothing else.
+ *
+ * Prices are US dollars per million tokens, which is how vendors quote them.
+ * The wire gives dollars per token; `readFacts` does the multiplication once so
+ * nothing above it has to remember the scale.
+ */
+export interface ModelFacts {
+  efforts?: Effort[]
+  input?: number
+  output?: number
+  cacheRead?: number
+  cacheWrite?: number
+  /**
+   * The largest `max_tokens` the model accepts, where the endpoint publishes
+   * it per model. Where nobody says, the request is built at full size and a
+   * model that wants less says so in the error.
+   */
+  maxOutput?: number
+}
+
+/** The priced halves of a model, in the order the settings screen shows them. */
+export const PRICES = ['input', 'output', 'cacheRead', 'cacheWrite'] as const
+
+export type PriceKey = (typeof PRICES)[number]
+
+/** One model an endpoint offers, with whatever it said about it. */
+export interface ModelOffer {
+  id: string
+  facts: ModelFacts
+}
+
+/** Which halves of a model's facts nobody has supplied. */
+export type FactGap = 'efforts' | 'cost'
+
+export function factGaps(facts: ModelFacts | undefined): FactGap[] {
+  const gaps: FactGap[] = []
+  if (facts?.efforts === undefined || facts.efforts.length === 0) gaps.push('efforts')
+  if (facts?.input === undefined || facts.output === undefined) gaps.push('cost')
+  return gaps
+}
+
+/**
+ * What to believe about a model. The endpoint's answer is the base and the
+ * user's typing wins field by field, so correcting a wrong price by hand does
+ * not throw away an effort list the endpoint got right, and a later fetch does
+ * not throw away the correction.
+ */
+export function resolveFacts(provider: ProviderRecord, model: string): ModelFacts {
+  const reported = provider.facts?.[model] ?? {}
+  const typed = provider.overrides?.[model] ?? {}
+  const merged: ModelFacts = {}
+  const efforts = typed.efforts ?? reported.efforts
+  if (efforts !== undefined && efforts.length > 0) merged.efforts = [...efforts]
+  for (const key of PRICES) {
+    const value = typed[key] ?? reported[key]
+    if (value !== undefined) merged[key] = value
+  }
+  const maxOutput = typed.maxOutput ?? reported.maxOutput
+  if (maxOutput !== undefined) merged.maxOutput = maxOutput
+  return merged
 }
 
 /**
@@ -24,7 +134,7 @@ export function isEffort(value: unknown): value is Effort {
  */
 export interface ProviderRecord {
   id: string
-  /** What the user calls it: "z.ai", "opencode", "local vLLM". */
+  /** Whatever the user calls it: a vendor's name, a gateway's, "local". */
   name: string
   kind: ProviderKind
   baseURL: string
@@ -34,6 +144,10 @@ export interface ProviderRecord {
    * Empty means "no list" — whatever model id is selected is used as typed.
    */
   models: string[]
+  /** What the last fetch learned about each model, by model id. */
+  facts?: Record<string, ModelFacts>
+  /** What the user typed for a model. Outranks `facts`, and survives a fetch. */
+  overrides?: Record<string, ModelFacts>
 }
 
 /** Which provider and model a new session starts with. */
@@ -116,9 +230,9 @@ const VERSIONED = /\/v\d+[a-z0-9]*$/i
 
 /**
  * Join a base URL to an endpoint path, adding the version segment only when the
- * base does not already carry one. `https://api.z.ai/api/paas/v4` and
- * `https://api.deepseek.com` therefore both reach `/chat/completions`, and no
- * URL ends up with `/v1/v1/`.
+ * base does not already carry one. A base pasted as `https://host/api/paas/v4`
+ * and one pasted as `https://host` therefore both reach `/chat/completions`,
+ * and no URL ends up with `/v1/v1/`.
  */
 export function endpointURL(baseURL: string, version: string, path: string): string {
   const base = normalizeBaseURL(baseURL)
@@ -225,7 +339,49 @@ function parseProvider(value: unknown): ProviderRecord | null {
   if (id === undefined || baseURL === undefined) return null
   const kind: ProviderKind = record.kind === 'anthropic' ? 'anthropic' : 'openai'
   const models = Array.isArray(record.models) ? record.models.filter((m): m is string => typeof m === 'string') : []
-  return { id, name: text(record.name) ?? hostOf(baseURL), kind, baseURL, models }
+  const provider: ProviderRecord = { id, name: text(record.name) ?? hostOf(baseURL), kind, baseURL, models }
+  const facts = parseFactsMap(record.facts)
+  const overrides = parseFactsMap(record.overrides)
+  if (facts !== undefined) provider.facts = facts
+  if (overrides !== undefined) provider.overrides = overrides
+  return provider
+}
+
+/** Read a `{ modelId: facts }` map back, dropping anything malformed. */
+function parseFactsMap(value: unknown): Record<string, ModelFacts> | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const out: Record<string, ModelFacts> = {}
+  for (const [model, raw] of Object.entries(value as Record<string, unknown>)) {
+    const facts = parseFacts(raw)
+    if (facts !== undefined) out[model] = facts
+  }
+  return Object.keys(out).length === 0 ? undefined : out
+}
+
+/**
+ * One model's facts, with anything that is not a fact dropped: a negative
+ * price, a level nobody has heard of, a ceiling of zero. It runs on the way in
+ * from disk and on the way in from the window, because a record written to disk
+ * should be one this harness can read back whatever wrote it.
+ */
+export function parseFacts(value: unknown): ModelFacts | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+  const facts: ModelFacts = {}
+  if (Array.isArray(record.efforts)) {
+    const efforts = sortEfforts(record.efforts.filter(isEffort))
+    if (efforts.length > 0) facts.efforts = efforts
+  }
+  for (const key of PRICES) {
+    const price = record[key]
+    // A negative price is not a price, and NaN through JSON.parse would read as
+    // a number and then print as one.
+    if (typeof price === 'number' && Number.isFinite(price) && price >= 0) facts[key] = price
+  }
+  const published = record.maxOutput
+  const ceiling = typeof published === 'number' && Number.isFinite(published) ? Math.floor(published) : 0
+  if (ceiling > 0) facts.maxOutput = ceiling
+  return Object.keys(facts).length === 0 ? undefined : facts
 }
 
 function parseActive(value: unknown, providers: readonly ProviderRecord[]): ActiveSelection | undefined {

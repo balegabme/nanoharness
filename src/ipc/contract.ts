@@ -1,6 +1,6 @@
 // doc: docs/harness/overview.md
 import type { AgentRole } from '../core/agents.js'
-import type { ActiveSelection, Effort, ProviderKind, ProviderRecord } from '../core/config.js'
+import type { ActiveSelection, Effort, ModelFacts, ModelOffer, ProviderKind, ProviderRecord } from '../core/config.js'
 import type { JobState, JobView } from '../core/jobs.js'
 import type { AccessIntent } from '../core/scope.js'
 import type { SpawnMode } from '../core/spawn.js'
@@ -218,6 +218,14 @@ export interface ProviderSaveRequest {
   baseURL: string
   /** The models this provider may run. Empty means "whatever is typed". */
   models: string[]
+  /** What the last fetch learned, by model id. Omit to keep what is stored. */
+  facts?: Record<string, ModelFacts>
+  /**
+   * What the user typed for a model the fetch found nothing useful about, by
+   * model id. Omit to keep what is stored; a model mapped to `null` is cleared,
+   * which is the only way back to "nobody has said".
+   */
+  overrides?: Record<string, ModelFacts | null>
   /** Omit to keep the key already stored for this provider. */
   apiKey?: string
   /**
@@ -244,7 +252,7 @@ export interface ConfigProbeRequest {
   providerId?: string
 }
 
-export type ConfigProbeResult = { ok: true; models: string[] } | { ok: false; error: string }
+export type ConfigProbeResult = { ok: true; models: ModelOffer[] } | { ok: false; error: string }
 
 /** The only surface the renderer gets. Exposed by the preload script. */
 export interface NanoBridge {
