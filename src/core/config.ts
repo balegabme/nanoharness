@@ -1,5 +1,7 @@
 // doc: docs/harness/providers.md
 import { randomUUID } from 'node:crypto'
+import { isPermissionMode } from './approval.js'
+import type { ApprovalCandidate, ApprovalConfig, ApprovalRules, PermissionMode } from './approval.js'
 
 /** The two wire formats NanoHarness speaks. */
 export type ProviderKind = 'openai' | 'anthropic'
@@ -7,12 +9,9 @@ export type ProviderKind = 'openai' | 'anthropic'
 /**
  * How hard the model should think. One neutral scale across vendors: OpenAI
  * gets `reasoning_effort`, Anthropic gets a thinking budget, and a model that
- * supports neither ignores it (plan §11).
- *
- * These are every value an OpenAI-compatible server accepts today. Which of
- * them a given model accepts varies by family, and an unknown one comes back as
- * a 400 or is dropped without a word, so the picker narrows this list per model
- * from `ModelFacts` instead of offering all seven everywhere.
+ * supports neither ignores it (plan §11). Which of these a given model takes
+ * varies by family and an unknown one is a 400, so the picker narrows the list
+ * per model from `ModelFacts`.
  */
 export type Effort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
@@ -23,10 +22,9 @@ export function isEffort(value: unknown): value is Effort {
 }
 
 /**
- * A list of levels in the order the scale runs, low to high. Endpoints answer in
- * whatever order they please — Anthropic's block is alphabetical — and this list
- * becomes the picker in the composer, where `max, low, high` would be a scale
- * nobody can read.
+ * A list of levels in the order the scale runs, low to high. Endpoints answer
+ * in whatever order they please (Anthropic's block is alphabetical), and this
+ * list is what orders the picker in the composer.
  */
 export function sortEfforts(efforts: readonly Effort[]): Effort[] {
   return EFFORTS.filter(effort => efforts.includes(effort))
@@ -34,26 +32,23 @@ export function sortEfforts(efforts: readonly Effort[]): Effort[] {
 
 /**
  * The nearest level a model actually takes, when the one in hand is not one.
- * Switching to a narrower model is how that happens, and a level the provider
- * does not know is a 400 mid-turn, so nothing sends an unclamped one.
- *
- * src/renderer/facts.ts holds the same function for the window, which cannot
- * import this file; src/providers/model-facts.test.ts fails when they drift.
+ * A level the provider does not know is a 400 mid-turn, so nothing sends an
+ * unclamped one. src/renderer/facts.ts holds a copy for the window, which
+ * cannot import this file; src/providers/model-facts.test.ts pins the two.
  */
 export function clampEffort(offered: readonly Effort[], wanted: Effort): Effort {
   if (offered.includes(wanted)) return wanted
   const from = EFFORTS.indexOf(wanted)
   let best: Effort | undefined
   let nearest = Number.POSITIVE_INFINITY
-  // The nearest level on the scale, so leaving a model for one with no `max`
-  // lands on `high` rather than back at `none`. Walking only downwards would
-  // strand `minimal` at the bottom on a model whose lowest level is `low`.
+  // The nearest level on the scale in either direction, so leaving a model for
+  // one with no `max` lands on `high`, and `minimal` on a model whose lowest
+  // level is `low` moves up rather than being stranded.
   for (const effort of EFFORTS) {
     if (!offered.includes(effort)) continue
     const distance = Math.abs(EFFORTS.indexOf(effort) - from)
-    // Ties go to the quieter level, since EFFORTS is walked low to high and the
-    // cheaper of two equally close levels is the safer thing to pick for
-    // somebody who did not choose it.
+    // Ties go to the quieter level: EFFORTS is walked low to high and only a
+    // strictly nearer level replaces the one already found.
     if (distance < nearest) {
       best = effort
       nearest = distance
@@ -65,11 +60,8 @@ export function clampEffort(offered: readonly Effort[], wanted: Effort): Effort 
 /**
  * What is known about one model: which effort levels it takes, and what it
  * charges. Every field is optional because most endpoints answer `/v1/models`
- * with an id, an owner and a timestamp and nothing else.
- *
- * Prices are US dollars per million tokens, which is how vendors quote them.
- * The wire gives dollars per token; `readFacts` does the multiplication once so
- * nothing above it has to remember the scale.
+ * with an id, an owner and a timestamp and nothing else. Prices are US dollars
+ * per million tokens, converted once in `readFacts`.
  */
 export interface ModelFacts {
   efforts?: Effort[]
@@ -128,7 +120,7 @@ export function resolveFacts(provider: ProviderRecord, model: string): ModelFact
 }
 
 /**
- * One configured endpoint. The key is not here on purpose — it lives in the
+ * One configured endpoint. The key is deliberately absent: it lives in the
  * OS-encrypted store, keyed by `id`, so this record stays safe to read, copy or
  * paste into an issue (plan §16).
  */
@@ -141,7 +133,7 @@ export interface ProviderRecord {
   /**
    * The models the user ticked out of what the endpoint offers. Everything else
    * stays out of reach, so a session can only run something chosen on purpose.
-   * Empty means "no list" — whatever model id is selected is used as typed.
+   * Empty means "no list": whatever model id is selected is used as typed.
    */
   models: string[]
   /** What the last fetch learned about each model, by model id. */
@@ -161,6 +153,14 @@ export interface ActiveSelection {
 export interface StoredConfig {
   providers: ProviderRecord[]
   active?: ActiveSelection
+  /**
+   * Which model auto mode asks, and any rules the user added. Safe to commit
+   * for the same reason the rest of this file is: it names a provider by id and
+   * the key for that id lives in the OS store.
+   */
+  approval?: ApprovalConfig
+  /** The mode a new session starts in. `ask` when nobody has chosen. */
+  permissionMode?: PermissionMode
 }
 
 /** Everything a session needs to reach a provider. */
@@ -206,7 +206,7 @@ export function normalizeBaseURL(value: string): string {
   return value.replace(/\/+$/, '')
 }
 
-/** True for an absolute http(s) URL — the only thing a provider can call. */
+/** True for an absolute http(s) URL, the only thing a provider can call. */
 export function isUsableBaseURL(value: string): boolean {
   let url: URL
   try {
@@ -222,9 +222,9 @@ export function newProviderId(): string {
 }
 
 // A base URL that already names an API version: `.../v1`, `.../v1beta`,
-// `.../api/paas/v4`. The two ecosystems disagree about who owns that segment -
+// `.../api/paas/v4`. The two ecosystems disagree about who owns that segment.
 // OpenAI clients take a base that ends in `/v1`, Anthropic clients take one
-// without it and add `/v1` themselves - and people paste whichever their
+// without it and add `/v1` themselves, and people paste whichever their
 // provider's page showed them.
 const VERSIONED = /\/v\d+[a-z0-9]*$/i
 
@@ -247,8 +247,7 @@ export function findProvider(stored: StoredConfig, id: string | undefined): Prov
 /**
  * Read the saved settings and demand a usable result. The settings screen is
  * the only way in: a provider has to be configured before anything can run, so
- * there is one place to do it rather than a screen and a set of environment
- * variables that quietly outrank it.
+ * there is one place to do it and no environment variable outranks it.
  */
 export function resolveConfig(sources: ConfigSources = {}): ProviderConfig {
   const stored = sources.stored ?? { providers: [] }
@@ -318,6 +317,9 @@ export function parseStored(parsed: unknown): StoredConfig {
     const stored: StoredConfig = { providers }
     const active = parseActive(record.active, providers)
     if (active !== undefined) stored.active = active
+    const approval = parseApproval(record.approval)
+    if (approval !== undefined) stored.approval = approval
+    if (isPermissionMode(record.permissionMode)) stored.permissionMode = record.permissionMode
     return stored
   }
 
@@ -382,6 +384,52 @@ export function parseFacts(value: unknown): ModelFacts | undefined {
   const ceiling = typeof published === 'number' && Number.isFinite(published) ? Math.floor(published) : 0
   if (ceiling > 0) facts.maxOutput = ceiling
   return Object.keys(facts).length === 0 ? undefined : facts
+}
+
+/**
+ * Read auto mode's configuration back, dropping anything malformed. A candidate
+ * naming a provider that is gone is kept rather than swept: it may be re-added
+ * under the same id, and `approvalProblem` reports the gap in words.
+ */
+export function parseApproval(value: unknown): ApprovalConfig | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+  const candidates: ApprovalCandidate[] = []
+  if (Array.isArray(record.candidates)) {
+    for (const raw of record.candidates) {
+      if (typeof raw !== 'object' || raw === null) continue
+      const { providerId, model } = raw as Record<string, unknown>
+      const id = text(providerId)
+      const name = text(model)
+      if (id === undefined || name === undefined) continue
+      candidates.push({ providerId: id, model: name })
+    }
+  }
+  const config: ApprovalConfig = { candidates }
+  if (isEffort(record.effort)) config.effort = record.effort
+  const rules = parseRules(record.rules)
+  if (rules !== undefined) config.rules = rules
+  return config
+}
+
+/**
+ * The user's own rules. Every bucket is optional and an absent one is empty,
+ * never a reason to discard the rest: a settings file with one bad section
+ * should lose that section, not the never-allow list next to it.
+ */
+function parseRules(value: unknown): ApprovalRules | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+  const rules: ApprovalRules = { hardDeny: [], softDeny: [], allow: [], environment: [] }
+  let any = false
+  for (const key of ['hardDeny', 'softDeny', 'allow', 'environment'] as const) {
+    const list = record[key]
+    if (!Array.isArray(list)) continue
+    const lines = list.map(text).filter((line): line is string => line !== undefined)
+    if (lines.length > 0) any = true
+    rules[key] = lines
+  }
+  return any ? rules : undefined
 }
 
 function parseActive(value: unknown, providers: readonly ProviderRecord[]): ActiveSelection | undefined {

@@ -50,8 +50,51 @@ the git log; none of the three is repeated here.
   appends a nudge to the result and carries on.
 - `src/core/roots.ts` separates the workspace root from the harness root.
 
+**Permissions**
+- Auto-approve mode, for the run nobody is watching: a task that goes for an
+  hour while you are out. A session answers permission questions either by
+  asking the person (the default, and what it always did) or by handing them to
+  a second model. Work inside the session folder never asks in either mode; what
+  the model sees is a path outside the folder or a whole shell command.
+- The approval model answers **allow or deny, and nothing else**. It never hands
+  a question back, because a verdict meaning "ask the person" would park an
+  unattended run on a dialog two minutes after they left. Where it is unsure it
+  denies, and the run carries on; the prompt tells it in as many words not to
+  deny the ordinary, or the mode finishes nothing.
+- The approval model is any provider and model already configured, given as an
+  ordered ladder: the first rung that answers is pinned for the session, a rung
+  that fails is retried on a short backoff and then unpinned so the next
+  question climbs again, and when every rung fails that is an error carrying
+  every reason. Nothing falls back to allowing.
+- The person is asked in exactly one case: the approval model could not be
+  reached at all, after retries. That is the absence of a verdict rather than
+  one, and it is never read as a yes or a no.
+- The mode cannot be turned on when nothing is configured to ask. The picker
+  says why instead of switching and then prompting for everything.
+- Rules in four buckets: never allow, allow only if the user asked for this
+  specific thing, allow, and facts about the machine. A user's own rules are
+  added to the built-in set and can never replace it. The soft tier is what
+  separates a `git reset --hard` you asked for from one the model decided on.
+- The judge reads the rules, the action, and the user's own messages. Never the
+  assistant's and never tool results: tool output is the part of a conversation
+  an attacker can write into, and a judge that reads it can be argued into
+  approving what it is judging. Leaving it out is cheaper and safer at once.
+- A judge that could not be reached is never turned into a verdict. The
+  permission dialog goes up in its place with the reason printed on it.
+- Every decision, verdict or failure, appends a line to
+  `sessions/<id>.approvals.jsonl` beside the transcript: the action, the
+  verdict, the rule, the model, the latency, the tokens and the cost. Nothing
+  draws it; it is there so a decision nobody saw can still be read afterwards.
+- What the harness spends on its own behalf is counted apart from what the
+  conversation spends. The tokens are in the session total, because they are
+  billed, under a `harness` split of their own, and their cost is summed at the
+  approval model's own prices rather than the session model's.
+- The permission mode is per session and the preference behind it is app-wide:
+  switching one session decides what the next new session starts in, and leaves
+  the open ones alone. The chip says so on hover.
+
 **Agents**
-- Three roles — builder, planner and harness editor — chosen per session. A role
+- Three roles, builder, planner and harness editor, chosen per session. A role
   decides the tools, the shell and what the prompt names. The planner cannot
   write, and its shell says so in the role's own words.
 - `spawn` hands one piece of work to another agent, `clone` (this conversation's
@@ -131,8 +174,8 @@ the git log; none of the three is repeated here.
   shows what each turn cost.
 - Nothing is drawn by the browser: the app has its own confirm and prompt
   sheets, and styles the native select popups through `appearance: base-select`.
-- Three layers of design tokens — a raw ramp, aliases naming what a colour is
-  for, and components that read only aliases — with one easing curve, three
+- Three layers of design tokens, a raw ramp, aliases naming what a colour is
+  for, and components that read only aliases, with one easing curve, three
   durations, and a single spacing and radius vocabulary. Dark only.
 - The brand mark is the window icon, the app icon, and the empty state.
 - A renderer that fails to load writes a banner into the page instead of leaving
@@ -193,3 +236,50 @@ the git log; none of the three is repeated here.
 - A background job still running when the app closes is written into the
   conversation that started it, instead of disappearing with the process while
   the last message promises its report.
+- Which failures are worth retrying is decided by rule rather than by a list of
+  status codes. Every 5xx is retried, along with the three 4xx that mean "not
+  now": 408, 425 and 429. The list it replaces named nine numbers and stopped
+  at 529, so a gateway answering in numbers of its own, such as Cloudflare's 520
+  to 527, was read as a malformed request and the turn gave up on the first
+  attempt.
+  409 is no longer retried: a conflict with the server's state is not resolved
+  by sending the same request again.
+- A broken stream is recognised by its type rather than by its message text. A
+  body that never arrived used to be thrown carrying the 2xx status of the
+  response whose headers were fine, and was only retried because a string
+  comparison caught it first; rewording that sentence would have turned the
+  retry off silently. A connection that never delivered a response is now read
+  from the error code in its `cause` chain instead of from the words "fetch
+  failed", so an expired certificate fails once rather than five times.
+- The approval model's ladder pins the endpoint that answered, not the model
+  name. The same model id offered by two providers matched both rungs, which
+  left the ladder in its configured order and sent every question back through
+  the endpoint that had already failed.
+- One backoff for the whole app. The judge's retries were a second, simpler
+  copy that ignored `Retry-After` and had no jitter, so a rate-limited approval
+  waited 400ms where the session would have waited as long as the provider
+  asked.
+- A shell command takes about 0.45s instead of about 3.5s. The shell was started
+  with `-l` every time, on the stated grounds that this was what put `grep`,
+  `sed` and `curl` on PATH, which was never true; Git Bash prepends those
+  either way. What `-l` genuinely adds is the profile's own PATH, so that is
+  read once per run and handed to every command after, and nothing is lost.
+  Seven eighths of the time an agent spent in the shell was one profile being
+  sourced several hundred times. The read is started when the app starts and
+  nothing ever waits on it: a command that arrives first runs the old way, and
+  so does every command if the read fails outright.
+- Closing an MCP server waits for the process to be gone on both attempts, not
+  just the first. The escalation path sent the second kill and returned
+  immediately, so a `close` that had to escalate reported a stopped server while
+  it was still running, the one thing that function's own documentation
+  promised could not happen, and the directory it was started in could not be
+  deleted afterwards. Delivering the kill and waiting for the child are also
+  counted apart now. On Windows the kill is a `taskkill` walking the process
+  tree, three seconds on an idle machine, and charging that to the child's
+  grace period declared a process that was already dying too stubborn to kill.
+- `pnpm test` passes on a clean Windows checkout. Tests that spawn real
+  subprocesses were failing on Vitest's 5s default, and one of them measured the
+  handshake deadline with a 5s wall-clock threshold that the spawn and the
+  teardown could exceed on their own. A process launch on Windows is a few
+  hundred milliseconds before anything runs, which the old threshold did not
+  allow for.

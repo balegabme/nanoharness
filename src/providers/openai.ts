@@ -1,5 +1,5 @@
 // doc: docs/harness/providers.md
-import { BAD_SSE, NO_BODY, ProviderError, retryAfterMs } from '../core/provider.js'
+import { BAD_SSE, NO_BODY, ProviderError, StreamBrokenError, retryAfterMs } from '../core/provider.js'
 import type { ChatProvider, ChatInput } from '../core/provider.js'
 import type { ChatChunk, ChatMessage, JsonSchema, ToolInput, TurnUsage } from '../core/types.js'
 import { emptyUsage } from '../core/types.js'
@@ -81,8 +81,8 @@ export function createOpenAIProvider(opts: OpenAIOptions): ChatProvider {
         // zero tokens. Compatible servers that do not know the field ignore it.
         stream_options: { include_usage: true },
       }
-      // Which values a family accepts varies, and an unknown one is either a 400
-      // or a silent drop, so "none" simply leaves the field out rather than
+      // Which values a family accepts varies, and an unknown one is either a
+      // 400 or a silent drop, so "none" leaves the field out rather than
       // asserting a level the model may not have (plan §11).
       if (input.effort !== undefined && input.effort !== 'none') body.reasoning_effort = input.effort
       const res = await fetch(endpointURL(opts.baseURL, 'v1', 'chat/completions'), {
@@ -98,7 +98,7 @@ export function createOpenAIProvider(opts: OpenAIOptions): ChatProvider {
         const text = await res.text()
         throw new ProviderError(`provider ${res.status}: ${text.slice(0, 200)}`, res.status, retryAfterMs(res.headers.get('retry-after')))
       }
-      if (!res.body) throw new ProviderError(NO_BODY, res.status)
+      if (!res.body) throw new StreamBrokenError(NO_BODY)
 
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
@@ -158,9 +158,7 @@ export function createOpenAIProvider(opts: OpenAIOptions): ChatProvider {
         if (tc.name) yield { kind: 'tool', tool: { id: tc.id, name: tc.name, args: tc.args } }
       }
       // A round whose usage could not be read still has its answer and tool
-      // calls; the reason rides out here so the session can record it, rather
-      // than a usage report taking down a round the model has already been
-      // paid for.
+      // calls; the reason rides out here so the session can record it.
       yield { kind: 'done', usage, ...(usageProblem === undefined ? {} : { usageProblem }) }
     },
   }
@@ -195,7 +193,7 @@ function parseWire(line: string): WireChunk | null {
   try {
     json = JSON.parse(data)
   } catch {
-    throw new Error(BAD_SSE)
+    throw new StreamBrokenError(BAD_SSE)
   }
   const delta = json.choices?.[0]?.delta
   // A null usage is a server saying it has none, which is not a malformed
@@ -251,8 +249,8 @@ class UsageError extends Error {}
  * off sends no cached count at all, and some servers spell that count
  * `prompt_cache_hit_tokens` instead; those absences mean zero and are settled
  * here. A payload missing its totals, or one that reports more cached tokens
- * than prompt tokens, comes back as an error: the cost is written to an
- * append-only log, and a number invented here would be in it for good.
+ * than prompt tokens, comes back as an error, because the cost goes to an
+ * append-only log.
  */
 function parseUsage(value: unknown): WireUsage {
   if (!isObject(value)) throw new UsageError('the usage field was not an object')
@@ -276,8 +274,7 @@ function parseUsage(value: unknown): WireUsage {
 }
 
 /**
- * The two spellings of the cached count, standard first so a turn is never
- * counted one way on one request and another way on the next.
+ * The two spellings of the cached count, standard first.
  */
 function cachedTokens(u: Record<string, unknown>): number {
   const details = u.prompt_tokens_details

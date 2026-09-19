@@ -18,8 +18,7 @@ function parseArgs(args: Record<string, unknown>): ArgsParse<WriteArgs> {
  * What the file held, '' when there was no file, and null when there was one
  * and its content is not something a diff can be made of: a permission error, a
  * lock, a binary, anything that does not decode as UTF-8. The three cases read
- * differently in the result, because "created" and "overwrote something I
- * cannot show you" are not the same sentence.
+ * differently in the result.
  */
 async function previous(abs: string): Promise<string | null> {
   const raw = await readFile(abs).catch((err: unknown) =>
@@ -48,7 +47,7 @@ export const WRITE_TOOL = defineTool<WriteArgs>({
   parse: parseArgs,
   async run({ path: rel, content }, { access }) {
     const allowed = await access.check(rel, 'write')
-    if (!allowed.ok) return { ok: false, summary: allowed.reason, content: allowed.reason, isError: true }
+    if (!allowed.ok) return { ok: false, summary: allowed.reason, content: allowed.reason, isError: true, prevented: true }
     const abs = allowed.path
     // Read before writing, so an overwrite can say what it replaced. Only a
     // file that is not there diffs against nothing; one that is there and

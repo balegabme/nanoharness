@@ -800,9 +800,8 @@ body {
 }
 
 /* A spawn card opens its subagent and an edit card opens its diff, rather than
-   folding open on arguments nobody reads. The whole head is the target, which
-   is why neither carries a button: a badge would be a second, smaller target
-   for the click the row already takes. */
+   folding open on arguments nobody reads. The whole head is the target, so
+   neither carries a button of its own. */
 .block.tool[data-subagent] > summary,
 .block.tool[data-diff] > summary {
   cursor: pointer;
@@ -1168,6 +1167,58 @@ body {
   overflow-wrap: anywhere;
 }
 
+/* A summary for a turn the permission system stopped something in. It is the
+   same dim line, made openable: the count is in the text either way, and what
+   was stopped is behind one click rather than in the flow, where it would read
+   as another failure rather than as the harness working. */
+.block.summary.prevented > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.block.summary.prevented > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* The count is the link: it is already the word the reader stopped on. */
+.prevented-more {
+  color: var(--nh-state-warn);
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  white-space: nowrap;
+}
+
+.prevented-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  margin: var(--s2) 0 var(--s3);
+  padding-left: var(--s3);
+  border-left: 2px solid var(--nh-state-warn);
+}
+
+.prevented-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  align-items: baseline;
+}
+
+.prevented-tool {
+  color: var(--nh-label-primary);
+}
+
+.prevented-target {
+  color: var(--nh-label-secondary);
+  overflow-wrap: anywhere;
+}
+
+.prevented-reason {
+  margin-top: 2px;
+  font-family: var(--nh-font-sans);
+  overflow-wrap: anywhere;
+}
+
 /* Disclosure rows: tool calls and thinking. Closed they are one line; the
    whole row is the hit target. */
 details.block {
@@ -1312,16 +1363,16 @@ details.block pre + pre {
   }
 }
 
-/* The turn indicator. It lives in the flow rather than in the topbar: what the
-   eye is already on is the conversation, and a word in the corner was read by
-   nobody. Nothing is drawn at all when no turn is running: a permanent "idle"
-   is a light that says the fuse is not blown. */
+/* The turn indicator. It lives in the flow rather than in the topbar, because
+   the conversation is what the eye is already on. Nothing is drawn at all when
+   no turn is running: a permanent "idle" is a light that says the fuse is not
+   blown. */
 .activity {
   display: flex;
   align-items: center;
   gap: var(--s2);
-  /* The same column every message is in: against the scroller's edge it read
-     as a stray line rather than as the turn that is being waited for. */
+  /* The same column every message is in, so it reads as the turn being waited
+     for rather than as a stray line at the edge. */
   width: 100%;
   max-width: var(--nh-column);
   margin: 0 auto;
@@ -1480,9 +1531,8 @@ details.block pre + pre {
    only there to say which number is which.
 
    Centred, not baseline-aligned: `align-items: baseline` lines the number up
-   with its name and then parks the pair at the top of the 22px pill, which is
-   what left the text sitting high in its own box. Both parts carry the same
-   line-height so centring the row centres the text too. */
+   with its name and then parks the pair at the top of the 22px pill. Both
+   parts carry the same line-height, so centring the row centres the text. */
 .metric {
   display: inline-flex;
   align-items: center;
@@ -2221,9 +2271,9 @@ button.chip:hover:enabled,
   font-size: 12px;
 }
 
-/* One model per line rather than a grid of ids. A row now carries what the
-   model costs and which effort levels it takes, and those do not fit in a
-   240px column beside the id. */
+/* One model per line rather than a grid of ids. A row carries what the model
+   costs and which effort levels it takes, and those do not fit in a 240px
+   column beside the id. */
 .model-list {
   display: flex;
   flex-direction: column;
@@ -2296,8 +2346,8 @@ button.chip:hover:enabled,
 }
 
 /* Dim until the row is under the pointer: twenty of these down a list is a lot
-   of chrome for a thing most users never touch. The keyboard is the exception,
-   because a focus ring nobody can see is worse than the clutter. */
+   of chrome for a thing most users never touch. A focused one stays visible,
+   since a focus ring nobody can see is no ring at all. */
 .model-row:not(:hover) .model-edit-open:not(:focus-visible) {
   opacity: 0.55;
 }
@@ -2369,16 +2419,17 @@ button.chip:hover:enabled,
   margin-bottom: var(--s2);
 }
 
-/* What the vault holds. Names, never values: there is nothing this list could
-   do with a key that would not amount to putting it back on screen. */
-.secret-list {
+/* A settings pane's list of things the user has added: the keys the vault
+   holds, the rungs of the approval ladder. Named for the shape rather than for
+   either one, because both panes draw the same row. */
+.entry-list {
   display: flex;
   flex-direction: column;
   gap: var(--s2);
   margin-top: var(--s3);
 }
 
-.secret-row {
+.entry-row {
   display: flex;
   align-items: center;
   gap: var(--s3);
@@ -2388,7 +2439,7 @@ button.chip:hover:enabled,
   background: var(--nh-bg-layer-2);
 }
 
-.secret-text {
+.entry-text {
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -2396,13 +2447,13 @@ button.chip:hover:enabled,
   overflow: hidden;
 }
 
-.secret-name {
+.entry-name {
   color: var(--nh-label-primary);
   font: 400 12px var(--nh-font-mono);
   overflow-wrap: anywhere;
 }
 
-.secret-hint {
+.entry-hint {
   color: var(--nh-label-caption);
   font: 400 11px var(--nh-font-sans);
 }
@@ -2411,14 +2462,50 @@ button.chip:hover:enabled,
   color: var(--nh-state-error);
 }
 
+/* What a row can be done to, at its end. Two buttons at most, so a rung that
+   can be moved up stays the same height as one that cannot. */
+.entry-actions {
+  display: flex;
+  gap: var(--s2);
+  flex-shrink: 0;
+}
+
+.approval-add {
+  display: flex;
+  gap: var(--s2);
+  align-items: center;
+  margin-top: var(--s3);
+}
+
+.approval-add select {
+  flex: 1;
+  min-width: 0;
+}
+
+.approval-effort {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  margin-top: var(--s4);
+  color: var(--nh-label-secondary);
+  font: 400 12px var(--nh-font-sans);
+}
+
+/* A hint that is a warning rather than an aside. Used on the permission dialog
+   when auto mode could not decide and the question came here instead. */
+.hint.warn {
+  color: var(--nh-state-warn);
+}
+
 .provider-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: var(--s2);
 }
 
-/* The card is the row, and removing it is an action on the card rather than a
-   button parked at the bottom of the form that never said which one it meant. */
+/* The card is the row, and removing it is an action on the card rather than on
+   a button at the foot of the form. */
 .provider-row {
   position: relative;
   display: flex;

@@ -2,24 +2,34 @@
 import { ask } from './confirm.js'
 import { el, GLYPH, icon, message, must, relativeTime } from './dom.js'
 import { EFFORTS, factGaps, gapText, PRICE_LABEL, PRICES, priceText, resolveFacts, WARN } from './facts.js'
+import type { ApprovalCandidate, ApprovalConfig } from '../core/approval.js'
 import type { ConfigStatus, NanoBridge, ProviderSaveRequest, ProviderView, SecretView } from '../ipc/contract.js'
 import type { Effort, ModelFacts, PriceKey, ProviderKind } from '../core/config.js'
 
 /**
  * Settings is a sheet over the app, not a screen the app falls back to: the
  * conversation stays where it was. It opens by itself only when nothing can
- * run — no provider saved, or a saved one that no longer resolves.
+ * run: no provider saved, or a saved one that no longer resolves.
  */
 
 const dialog = must<HTMLDialogElement>('settings-dialog')
 const closeButton = must<HTMLButtonElement>('settings-close')
 const navProviders = must<HTMLButtonElement>('pane-providers')
 const navSecrets = must<HTMLButtonElement>('pane-secrets')
+const navApproval = must<HTMLButtonElement>('pane-approval')
 const navAbout = must<HTMLButtonElement>('pane-about')
 const providersPane = must<HTMLElement>('providers-pane')
 const secretsPane = must<HTMLElement>('secrets-pane')
 const secretList = must<HTMLElement>('secret-list')
 const secretsEmpty = must<HTMLElement>('secrets-empty')
+const approvalPane = must<HTMLElement>('approval-pane')
+const approvalProvider = must<HTMLSelectElement>('approval-provider')
+const approvalModel = must<HTMLSelectElement>('approval-model')
+const approvalAdd = must<HTMLButtonElement>('approval-add')
+const approvalList = must<HTMLElement>('approval-list')
+const approvalEmpty = must<HTMLElement>('approval-empty')
+const approvalEffort = must<HTMLSelectElement>('approval-effort')
+const approvalNote = must<HTMLElement>('approval-note')
 const aboutPane = must<HTMLElement>('about-pane')
 const aboutVersion = must<HTMLElement>('about-version')
 
@@ -84,7 +94,7 @@ export function openSettings(pane: SettingsPane = 'providers'): void {
   if (pane === 'providers') setupBase.focus()
 }
 
-export type SettingsPane = 'providers' | 'secrets' | 'about'
+export type SettingsPane = 'providers' | 'secrets' | 'approval' | 'about'
 
 export function closeSettings(): void {
   if (dialog.open) dialog.close()
@@ -93,21 +103,135 @@ export function closeSettings(): void {
 function showPane(pane: SettingsPane): void {
   providersPane.hidden = pane !== 'providers'
   secretsPane.hidden = pane !== 'secrets'
+  approvalPane.hidden = pane !== 'approval'
   aboutPane.hidden = pane !== 'about'
   navProviders.classList.toggle('current', pane === 'providers')
   navSecrets.classList.toggle('current', pane === 'secrets')
+  navApproval.classList.toggle('current', pane === 'approval')
   navAbout.classList.toggle('current', pane === 'about')
   if (pane === 'secrets') void refreshSecrets()
+  if (pane === 'approval') drawApproval()
+}
+
+/**
+ * The approval ladder: which models auto mode may ask, in the order it tries
+ * them.
+ *
+ * Held here while the pane is open and written through on every change, so
+ * there is nothing to leave unsaved.
+ */
+let ladder: ApprovalCandidate[] = []
+
+function drawApproval(): void {
+  const status = lastStatus
+  if (status === null) return
+  ladder = [...(status.approval?.candidates ?? [])]
+
+  // Only providers with a key: a rung that cannot authenticate fails on the
+  // first question.
+  const usable = status.providers.filter(p => p.hasKey)
+  approvalProvider.replaceChildren()
+  for (const provider of usable) {
+    const option = el('option')
+    option.value = provider.id
+    option.textContent = provider.name
+    approvalProvider.append(option)
+  }
+  approvalProvider.disabled = usable.length === 0
+  drawApprovalModels()
+
+  approvalEffort.replaceChildren()
+  for (const effort of EFFORTS) {
+    const option = el('option')
+    option.value = effort
+    option.textContent = effort
+    approvalEffort.append(option)
+  }
+  approvalEffort.value = status.approval?.effort ?? 'low'
+
+  approvalList.replaceChildren()
+  approvalEmpty.hidden = ladder.length > 0
+  ladder.forEach((candidate, index) => {
+    const provider = status.providers.find(p => p.id === candidate.providerId)
+    const row = el('div', 'entry-row')
+    const text = el('div', 'entry-text')
+    text.append(
+      el('code', 'entry-name', candidate.model),
+      // A provider that has been deleted leaves a rung nothing can climb. It
+      // is shown as broken rather than dropped from the list.
+      el('span', 'entry-hint', provider === undefined ? `${WARN} this provider is gone` : `${index + 1}. ${provider.name}`),
+    )
+
+    const actions = el('div', 'entry-actions')
+    if (index > 0) {
+      const up = el('button', 'btn sm outline')
+      up.type = 'button'
+      up.textContent = 'Move up'
+      up.addEventListener('click', () => {
+        const [moved] = ladder.splice(index, 1)
+        if (moved !== undefined) ladder.splice(index - 1, 0, moved)
+        void writeApproval()
+      })
+      actions.append(up)
+    }
+    const remove = el('button', 'btn sm outline danger-text')
+    remove.type = 'button'
+    remove.textContent = 'Remove'
+    remove.addEventListener('click', () => {
+      ladder.splice(index, 1)
+      void writeApproval()
+    })
+    actions.append(remove)
+
+    row.append(text, actions)
+    approvalList.append(row)
+  })
+
+  approvalNote.textContent = status.approvalProblem === undefined ? '' : `${WARN} ${status.approvalProblem}, so auto-approve cannot be turned on.`
+}
+
+/** The models of whichever provider is selected in the add row. */
+function drawApprovalModels(): void {
+  const provider = lastStatus?.providers.find(p => p.id === approvalProvider.value)
+  approvalModel.replaceChildren()
+  for (const model of provider?.models ?? []) {
+    const option = el('option')
+    option.value = model
+    option.textContent = model
+    approvalModel.append(option)
+  }
+  const none = (provider?.models.length ?? 0) === 0
+  approvalModel.disabled = none
+  approvalAdd.disabled = none
+}
+
+async function writeApproval(): Promise<void> {
+  if (bridge === null) return
+  const effort = approvalEffort.value
+  const next: ApprovalConfig = { candidates: ladder, ...(isEffortValue(effort) ? { effort } : {}) }
+  const rules = lastStatus?.approval?.rules
+  if (rules !== undefined) next.rules = rules
+  try {
+    applyConfig(await bridge.saveApproval(next))
+    drawApproval()
+  } catch (err) {
+    // Never silently: the ladder on screen would then disagree with the one
+    // that will actually be asked.
+    approvalNote.textContent = `${WARN} ${message(err)}`
+  }
+}
+
+function isEffortValue(value: string): value is Effort {
+  return (EFFORTS as readonly string[]).includes(value)
 }
 
 /**
  * What the vault holds. Names and vendors only: the value never crosses the
- * bridge, not even here — there is nothing this pane could do with it that
+ * bridge, not even here. There is nothing this pane could do with it that
  * would not amount to putting the key back on screen.
  *
- * The pane exists because capture is automatic and pattern-based, which means
- * it will occasionally take something that was not a key. Without a list, a
- * user who watched that happen has no way to see it or undo it.
+ * The pane exists because capture is automatic and pattern-based, so it will
+ * occasionally take something that was not a key, and that has to be undoable.
  */
 async function refreshSecrets(): Promise<void> {
   if (bridge === null) return
@@ -119,9 +243,9 @@ function drawSecrets(held: readonly SecretView[]): void {
   secretList.replaceChildren()
   secretsEmpty.hidden = held.length > 0
   for (const secret of held) {
-    const row = el('div', 'secret-row')
-    const text = el('div', 'secret-text')
-    text.append(el('code', 'secret-name', `{{secret:${secret.name}}}`), el('span', 'secret-hint', `${secret.hint} · added ${relativeTime(secret.at)}`))
+    const row = el('div', 'entry-row')
+    const text = el('div', 'entry-text')
+    text.append(el('code', 'entry-name', `{{secret:${secret.name}}}`), el('span', 'entry-hint', `${secret.hint} · added ${relativeTime(secret.at)}`))
 
     const forget = el('button', 'btn sm outline danger-text')
     forget.type = 'button'
@@ -140,7 +264,7 @@ async function forgetSecret(name: string): Promise<void> {
   if (bridge === null) return
   const go = await ask({
     title: `Forget ${name}?`,
-    detail: 'The key is deleted. Anything that already references it — this session, or an old one — will send the reference itself.',
+    detail: 'The key is deleted. Anything that already references it, this session or an old one, will send the reference itself.',
     confirmLabel: 'Forget',
   })
   if (!go) return
@@ -150,7 +274,7 @@ async function forgetSecret(name: string): Promise<void> {
 /**
  * Which model a save leaves the provider running. There is no field for it:
  * the composer's model chip is where a model is chosen, so settings only has
- * to keep a working answer — what is running now if it is still allowed, and
+ * to keep a working answer: what is running now if it is still allowed, and
  * otherwise the first model ticked.
  */
 function activeModel(): string {
@@ -176,10 +300,10 @@ function currentKind(): ProviderKind {
  */
 const BASE_HINT: Record<ProviderKind, string> = {
   anthropic:
-    'Everything before /messages — with or without the version segment. ' +
+    'Everything before /messages, with or without the version segment. ' +
     'A gateway path counts as part of it: https://host/v1, https://host/api/anthropic, https://host/provider.',
   openai:
-    'Everything before /chat/completions — with or without the version segment. ' +
+    'Everything before /chat/completions, with or without the version segment. ' +
     'A gateway path counts as part of it: https://host/v1, https://host/api/paas/v4, http://localhost:11434/v1.',
 }
 
@@ -383,7 +507,7 @@ function renderProviders(status: ConfigStatus): void {
     })
 
     // Removing a provider is an act on one card, so the control is on that
-    // card. As a button at the foot of the form it named nothing in particular.
+    // card rather than at the foot of the form.
     const remove = el('button', 'icon-btn tiny danger provider-remove')
     remove.type = 'button'
     remove.append(icon(GLYPH.close, 12))
@@ -527,9 +651,8 @@ async function probe(intent: 'test' | 'fetch'): Promise<void> {
       // A fetch is a look at an endpoint rather than a choice to run it, so the
       // write it makes on its own does not move the active selection.
       const saved = await saveSetup(true)
-      // Saying it is stored where the user cannot see it would be saying
-      // nothing, so a refusal is repeated here, next to the list it applies to.
-      // A provider switch or an edit during the write nulls `fetched`, and the
+      // A refusal is repeated here, next to the list it applies to. A
+      // provider switch or an edit during the write nulls `fetched`, and the
       // answer belongs to a form that is no longer on screen.
       if (fetched === null) return
       if (!saved) fetched.note = `${note} ${WARN} Not stored: ${setupNote.textContent}`
@@ -631,7 +754,19 @@ export function initSettings(handlers: SettingsHandlers): void {
 
   navProviders.addEventListener('click', () => showPane('providers'))
   navSecrets.addEventListener('click', () => showPane('secrets'))
+  navApproval.addEventListener('click', () => showPane('approval'))
   navAbout.addEventListener('click', () => showPane('about'))
+  approvalProvider.addEventListener('change', () => drawApprovalModels())
+  approvalEffort.addEventListener('change', () => void writeApproval())
+  approvalAdd.addEventListener('click', () => {
+    const providerId = approvalProvider.value
+    const model = approvalModel.value
+    if (providerId === '' || model === '') return
+    // The same model twice is a ladder with a rung that can never be reached.
+    if (ladder.some(c => c.providerId === providerId && c.model === model)) return
+    ladder.push({ providerId, model })
+    void writeApproval()
+  })
   closeButton.addEventListener('click', () => closeSettings())
   // Esc closes a <dialog> on its own, which would strand a user with no
   // provider on an app that cannot run. Reopen unless something can run.

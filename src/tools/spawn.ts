@@ -32,7 +32,8 @@ const roles = AGENT_ROLES.map(role => `${role} (${AGENTS[role].purpose})`).join(
 export function toolsText(tools: ToolStats): string {
   if (tools.calls === 0) return 'no tool calls'
   const plural = tools.calls === 1 ? 'tool call' : 'tool calls'
-  return `${tools.calls} ${plural}, ${tools.ok} ok, ${tools.failed} failed`
+  const stopped = tools.prevented === 0 ? '' : `, ${tools.prevented} prevented`
+  return `${tools.calls} ${plural}, ${tools.ok} ok, ${tools.failed} failed${stopped}`
 }
 
 export const SPAWN_TOOL = defineTool<SpawnArgs>({

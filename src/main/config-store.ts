@@ -14,8 +14,11 @@ import {
   resolveConfig,
   resolveFacts,
 } from '../core/config.js'
-import { listModelsFor } from '../providers/factory.js'
+import { approvalProblem } from '../core/approval.js'
+import { causeCode } from '../core/provider.js'
+import { createProvider, listModelsFor } from '../providers/factory.js'
 import { userDataDir } from '../core/usage-log.js'
+import type { ApprovalConfig, JudgeEndpoint, PermissionMode } from '../core/approval.js'
 import type { ActiveSetRequest, ConfigProbeRequest, ConfigProbeResult, ConfigStatus, ProviderSaveRequest } from '../ipc/contract.js'
 import type { Effort, ModelFacts, ProviderConfig, ProviderRecord, StoredConfig } from '../core/config.js'
 
@@ -94,12 +97,9 @@ async function writeSecrets(secrets: Record<string, string>): Promise<void> {
  *
  * Says whether a live session has to be rebuilt to honour the write. A session
  * holds the record of whichever provider was active when it was built, so a
- * change to that record — its address, wire kind, key, allowlist or active
- * model — means yes, and so does a move of the active selection itself. A write
- * to another provider's fields, or one carrying only prices and effort levels,
- * means no: **Fetch models** stores those without being asked, and a fetch
- * pressed during a turn must not be what ends it. A session already running
- * keeps what it was built with; the next one to be built reads the new file.
+ * change to that record, or a move of the selection itself, means yes. Another
+ * provider's fields, or a write carrying only prices and effort levels, means
+ * no: **Fetch models** stores those without being asked.
  */
 export async function saveProvider(request: ProviderSaveRequest): Promise<boolean> {
   const baseURL = normalizeBaseURL(request.baseURL.trim())
@@ -116,22 +116,18 @@ export async function saveProvider(request: ProviderSaveRequest): Promise<boolea
     baseURL,
     models,
   }
-  // A request that names no facts at all keeps the stored ones, which is what a
-  // caller with nothing to say about models needs. An empty map is a different
-  // answer: it is what a fetch that described nothing returns, and it clears
-  // what an earlier fetch of some other endpoint had left behind.
+  // A request that names no facts keeps the stored ones. An empty map is a
+  // different answer: it is what a fetch that described nothing returns, and it
+  // clears what an earlier fetch had left behind.
   //
-  // Pointing the same provider at another address or another wire is the third
-  // case. The prices and effort levels belonged to the endpoint that was there
-  // before, and the same model id costs different money at two addresses of one
-  // vendor, so both the fetched facts and the user's corrections go with what
-  // used to answer there.
+  // Pointing the same provider at another address or wire is the third case.
+  // The same model id costs different money at two addresses of one vendor, so
+  // the facts go with the endpoint that used to answer there.
   const moved = previous !== undefined && (previous.baseURL !== baseURL || previous.kind !== request.kind)
   const facts = moved ? request.facts : (request.facts ?? previous?.facts)
   const overrides = applyOverrides(moved ? undefined : previous?.overrides, request.overrides)
   // Both maps arrived over IPC, so they are read the same way a file is before
-  // anything is written: main is where a record stops being whatever the caller
-  // sent and starts being a record.
+  // anything is written.
   const clean = cleanFacts(facts)
   const cleanTyped = cleanFacts(overrides)
   if (clean !== undefined) record.facts = clean
@@ -157,8 +153,8 @@ export async function saveProvider(request: ProviderSaveRequest): Promise<boolea
     }
     stored.active = { providerId: id, model: wanted, effort: active?.effort ?? 'medium' }
   } else if (active === undefined || !stored.providers.some(p => p.id === active.providerId)) {
-    // The first provider added is the one sessions will use. Later ones wait to
-    // be picked, so adding a second endpoint never silently switches the model.
+    // The first provider added is the one sessions will use. Later ones wait
+    // to be picked.
     const model = models[0]
     if (model !== undefined) stored.active = { providerId: id, model, effort: 'medium' }
   } else if (active.providerId === id && models.length > 0 && !models.includes(active.model)) {
@@ -169,24 +165,18 @@ export async function saveProvider(request: ProviderSaveRequest): Promise<boolea
   }
 
   // Whatever the branches above settled on, the level has to be one the model
-  // takes. A fetch is how the harness finds out that it does not — the list
-  // arrives with the answer — and every path out of here writes the file, so
-  // the clamp belongs after them rather than inside each one.
+  // takes. A fetch is how the harness finds out that it does not, since the
+  // list arrives with the answer, and every path out of here writes the file.
   const picked = stored.active
   if (picked !== undefined && picked.providerId === id) {
     stored.active = { ...picked, effort: effortFor(record, picked.model, picked.effort) }
   }
 
-  // A live session holds the record of whichever provider was active when it
-  // was built, so only a move of the selection, or a write that touches the
-  // active record, leaves it holding what the file no longer says. Another
-  // provider's fields are not what a session was built from, and a fetch of one
-  // must not end a turn running on a different endpoint. The effort level is
-  // left out on purpose even on the active record: it is the one field a fetch
-  // changes on its own — the model's list of levels arrives with the answer and
-  // the level in force is clamped to it above — and ending a running turn over
-  // that would be the fetch doing the damage the clamp is there to avoid. It
-  // reaches the session the way a price does, on the next build.
+  // Only a move of the selection, or a write that touches the active record,
+  // leaves a live session holding what the file no longer says. The effort
+  // level is left out even on the active record: it is the one field a fetch
+  // changes on its own, and it reaches the session the way a price does, on
+  // the next build.
   const activeRecord = previous !== undefined && (active?.providerId === id || picked?.providerId === id)
   const rebuild =
     active?.providerId !== picked?.providerId ||
@@ -202,9 +192,8 @@ export async function saveProvider(request: ProviderSaveRequest): Promise<boolea
 }
 
 /**
- * Whether two allowlists hold the same ids. A session does not care what order
- * the list was ticked in, and neither does the picker: a reorder is not a
- * change worth retiring a live session over.
+ * Whether two allowlists hold the same ids. Order is not compared: neither a
+ * session nor the picker depends on it.
  */
 function sameModels(a: readonly string[], b: readonly string[]): boolean {
   const left = [...a].sort()
@@ -214,10 +203,9 @@ function sameModels(a: readonly string[], b: readonly string[]): boolean {
 
 /**
  * The effort level to run a model at, given the one in force. A model that
- * names its levels and does not name this one gets the nearest it does name,
- * the same answer the window's picker arrives at; `setActive` refuses such a
- * level outright, and this path has no user to refuse to, so it clamps instead
- * of writing a level the next turn would be rejected for.
+ * names its levels and not this one gets the nearest it does name. `setActive`
+ * refuses such a level outright; this path has no user to refuse to, so it
+ * clamps.
  */
 function effortFor(record: ProviderRecord, model: string, wanted: Effort | undefined): Effort {
   const effort = wanted ?? 'medium'
@@ -238,9 +226,9 @@ function cleanFacts(map: Record<string, ModelFacts> | undefined): Record<string,
 
 /**
  * Fold the form's corrections into the stored ones. A model mapped to `null`
- * was cleared by the user, which has to be told apart from a model the form did
- * not mention: clearing is how a wrong price typed yesterday goes back to
- * "nobody has said" and lets the endpoint's own answer show through again.
+ * was cleared by the user and is not the same as a model the form did not
+ * mention: a cleared model goes back to "nobody has said" and lets the
+ * endpoint's own answer show through again.
  */
 function applyOverrides(
   stored: Record<string, ModelFacts> | undefined,
@@ -284,8 +272,8 @@ export async function setActive(request: ActiveSetRequest): Promise<void> {
     throw new Error(`${model} is not one of the models selected for ${provider.name}`)
   }
   // The composer only offers levels the model takes, so this catches a stale
-  // window rather than a normal pick. It is here because the window is not the
-  // only caller and a rejected level is a 400 from the provider mid-turn.
+  // window rather than a normal pick. The window is not the only caller, and a
+  // rejected level is a 400 from the provider mid-turn.
   const efforts = resolveFacts(provider, model).efforts
   if (efforts !== undefined && !efforts.includes(request.effort)) {
     throw new Error(`${model} does not take ${request.effort} effort; it takes ${efforts.join(', ')}`)
@@ -309,6 +297,9 @@ export async function configStatus(): Promise<ConfigStatus> {
     keyStorage: safeStorage.isEncryptionAvailable() ? 'os' : 'unavailable',
   }
   if (stored.active !== undefined) status.active = stored.active
+  if (stored.approval !== undefined) status.approval = stored.approval
+  const gap = approvalProblem(stored.approval, stored.providers)
+  if (gap !== undefined) status.approvalProblem = gap
   try {
     const resolved = resolveConfig({ stored, secrets })
     return {
@@ -325,8 +316,8 @@ export async function configStatus(): Promise<ConfigStatus> {
 /**
  * Ask an endpoint what it can run, before anything is saved. The same call is
  * the connection test: an answer proves the endpoint is reachable and the key
- * was accepted. Failures come back as a value, not a throw — a typo in a URL is
- * an expected outcome of a settings screen, not an exception.
+ * was accepted. Failures come back as a value rather than a throw: a typo in a
+ * URL is an expected outcome of a settings screen, not an exception.
  */
 export async function probeProvider(request: ConfigProbeRequest): Promise<ConfigProbeResult> {
   const baseURL = normalizeBaseURL(request.baseURL.trim())
@@ -342,9 +333,8 @@ export async function probeProvider(request: ConfigProbeRequest): Promise<Config
   if (apiKey === undefined || apiKey === '') return { ok: false, error: 'no API key to test with' }
 
   try {
-    // Prices and effort levels come out of this one answer or not at all. The
-    // endpoint is the only thing here that knows what it charges, and a model
-    // it says nothing about stays unknown until the user fills it in.
+    // Prices and effort levels come out of this one answer or not at all. A
+    // model it says nothing about stays unknown until the user fills it in.
     const offers = await listModelsFor({ kind: request.kind, baseURL, apiKey })
     return { ok: true, models: offers }
   } catch (err) {
@@ -354,18 +344,65 @@ export async function probeProvider(request: ConfigProbeRequest): Promise<Config
 
 /**
  * A dead port makes Node's fetch throw the word "fetch failed" and nothing
- * else; the reason sits in `cause`. Dig it out, because "fetch failed" tells a
- * user nothing about which address failed or why.
+ * else; the reason sits down in `cause`. Dig it out and name the address.
  */
 function describeFailure(baseURL: string, err: unknown): string {
   if (!(err instanceof Error)) return String(err)
   if (err.name === 'TimeoutError') return `${baseURL} did not answer in time`
-  if (err.message !== 'fetch failed') return err.message
+  const code = causeCode(err)
+  if (code === undefined) return err.message
+  return `could not reach ${baseURL}: ${code}`
+}
 
-  const cause: unknown = err.cause
-  const detail =
-    cause instanceof Error
-      ? ((cause as { code?: unknown }).code ?? cause.message)
-      : undefined
-  return `could not reach ${baseURL}${detail === undefined ? '' : `: ${String(detail)}`}`
+/**
+ * Set which models auto mode may ask, in the order it should try them. A
+ * candidate naming a provider that is not configured is refused rather than
+ * stored.
+ */
+export async function saveApproval(approval: ApprovalConfig): Promise<void> {
+  const stored = await readStored()
+  for (const candidate of approval.candidates) {
+    const provider = stored.providers.find(p => p.id === candidate.providerId)
+    if (provider === undefined) throw new Error(`no provider with id ${candidate.providerId} is configured`)
+    if (provider.models.length > 0 && !provider.models.includes(candidate.model)) {
+      throw new Error(`${candidate.model} is not one of the models selected for ${provider.name}`)
+    }
+  }
+  stored.approval = approval
+  await writeStored(stored)
+}
+
+/**
+ * The mode a new session starts in, and where a change to it is remembered.
+ * Stored rather than held in memory, so it survives a restart.
+ */
+export async function setDefaultMode(mode: PermissionMode): Promise<void> {
+  const stored = await readStored()
+  stored.permissionMode = mode
+  await writeStored(stored)
+}
+
+export async function defaultMode(): Promise<PermissionMode> {
+  return (await readStored()).permissionMode ?? 'ask'
+}
+
+/** The approval ladder as clients, newest settings each time it is asked for. */
+export async function approvalEndpoints(): Promise<JudgeEndpoint[]> {
+  const [stored, secrets] = await Promise.all([readStored(), readSecrets()])
+  const endpoints: JudgeEndpoint[] = []
+  for (const candidate of stored.approval?.candidates ?? []) {
+    const record = stored.providers.find(p => p.id === candidate.providerId)
+    if (record === undefined) continue
+    const apiKey = secrets[record.id]
+    // A rung with no key is skipped here and reported by the ladder when
+    // every rung is gone.
+    if (apiKey === undefined) continue
+    endpoints.push({
+      providerId: record.id,
+      model: candidate.model,
+      record,
+      provider: createProvider({ kind: record.kind, baseURL: normalizeBaseURL(record.baseURL), apiKey }),
+    })
+  }
+  return endpoints
 }

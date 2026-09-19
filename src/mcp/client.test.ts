@@ -11,7 +11,7 @@ import { RequestTimeoutError } from './protocol.js'
  * The failure half of the client: a server that answers the handshake and then
  * stops, and a server that never answers at all. Both are real subprocesses,
  * because both bugs these tests exist for are about a process that is still
- * running after this side has given up on it — which a fake transport cannot
+ * running after this side has given up on it, which a fake transport cannot
  * have and cannot leak.
  *
  * Each server appends every message it receives to a log, and keeps a heartbeat
@@ -146,8 +146,12 @@ describe('a server that never finishes the handshake', () => {
 
     const started = Date.now()
     await expect(client.connect()).rejects.toBeInstanceOf(RequestTimeoutError)
-    // The handshake deadline, not the 60s one a tool call gets.
-    expect(Date.now() - started).toBeLessThan(5000)
+    // The handshake deadline, not the 60s one a tool call gets. The threshold
+    // is loose because the window holds more than the deadline: spawning node
+    // and then waiting for it to be gone again, both of which are seconds on a
+    // loaded Windows machine. Its job is to tell 400ms apart from 60s, and
+    // anything in between does that.
+    expect(Date.now() - started).toBeLessThan(20_000)
 
     const messages = await received(log)
     expect(messages.some(message => message.method === 'initialize')).toBe(true)

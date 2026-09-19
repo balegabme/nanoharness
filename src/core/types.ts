@@ -25,10 +25,17 @@ export interface ToolStats {
   calls: number
   ok: number
   failed: number
+  /**
+   * Calls the permission system stopped, whoever stopped them: the approval
+   * model in auto mode, or the person at the dialog. Counted apart from
+   * `failed`, which is the work going wrong rather than the harness doing its
+   * job.
+   */
+  prevented: number
 }
 
 export function emptyToolStats(): ToolStats {
-  return { calls: 0, ok: 0, failed: 0 }
+  return { calls: 0, ok: 0, failed: 0, prevented: 0 }
 }
 
 export interface JsonSchema {
@@ -52,6 +59,12 @@ export interface ToolResult {
   summary: string
   content?: string
   isError?: boolean
+  /**
+   * The call never ran because the permission system refused it. Set only by
+   * the gate's own refusals. A tool that failed on its own, on a missing file
+   * or a non-zero exit, is not counted as something the harness stopped.
+   */
+  prevented?: boolean
 }
 
 /**
@@ -77,17 +90,10 @@ export function emptyUsage(): TurnUsage {
 }
 
 /**
- * The plan's §15 headline metric: cached input over all the input that went
- * into the prompt. Cache writes count in the denominator because they are
- * prompt tokens the provider read in full and charged a premium for: a turn
- * that read 20k cached and wrote 5k new is four fifths cache, not 99.9%.
- *
- * It lives beside `TurnUsage` so the CLI and the window divide the same
- * numbers; a copy per surface is a copy that drifts.
- *
- * The answer only means one thing across providers because `input` is
- * normalized at the provider boundary to exclude whatever was served from
- * cache. `null` is "no prompt yet", which is not the same as a 0% hit.
+ * Cached input over all the input that went into the prompt. Cache writes count
+ * in the denominator because the provider read them in full and charged a
+ * premium: a turn that read 20k cached and wrote 5k new is four fifths cache,
+ * not 99.9%. `null` is "no prompt yet", which is not the same as a 0% hit.
  */
 export function cacheHitRate(usage: TurnUsage): number | null {
   const prompt = usage.cacheRead + usage.input + usage.cacheWrite
@@ -96,9 +102,8 @@ export function cacheHitRate(usage: TurnUsage): number | null {
 
 /**
  * A block of the model's own reasoning. Anthropic signs each one and requires
- * the signed block back, unmodified and in order, on the next request of a turn
- * that used tools - a modified block is a 400. So the signature travels with
- * the text instead of being thrown away once it has been shown.
+ * it back unmodified and in order, so the signature travels with the text
+ * instead of being thrown away once it has been shown.
  */
 export type ThinkingBlock =
   | { kind: 'thinking'; text: string; signature?: string }
@@ -110,15 +115,14 @@ export type AppEvent =
   | { type: 'thinking_delta'; sessionId: string; text: string; at: number }
   | { type: 'tool_call'; sessionId: string; call: ToolCall; at: number }
   | { type: 'tool_result'; sessionId: string; callId: string; result: ToolResult; at: number }
-  // `streamMs` is how long the model spent generating the round this event
-  // closes: first chunk to last, with no tool time in it. It is absent on a
-  // subagent's usage, because that total arrives from a stream nobody timed
-  // here and folding it into a rate would divide one agent's tokens by another
-  // agent's clock.
-  // `subagent` is the part of `usage` that subagents of this session spent.
-  // A turn that hands its work to three agents pays for all of them, and
-  // without the split the counter reads as one number nobody can account for.
-  | { type: 'usage'; sessionId: string; turn: number; usage: TurnUsage; subagent?: TurnUsage; streamMs?: number; at: number }
+  // `streamMs` is first chunk to last, with no tool time in it. Absent on a
+  // subagent's usage: that total came off a stream nobody timed here.
+  // `subagent` and `harness` are the parts of `usage` spent by subagents and by
+  // the harness's own side-calls. Both are inside the total, because the user
+  // pays for them, and named so the counter is accountable. `harnessCostUsd`
+  // comes with the latter: those calls run at their own models' prices, which
+  // the window cannot get from the session's model facts.
+  | { type: 'usage'; sessionId: string; turn: number; usage: TurnUsage; subagent?: TurnUsage; harness?: TurnUsage; harnessCostUsd?: number; streamMs?: number; at: number }
   | { type: 'session.error'; sessionId: string; turn: number; message: string; at: number }
   // A round is about to be asked for. The window uses it as the boundary it
   // rolls back to when the round has to be asked for again.
@@ -134,10 +138,12 @@ export type AppEvent =
   // reported back. A turn never ends without one of these or an answer.
   | { type: 'session.note'; sessionId: string; turn: number; text: string; at: number }
   // What the turn that just ended came to: its tool calls, the files it left
-  // different, and how long it ran. It is its own event because the window draws
-  // it quietly under the answer, where a note is drawn in the flow to be read.
-  | { type: 'session.summary'; sessionId: string; turn: number; text: string; at: number }
-  | { type: 'permission.request'; sessionId: string; id: string; intent: 'read' | 'write' | 'run'; paths: string[]; command?: string; root: string; at: number }
+  // different, and how long it ran. The window draws it under the answer,
+  // where a note is drawn in the flow.
+  | { type: 'session.summary'; sessionId: string; turn: number; text: string; prevented?: PreventedCall[]; at: number }
+  // `problem` is set when auto mode was on and the approval model could not
+  // answer. The prompt is the fallback and says so on its face.
+  | { type: 'permission.request'; sessionId: string; id: string; intent: 'read' | 'write' | 'run'; paths: string[]; command?: string; root: string; problem?: string; at: number }
   // Which MCP servers this session ended up with, once its hub has finished
   // dialling. The window asks for the same thing when a session is opened; this
   // is the push for the case where the answer arrives after the question.
@@ -151,19 +157,29 @@ export type AppEvent =
 
 /**
  * A line the window showed that is not a message: an error, a stop, a note the
- * harness wrote about the run. Stored with the transcript, because a re-opened
- * session that shows only the messages is not what the user saw: a turn the
- * harness cut short would come back looking like a turn that simply ended.
- *
- * `after` is how many messages had been written when it happened, which is what
- * puts it back in the right place on replay.
+ * harness wrote about the run. Stored with the transcript. `after` is the
+ * message count when it happened, which replays it in place.
  */
+/**
+ * One call the permission system stopped, as the summary line lists it. The
+ * reason is the refusal the agent was given, verbatim.
+ */
+export interface PreventedCall {
+  tool: string
+  /** The path or command it was about, redacted. Empty when the tool named none. */
+  target: string
+  reason: string
+  at: number
+}
+
 export interface SessionNote {
   kind: 'error' | 'stopped' | 'note' | 'summary'
   text: string
   turn: number
   after: number
   at: number
+  /** On a summary: what the turn was stopped from doing. Absent when nothing was. */
+  prevented?: PreventedCall[]
 }
 
 export type ChatMessage =
@@ -179,11 +195,9 @@ export type ChatChunk =
   | { kind: 'thinking_block'; block: ThinkingBlock }
   | { kind: 'tool'; tool: ToolCall }
   // `usageProblem` is set when the provider sent a usage report that could not
-  // be read: the answer stands, this turn's cost is unknown, and the session
-  // says so. See `noteUsageProblem` in `session.ts`.
-  // What this request has cost so far, as a running total rather than a delta.
-  // A wire that knows the prompt's cost before it has finished answering sends
-  // it, so a request that breaks halfway can still say what it charged for.
+  // be read: the answer stands and this turn's cost is unknown.
+  // `usage` is a running total rather than a delta, so a request that breaks
+  // halfway can still say what it charged for.
   | { kind: 'usage'; usage: TurnUsage }
   | { kind: 'done'; usage: TurnUsage; usageProblem?: string }
   // `status` is the HTTP status the failure would have carried had it arrived

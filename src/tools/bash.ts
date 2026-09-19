@@ -12,6 +12,13 @@ import type { ToolResult } from '../core/types.js'
 const OUTPUT_CAP = 1024 * 1024
 const TIMEOUT_MS = 60_000
 
+/**
+ * How long the one-off PATH probe gets before it is killed. Nothing waits on
+ * it, so this is not a latency budget. It is here so that a profile which
+ * blocks for ever does not leave a shell running for the life of the app.
+ */
+const PROBE_TIMEOUT_MS = 120_000
+
 function findBash(): string | null {
   if (process.platform !== 'win32') return 'bash'
   const candidates = [
@@ -30,10 +37,8 @@ const bashBin = findBash()
  * runs: redirects, the file-mutating coreutils, in-place sed and perl, the
  * package managers, and the PowerShell verbs that do the same job on Windows.
  *
- * This is a screen, not a security boundary, and it is documented as one in
- * `docs/harness/agents.md`: a command that builds its redirect at runtime gets
- * through, and a script the command runs is never read. It exists to keep a
- * planner honest; the ledger asks for a real sandbox for the rest.
+ * A screen, not a security boundary, and documented as one in
+ * `docs/harness/agents.md`: a redirect built at runtime gets through.
  */
 const WRITE_PATTERNS: readonly { pattern: RegExp; why: string }[] = [
   { pattern: /(^|[^0-9<>&])>{1,2}(?!&)/, why: 'a redirect writes a file' },
@@ -74,21 +79,16 @@ function parseArgs(args: Record<string, unknown>): ArgsParse<BashArgs> {
 /**
  * Hand the command to bash as a file rather than as an argument. Git Bash
  * truncates a `-c` string at 8 KiB and runs the front half anyway, so a 12 KB
- * patch script would run cut mid-line, with bash reporting an unterminated
- * heredoc, and the agent would read that as a failed edit rather than a
- * half-applied one. A script file has no such limit, and the shell still
- * starts as a login shell, so `grep`, `sed` and `curl` are on PATH.
+ * patch script would run cut mid-line and the agent would read the unterminated
+ * heredoc as a failed edit rather than a half-applied one.
  *
- * CRLF is normalised on the way in: bash reads the carriage return as part of
- * the word, so a heredoc terminator written `PY\r` never matches `PY`. The fold is
- * over the whole command and not only its line ends, so a heredoc written to
- * lay down a CRLF fixture lays down LF instead. That is worth the trade here:
- * the model writes CRLF by accident far more often than on purpose, and
- * `printf` is the way to write one on purpose.
+ * CRLF is folded to LF on the way in, since bash counts the carriage return as
+ * part of a heredoc terminator. The fold is over the whole command, so a
+ * heredoc meant to lay down a CRLF fixture lays down LF; `printf` is the way to
+ * write one on purpose.
  *
- * The file is the command, so it is written for this user alone: the temp
- * directory is shared, and this project keeps a pasted key out of the
- * transcript and off the wire.
+ * The file holds the command, so it is written for this user alone. The temp
+ * directory is shared.
  */
 function run(command: string, cwd: string): Promise<ToolResult> {
   const script = join(tmpdir(), `nh-${randomUUID()}.sh`)
@@ -106,12 +106,59 @@ function run(command: string, cwd: string): Promise<ToolResult> {
     .finally(() => void rm(script, { force: true }).catch(() => undefined))
 }
 
+/**
+ * The PATH a login shell would have, learned once in the background.
+ *
+ * A login shell is worth starting only for what the profile exports:
+ * `~/.local/bin`, `~/.cargo/bin`, and on macOS the PATH a GUI-launched app has
+ * no other way to inherit. Git Bash prepends `/mingw64/bin` and `/usr/bin`
+ * either way. Sourcing that profile costs three to four seconds on an idle
+ * Windows machine, and every command paid it.
+ *
+ * A profile does not change while the app is open, so one read serves them all
+ * and nothing waits for it. A command that arrives before the answer starts its
+ * own login shell, and so does every command if the read fails outright.
+ *
+ * On Windows the value is converted back to Windows form, because that is what
+ * a child's `PATH` has to be; `cygpath -w -p` round-trips it without losing a
+ * segment.
+ */
+let probe: Promise<void> | undefined
+let loginPath: string | undefined
+
+/**
+ * Start the read now, so the first command is not the one that pays for it.
+ * Called at app start, where nobody is waiting. Safe to call more than once,
+ * and optional: without it the first command starts its own login shell.
+ */
+export function warmShell(): void {
+  if (bashBin !== null) readLoginPath()
+}
+
+function readLoginPath(): void {
+  probe ??= new Promise<void>(resolve => {
+    const print = process.platform === 'win32' ? 'cygpath -w -p "$PATH"' : 'printf %s "$PATH"'
+    execFile(bashBin as string, ['-lc', print], { windowsHide: true, encoding: 'utf8', timeout: PROBE_TIMEOUT_MS }, (error, stdout) => {
+      const value = stdout.trim()
+      if (error === null && value !== '') loginPath = value
+      resolve()
+    })
+  })
+}
+
 function exec(script: string, cwd: string): Promise<ToolResult> {
+  readLoginPath()
+  // Whatever the probe has settled on by now, which for the first command is
+  // nothing. With the profile's PATH already in hand the shell has no reason to
+  // read the profile again; without it, `-l` is the only way to get one.
+  const path = loginPath
+  const args = path === undefined ? ['-l', script] : [script]
+  const env = path === undefined ? process.env : { ...process.env, PATH: path }
   return new Promise<ToolResult>(resolve => {
     execFile(
       bashBin as string,
-      ['-l', script],
-      { cwd, timeout: TIMEOUT_MS, windowsHide: true, maxBuffer: OUTPUT_CAP, encoding: 'utf8' },
+      args,
+      { cwd, env, timeout: TIMEOUT_MS, windowsHide: true, maxBuffer: OUTPUT_CAP, encoding: 'utf8' },
       (error, stdout, stderr) => {
         const out = [stdout, stderr].filter(Boolean).join('\n').trim()
         if (!error) {
@@ -168,13 +215,11 @@ function bashTool(guarded: boolean): Tool {
         return { ok: false, summary: missing, content: missing, isError: true }
       }
 
-      // The command is approved as a whole, never read. A shell command is a
-      // program, and every attempt to pull paths out of one has read a script
-      // body, a heredoc, a sed address or an HTML tag as somewhere on disk. So
-      // the app's gate shows the person the command and remembers their answer
-      // for the session; a gate with nobody to ask refuses it outright.
+      // The command is approved as a whole, never read: every attempt to pull
+      // paths out of a shell command has read a heredoc or a sed address as
+      // somewhere on disk. A gate with nobody to ask refuses it outright.
       const allowed = await access.checkCommand(command)
-      if (!allowed.ok) return { ok: false, summary: allowed.reason, content: allowed.reason, isError: true }
+      if (!allowed.ok) return { ok: false, summary: allowed.reason, content: allowed.reason, isError: true, prevented: true }
 
       return run(command, cwd)
     },

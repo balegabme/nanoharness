@@ -93,10 +93,27 @@ for a moment. The transport waits that moment out before reporting success,
 which turns "connected, then every call times out" into the error it is.
 
 A `close` waits for the child to exit rather than sending a signal and moving
-on, so "the hub is closed" means the process has ended. On Windows it also has
-to take the whole tree: `cmd /c npx …` makes the launcher the child this owns
-and the server its grandchild, so killing the child alone would leave the server
-running with its parent gone. `taskkill /T` is what handles that.
+on, so "the hub is closed" means the process has ended and the directory it was
+started in can be deleted. Both attempts are waited on, not just the first,
+because a `close` that had to escalate must not report a stopped server while
+it is still running.
+
+Delivering the kill and waiting for the child are counted separately, because
+they measure different things. The delivery is awaited in full, however long it
+takes: on Windows it is a `taskkill` walking the process tree, three seconds on
+an idle machine. Only once it has landed does the child get its grace period,
+and that one is short. A process still alive a second after a `taskkill /F`
+does not need a moment longer. Charge the delivery to the grace period instead
+and a child that is already dying looks too stubborn to kill.
+
+On Windows a close also has to take the whole tree: `cmd /c npx …` makes the
+launcher the child this owns and the server its grandchild, so killing the child
+alone would leave the server running with its parent gone. `taskkill /T` is what
+handles that. There is no polite-then-hard pair on Windows, either: a `taskkill`
+without `/F` posts a window message and a stdio server has no window, so both
+attempts send the same thing and the second is there only to catch a first that
+raced the process still starting up. A process that survives both is given up on
+rather than waited for forever, because this is on the path an app quit takes.
 
 Streamable HTTP posts to one endpoint with
 `Accept: application/json, text/event-stream` and reads whichever the server
@@ -109,9 +126,8 @@ expecting.
 
 A 404 on a session the server has forgotten closes the transport rather than
 being retried into the void. It is deliberately not re-initialized underneath a
-running conversation: the tool definitions are already in the cached prefix, so
-a silent reconnect that came back with a different catalog would be worse than
-the error.
+running conversation: the tool definitions are already in the cached prefix,
+and a reconnect that came back with a different catalog would contradict them.
 
 The bearer token goes in the `Authorization` header. Never the query string,
 because URLs end up in logs, proxies and error reports.
@@ -251,7 +267,8 @@ One hub per session, connected before the first request, because the tool
 definitions have to be in front of the first turn and a tool discovered later
 would move bytes the provider has already cached. Servers are connected one
 after another rather than all at once: an `npx -y` on a cold cache downloads a
-package, and four of those at once on a laptop is worse than four in a row.
+package, and four of those competing for one laptop's bandwidth finish no
+sooner than four in a row.
 
 A server that will not start is not an error. It contributes no tools, its
 reason is kept in the hub's status and logged, and the session runs without it:

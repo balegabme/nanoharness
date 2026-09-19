@@ -40,7 +40,7 @@ describe('a long command', () => {
     expect(result.summary).not.toContain('here-document')
     expect((await readFile(join(cwd, 'big.txt'), 'utf8')).trim()).toHaveLength(filler.length)
     await rm(cwd, { recursive: true, force: true })
-  }, 30_000)
+  })
 })
 
 describe('a command whose text only looks like a path', () => {
@@ -84,9 +84,8 @@ describe('a command the gate has not approved', () => {
         return { ok: true }
       },
     }
-    // The planner's shell turns a write away on its own wording; putting a
-    // modal in front of the user for a command the role cannot run would ask
-    // them to decide something already decided.
+    // The planner's shell turns a write away on its own wording, before the
+    // gate is asked at all.
     const result = await GUARDED_BASH_TOOL.run({ command: 'echo hello > note.txt' }, { cwd, access: gate })
 
     expect(result.ok).toBe(false)

@@ -3,6 +3,9 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PermissionBroker, gateState, promptingGate } from './permission.js'
+import { ApprovalUnavailableError } from '../core/approval.js'
+import type { ApprovalRecord } from './permission.js'
+import type { Judge, Verdict } from '../core/approval.js'
 import type { AccessCheck, CommandCheck } from '../core/scope.js'
 
 /**
@@ -215,6 +218,155 @@ describe('a shell command', () => {
 
     expect(second.ok).toBe(true)
     expect(asks).toBe(1)
+    await rm(root, { recursive: true, force: true })
+  })
+})
+
+/**
+ * Auto mode at the gate. The prompt is the thing being replaced, so what these
+ * pin is the one case where it still appears, a judge that could not be
+ * reached at all, and that it appears in no other: not on a denial, and never
+ * to reopen a path the person has already refused themselves.
+ */
+
+/** A judge that answers from a script, with the shape `Judge` exposes. */
+function scriptedJudge(answer: Verdict | Error): Judge {
+  return {
+    model: 'judge-model',
+    judge: async () => {
+      if (answer instanceof Error) throw answer
+      return {
+        verdict: answer,
+        rule: 'rule #1',
+        reason: `the approval model said ${answer}`,
+        usage: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
+        costUsd: 0.000012,
+        model: 'judge-model',
+        ms: 12,
+      }
+    },
+  } as unknown as Judge
+}
+
+describe('auto mode', () => {
+  it('runs an allowed command without putting anything on screen', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'nh-auto-'))
+    let asks = 0
+    const broker: PermissionBroker = new PermissionBroker(request => {
+      asks += 1
+      broker.resolve(request.id, 'deny')
+    })
+    const records: ApprovalRecord[] = []
+    const gate = promptingGate({
+      root,
+      sessionId: 's1',
+      broker,
+      state: gateState('auto'),
+      judge: scriptedJudge('allow'),
+      onDecision: record => records.push(record),
+    })
+
+    expect((await gate.checkCommand('npm test')).ok).toBe(true)
+    expect(asks).toBe(0)
+    // Nothing was drawn, so the log is the only trace there is. It has to exist
+    // or "why did it run that" has no answer.
+    expect(records).toHaveLength(1)
+    expect(records[0]?.outcome?.verdict).toBe('allow')
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it('refuses in its own name, not the user’s, and offers a way onwards', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'nh-auto-'))
+    let asks = 0
+    const broker: PermissionBroker = new PermissionBroker(request => {
+      asks += 1
+      broker.resolve(request.id, 'once')
+    })
+    const gate = promptingGate({ root, sessionId: 's1', broker, state: gateState('auto'), judge: scriptedJudge('deny') })
+
+    const result = await gate.checkCommand('rm -rf /')
+
+    expect(asks).toBe(0)
+    expect(result.ok).toBe(false)
+    expect(reasonOf(result)).toContain('the approval step refused it')
+    // The user has not seen this, so saying they refused it would be a lie the
+    // agent repeats back to them.
+    expect(reasonOf(result)).not.toContain('the user did not approve')
+    expect(reasonOf(result)).toContain('say so in words')
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it('never puts the prompt up while the judge is answering, whichever way it answers', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'nh-auto-'))
+    const asked: string[] = []
+    const broker: PermissionBroker = new PermissionBroker(request => {
+      asked.push(request.command ?? '')
+      broker.resolve(request.id, 'once')
+    })
+
+    // The whole point of the mode: a run with nobody watching it cannot be
+    // parked on a dialog, so a reachable judge always settles the question.
+    const allowed = promptingGate({ root, sessionId: 's1', broker, state: gateState('auto'), judge: scriptedJudge('allow') })
+    expect((await allowed.checkCommand('npm test')).ok).toBe(true)
+
+    const denied = promptingGate({ root, sessionId: 's2', broker, state: gateState('auto'), judge: scriptedJudge('deny') })
+    expect((await denied.checkCommand('git push --force')).ok).toBe(false)
+
+    expect(asked).toEqual([])
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it('asks the person when the judge fails, and says on the prompt why', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'nh-auto-'))
+    const problems: (string | undefined)[] = []
+    const broker: PermissionBroker = new PermissionBroker(request => {
+      problems.push(request.problem)
+      broker.resolve(request.id, 'once')
+    })
+    const records: ApprovalRecord[] = []
+    const gate = promptingGate({
+      root,
+      sessionId: 's1',
+      broker,
+      state: gateState('auto'),
+      judge: scriptedJudge(new ApprovalUnavailableError('no answer within 20s')),
+      onDecision: record => records.push(record),
+    })
+
+    // The failure is never a verdict in either direction: the command is not
+    // refused and not run, it is put to the person, with the reason on it.
+    expect((await gate.checkCommand('npm test')).ok).toBe(true)
+    expect(problems).toEqual(['no answer within 20s'])
+    expect(records[0]?.problem).toBe('no answer within 20s')
+    expect(records[0]?.outcome).toBeUndefined()
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it('does not ask the judge to overturn a refusal the person already gave', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'nh-auto-'))
+    const state = gateState('ask')
+    const broker: PermissionBroker = new PermissionBroker(request => {
+      broker.resolve(request.id, 'deny')
+    })
+    const outside = join(tmpdir(), 'nh-auto-elsewhere', 'secrets.env')
+    let consulted = 0
+    const judge = {
+      model: 'judge-model',
+      judge: async () => {
+        consulted += 1
+        throw new ApprovalUnavailableError('should not have been asked')
+      },
+    } as unknown as Judge
+
+    const gate = promptingGate({ root, sessionId: 's1', broker, state, judge })
+    expect((await gate.check(outside, 'read')).ok).toBe(false)
+
+    // Switching to auto mode afterwards must not reopen a settled question.
+    state.mode = 'auto'
+    const second = await gate.check(outside, 'read')
+
+    expect(consulted).toBe(0)
+    expect(reasonOf(second)).toContain('refused earlier in this session')
     await rm(root, { recursive: true, force: true })
   })
 })

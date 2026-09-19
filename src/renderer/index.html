@@ -179,12 +179,22 @@
             aria-label="Thinking effort"
           ></select>
         </span>
-        <span class="chip" id="access-chip" title="Tools are limited to this session's folder">
+        <span class="chip-select" id="access-chip" title="Tools are limited to this session's folder">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
             <rect x="4.5" y="10.5" width="15" height="9.5" rx="2.5" />
             <path d="M8 10.5V7.8a4 4 0 0 1 8 0v2.7" />
           </svg>
-          workspace only
+          <span class="chip-value" id="mode-value">ask every time</span>
+          <svg class="chip-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="m6 9 6 6 6-6" />
+          </svg>
+          <!-- Work inside the folder never asks in either mode. What this
+               chooses is who answers the questions the folder rule cannot: the
+               person, or the approval model configured in settings. -->
+          <select id="mode-select" title="Who answers a permission question" aria-label="Permission mode">
+            <option value="ask">ask every time</option>
+            <option value="auto">auto-approve</option>
+          </select>
         </span>
         <button class="chip icon" id="alerts" type="button">
           <svg class="bell-on" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -214,6 +224,7 @@
         <span class="sheet-title">Settings</span>
         <button class="nav-item" id="pane-providers" type="button">Providers</button>
         <button class="nav-item" id="pane-secrets" type="button">Secrets</button>
+        <button class="nav-item" id="pane-approval" type="button">Approval</button>
         <button class="nav-item" id="pane-about" type="button">About</button>
         <span class="spacer"></span>
         <button class="icon-btn" id="settings-close" type="button" title="Close" aria-label="Close">
@@ -277,8 +288,39 @@
           A key pasted into the chat is taken out of the message and kept here, encrypted. The model never sees the value: it
           works with the reference, and the harness fills the real key in when a tool runs.
         </p>
-        <div class="secret-list" id="secret-list"></div>
+        <div class="entry-list" id="secret-list"></div>
         <p class="hint" id="secrets-empty">Nothing held. Paste a key into a message and it lands here.</p>
+      </section>
+
+      <section class="sheet-pane" id="approval-pane" hidden>
+        <h2>Approval</h2>
+        <p class="hint">
+          In auto-approve mode a second model answers the permission questions your session folder cannot settle, allow or
+          deny, decided there and then, so a long task can run while you are away instead of stopping on a dialog. Where it is
+          unsure it denies and the run carries on; you see what was stopped on the line each turn ends with. It is a check, not
+          a sandbox: an approved shell command can reach everything you can.
+        </p>
+        <p class="hint">
+          Pick the model it asks. More than one makes a ladder, tried top to bottom, so a provider being briefly down does not
+          take the mode down with it. This is a security decision, so choose a capable model rather than the cheapest one
+          available. The whole value is in correctly refusing the rare command that matters, and nothing else is watching.
+        </p>
+        <div class="approval-add">
+          <select id="approval-provider" aria-label="Provider"></select>
+          <select id="approval-model" aria-label="Model"></select>
+          <button class="btn sm outline" id="approval-add" type="button">Add</button>
+        </div>
+        <div class="entry-list" id="approval-list"></div>
+        <p class="hint" id="approval-empty">Nothing chosen, so auto-approve cannot be turned on.</p>
+        <label class="approval-effort">
+          <span>How hard it thinks</span>
+          <select id="approval-effort" aria-label="Approval effort"></select>
+        </label>
+        <p class="hint">
+          Low is usually right: the rules do the work, and a judge that reasons at length turns every first-time command into a
+          pause long enough to feel like the app has hung.
+        </p>
+        <p class="hint" id="approval-note"></p>
       </section>
 
       <section class="sheet-pane about" id="about-pane" hidden>
@@ -305,6 +347,10 @@
       <p class="hint" id="perm-detail"></p>
       <pre class="perm-path" id="perm-path"></pre>
       <p class="hint" id="perm-root"></p>
+      <!-- Only ever filled when auto mode was on and the approval model could
+           not answer. Being asked in a mode that promised not to ask needs a
+           reason on its face. -->
+      <p class="hint warn" id="perm-problem" hidden></p>
       <div class="setup-actions">
         <button class="btn sm primary" id="perm-once" type="button">Allow once</button>
         <button class="btn sm outline" id="perm-session" type="button">Allow for this session</button>

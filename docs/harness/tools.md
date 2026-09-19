@@ -21,8 +21,8 @@ can correct itself on the next round.
 
 ## bash
 
-Writes the command to a temporary script and runs it as `bash -l <script>`
-from the project cwd. On Windows it looks up Git Bash under Program Files and
+Writes the command to a temporary script and runs it as `bash <script>` from
+the project cwd. On Windows it looks up Git Bash under Program Files and
 errors clearly if none is found (PowerShell fallback arrives with the env
 probe, plan §12). Output capped at 1 MB with an explicit
 `[output truncated at 1 MB]` marker, never silent. Failures report the exit
@@ -31,10 +31,32 @@ code.
 The script file is there because Git Bash cuts a `-c` string at 8 KiB and runs
 the front of it anyway. A 12 KB patch script arrived with its heredoc
 terminator missing, the shell warned about an unterminated heredoc, and the
-file being patched had already been half written. Nothing about the shell
-changes otherwise: it is still a login shell, so `grep`, `sed` and `curl` are
-on PATH. The file is written readable by this user alone, because it holds the
-command and the temp directory is shared.
+file being patched had already been half written. The file is written readable
+by this user alone, because it holds the command and the temp directory is
+shared.
+
+The shell is not started with `-l`. The PATH a login shell would have is handed
+to it instead.
+
+A login shell is worth starting only for what the profile exports:
+`~/.local/bin`, `~/.cargo/bin`, and on macOS the PATH a GUI-launched app has no
+other way to inherit. It is not what puts `grep`, `sed` and `curl` on PATH, a
+common belief and a wrong one; Git Bash prepends `/mingw64/bin` and `/usr/bin`
+either way. What the profile does cost is three to four seconds on Windows, and
+every command paid it.
+
+A profile does not change while the app is open, so one read per process serves
+them all and its PATH is passed to every command. On Windows the value is
+converted back with `cygpath -w -p`, which round-trips a real PATH without
+losing a segment. Measured end to end, a command went from about 3.5s to about
+0.45s.
+
+Nothing ever waits on that read. The app starts it while the window is being
+built, where there is no one to keep waiting: a session cannot issue a tool call
+before a model has answered, and by then the read has long finished. A command
+that arrives before the answer starts its own login shell, and so does every
+command if the read fails or never returns. So the probe can only make the
+shell faster, never slower, and there is no deadline to get wrong.
 
 CRLF is folded to LF on the way in, since bash counts the carriage return as
 part of a heredoc terminator. The fold is over the whole command, so a heredoc
@@ -66,7 +88,7 @@ replace does not.
 
 ## edit
 
-Replaces literal text in an existing UTF-8 file, ported from `deepseek-harness`.
+Replaces literal text in an existing UTF-8 file.
 Its description asks for a read first, unless the file was created or last edited
 in this session. `old_string` must appear exactly once unless `replace_all` is true; a missing or
 ambiguous match comes back as an error that says which. Matching is done with
@@ -96,9 +118,9 @@ line as added and nothing as removed, which is what `@@ -0,0 +1,n @@` says. Two
 versions that differ only in whether the last line is terminated have the same
 lines and no hunk to show, so the diff is one header saying the trailing newline
 was added or removed; a header with an empty body under it would read as a write
-that changed nothing. And a file that exists but cannot be read as text — a
-permission error, a lock, a binary, bytes that are not UTF-8 — gets no diff and a
-line saying so, because reporting it as a new file would tell the model it had
+that changed nothing. A file that exists but cannot be read as text, whether
+from a permission error, a lock, a binary, or bytes that are not UTF-8, gets no
+diff and a line saying so, because reporting it as a new file would tell the model it had
 created the lines it actually destroyed.
 
 Handing the model the diff is what stops the next round opening the file again
@@ -119,6 +141,6 @@ Every path argument goes through an `AccessGate`: `read`, `write` and `edit`
 call `access.check` on the path before they touch it, and `bash` calls
 `access.checkCommand` on the whole command, because a command is not a path and
 nothing reads it as one. What the question costs depends on which gate the
-session got: in the app it is a modal to the user, and everywhere else — the
-CLI, a test, a subagent host — it is a flat refusal, since there is no window
+session got: in the app it is a modal to the user, and everywhere else, in the
+CLI, a test or a subagent host, it is a flat refusal, since there is no window
 to ask in. `sessions.md` has the rule and what it takes to enforce it.

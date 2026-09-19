@@ -1,5 +1,6 @@
 // doc: docs/harness/overview.md
 import type { AgentRole } from '../core/agents.js'
+import type { ApprovalConfig, PermissionMode } from '../core/approval.js'
 import type { ActiveSelection, Effort, ModelFacts, ModelOffer, ProviderKind, ProviderRecord } from '../core/config.js'
 import type { JobState, JobView } from '../core/jobs.js'
 import type { AccessIntent } from '../core/scope.js'
@@ -25,6 +26,9 @@ export const IPC_CHANNELS = {
   sessionRename: 'session:rename',
   sessionTranscriptPath: 'session:transcript-path',
   permissionRespond: 'permission:respond',
+  permissionMode: 'permission:mode',
+  permissionSetMode: 'permission:set-mode',
+  configSaveApproval: 'config:save-approval',
   sessionSetRole: 'session:set-role',
   jobsList: 'jobs:list',
   subagentOpen: 'subagent:open',
@@ -37,9 +41,9 @@ export const IPC_CHANNELS = {
 } as const
 
 /**
- * One agent as the window lists it. The registry lives in the main process —
- * the renderer is served over the app scheme and cannot import across into
- * core — so the three roles arrive over IPC like everything else.
+ * One agent as the window lists it. The registry lives in the main process,
+ * since the renderer is served over the app scheme and cannot import across
+ * into core, so the three roles arrive over IPC like everything else.
  */
 export interface AgentSummary {
   role: AgentRole
@@ -56,8 +60,8 @@ export interface SessionSendRequest {
 export interface McpStatusView {
   /**
    * True once the session's hub exists. Until the first message a session has
-   * no hub — nothing is spawned for a session the user only clicked on — so the
-   * list before that is what the config says, not what is running.
+   * no hub, because nothing is spawned for a session the user only clicked on,
+   * so the list before that is what the config says, not what is running.
    */
   live: boolean
   servers: McpServerStatus[]
@@ -98,6 +102,17 @@ export interface SessionView {
   usage?: TurnUsage
   /** The subagents' share of `usage`. */
   subagentUsage?: TurnUsage
+  /** The harness's own share of `usage`: approval checks and the like. */
+  harnessUsage?: TurnUsage
+  /** What that share cost, priced at the models that ran it. */
+  harnessCostUsd?: number
+}
+
+/** Auto mode's answer for one session, and why it is not available when it is not. */
+export interface PermissionModeView {
+  mode: PermissionMode
+  /** Absent when auto mode can be turned on. Present says why it cannot. */
+  problem?: string
 }
 
 /** Everything the sidebar draws itself from. */
@@ -176,6 +191,12 @@ export interface PermissionAsk {
    */
   command?: string
   root: string
+  /**
+   * Why auto mode did not answer this one itself. Present only when the mode
+   * was on and the approval model failed. The dialog shows it, so a person who
+   * turned automatic approval on is told why they are being asked.
+   */
+  problem?: string
 }
 
 export type PermissionDecision = 'once' | 'session' | 'deny'
@@ -208,6 +229,10 @@ export interface ConfigStatus {
   keyStorage: 'os' | 'unavailable'
   /** Why it is not configured yet. Absent once it is. */
   problem?: string
+  /** The approval model ladder auto mode runs on. Carries no key. */
+  approval?: ApprovalConfig
+  /** Why auto mode cannot be turned on. Absent when it can. */
+  approvalProblem?: string
 }
 
 /** Create a provider (no `id`) or update one (with its `id`). */
@@ -230,8 +255,8 @@ export interface ProviderSaveRequest {
   apiKey?: string
   /**
    * Make this provider active on the given model once it is saved. Saving and
-   * switching in one call is what the settings screen needs, and it spares the
-   * renderer from having to learn the id of a provider it just created.
+   * switching in one call spares the renderer the id of a provider it has just
+   * created.
    */
   activeModel?: string
 }
@@ -272,14 +297,21 @@ export interface NanoBridge {
   /** Where this session's transcript file is, for the context menu's copy item. */
   transcriptPath(id: string): Promise<string>
   respondToPermission(id: string, decision: PermissionDecision): Promise<void>
+  /** How this session answers permission questions right now. */
+  permissionMode(sessionId: string): Promise<PermissionModeView>
+  /**
+   * Switch it. Asking for `auto` with no approval model configured is refused
+   * and comes back with the reason in `problem`, still on the old mode.
+   */
+  setPermissionMode(sessionId: string, mode: PermissionMode): Promise<PermissionModeView>
   /** Switch the agent a session is talking to. The transcript is kept. */
   setSessionRole(sessionId: string, role: AgentRole): Promise<SessionView>
   /** Background subagents, newest first. In-memory: empty after a restart. */
   jobs(): Promise<JobView[]>
   /**
-   * One subagent's stored conversation, or null when it was never written —
-   * which is the case for one that is still running in this launch, and whose
-   * stream the window already has.
+   * One subagent's stored conversation, or null when it was never written,
+   * which is the case for one still running in this launch, whose stream the
+   * window already has.
    */
   subagent(sessionId: string, id: string): Promise<SubagentOpenResponse | null>
   /** The three agents, for the role chip. */
@@ -293,13 +325,15 @@ export interface NanoBridge {
   /**
    * Take every key out of a message before it is drawn or sent. The window
    * calls this first and shows what comes back, so a pasted key is never on
-   * screen — not even for the frame between typing and sending.
+   * screen, not even for the frame between typing and sending.
    */
   captureSecrets(text: string): Promise<CaptureResult>
   config(): Promise<ConfigStatus>
   saveProvider(request: ProviderSaveRequest): Promise<ConfigStatus>
   deleteProvider(id: string): Promise<ConfigStatus>
   setActive(request: ActiveSetRequest): Promise<ConfigStatus>
+  /** Set the approval model ladder. An empty list turns auto mode off for good. */
+  saveApproval(approval: ApprovalConfig): Promise<ConfigStatus>
   probeProvider(request: ConfigProbeRequest): Promise<ConfigProbeResult>
   /** Hand an https link to the OS browser. The window itself never navigates. */
   openExternal(url: string): Promise<void>

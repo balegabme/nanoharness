@@ -30,7 +30,7 @@ import {
   startSession,
   workspaceOf,
 } from './sidebar.js'
-import type { AgentSummary, ConfigStatus, NanoBridge } from '../ipc/contract.js'
+import type { AgentSummary, ConfigStatus, NanoBridge, PermissionModeView } from '../ipc/contract.js'
 import type { DiffOpen } from './chat.js'
 import type { JobView } from '../core/jobs.js'
 import type { McpServerStatus, ToolStats } from '../core/types.js'
@@ -59,8 +59,10 @@ const chipValues = new Map<HTMLSelectElement, HTMLElement>([
   [must<HTMLSelectElement>('agent-select'), must<HTMLElement>('agent-value')],
   [must<HTMLSelectElement>('model-select'), must<HTMLElement>('model-value')],
   [must<HTMLSelectElement>('effort-select'), must<HTMLElement>('effort-value')],
+  [must<HTMLSelectElement>('mode-select'), must<HTMLElement>('mode-value')],
 ])
 const accessChip = must<HTMLElement>('access-chip')
+const modeSelect = must<HTMLSelectElement>('mode-select')
 const statusChip = must<HTMLElement>('status')
 const titleLabel = must<HTMLElement>('session-title')
 const scopeChip = must<HTMLElement>('scope-chip')
@@ -91,8 +93,7 @@ let showing: DiffOpen | null = null
 
 /**
  * The conversation, and the subagent the user opened. Two views of the same
- * kind, because a subagent is an agent: it thinks, calls tools and answers, and
- * a second, smaller way of drawing that was a second thing to keep right.
+ * kind, because a subagent is an agent: it thinks, calls tools and answers.
  */
 const chat = new ChatView({
   stream,
@@ -155,14 +156,11 @@ function closeDiff(): void {
 }
 
 /**
- * The MCP chip: how many servers this session is actually talking to, and how
- * many are configured but not answering. Two numbers, because "MCP is on" and
- * "MCP works" are different claims and only the second one matters when a tool
- * is missing.
- *
- * A session's servers are dialled on its first message, so before that the
- * counts are what the config asks for rather than what is up, which the tooltip
- * says outright instead of showing a red count for something nobody tried yet.
+ * The MCP chip: how many servers this session is talking to, and how many are
+ * configured but not answering. Two numbers, because "MCP is on" and "MCP
+ * works" are different claims. A session's servers are dialled on its first
+ * message, so before that the tooltip says the counts are what the config asks
+ * for rather than showing a red one for something nobody tried yet.
  */
 function renderMcp(status: { live: boolean; servers: McpServerStatus[] } | null): void {
   mcpChip.hidden = status === null || status.servers.length === 0
@@ -171,14 +169,13 @@ function renderMcp(status: { live: boolean; servers: McpServerStatus[] } | null)
   const connected = status.servers.filter(server => server.connected)
   const failed = status.servers.filter(server => !server.connected)
   mcpChip.classList.toggle('pending', !status.live)
-  // Nothing has been dialled, so there is no split to draw: every server counts
-  // as "not connected" until the first message, and showing that as a failure
-  // count beside a nought made a session that has not started yet look broken.
-  // One number, the one that is true: how many this folder is configured for.
+  // Nothing has been dialled, so there is no split to draw: every server
+  // counts as "not connected" until the first message. One number, the one
+  // that is true: how many this folder is configured for.
   mcpOk.textContent = String(status.live ? connected.length : status.servers.length)
   mcpBad.textContent = String(failed.length)
-  // A red nought is not good news drawn in red, it is a colour the eye stops on
-  // for nothing. Nothing failed, so nothing is shown.
+  // Nothing failed, so nothing is shown: a red nought is a colour the eye
+  // stops on for no news.
   mcpChip.classList.toggle('all-well', status.live && failed.length === 0)
 
   const lines = status.servers.map(server => {
@@ -205,9 +202,8 @@ async function refreshMcp(sessionId: string | null): Promise<void> {
 
 /**
  * One subagent as the head above its flow draws it. A live one comes from the
- * job registry and a finished one from its stored transcript, and the two carry
- * the same facts, which is the point: opening a subagent from a turn that ran
- * last week looks exactly like opening one that is running now.
+ * job registry and a finished one from its stored transcript, and the two
+ * carry the same facts, so both open the same way.
  */
 interface SubagentHead {
   id: string
@@ -327,6 +323,60 @@ function closeSubagent(): void {
 }
 
 /**
+ * The permission mode for the session on screen. Read from the main process
+ * rather than remembered here: a cached mode would be the previous session's
+ * the moment somebody clicked another one in the sidebar.
+ */
+async function renderMode(): Promise<void> {
+  if (activeSessionId === null) return
+  applyMode(await nh.permissionMode(activeSessionId))
+}
+
+function applyMode(view: PermissionModeView): void {
+  modeSelect.value = view.mode
+  // Auto mode with nothing to ask is not an option, and the reason is written
+  // on the option itself.
+  const auto = modeSelect.querySelector<HTMLOptionElement>('option[value="auto"]')
+  if (auto !== null) {
+    auto.disabled = view.problem !== undefined
+    auto.textContent = view.problem === undefined ? 'auto-approve' : `auto-approve: ${view.problem}`
+  }
+  syncChips()
+  const workspace = activeSessionId === null ? undefined : workspaceOf(activeSessionId)
+  if (workspace !== undefined) accessChip.title = modeTitle(workspace.root)
+}
+
+/**
+ * What the chip says on hover: the boundary, who answers the questions it
+ * cannot settle, and that the choice carries. The picker is per-session and the
+ * setting behind it is not, so a session switched to auto also decides what the
+ * next new one starts in, which is worth saying rather than finding out.
+ */
+function modeTitle(root: string): string {
+  const base = `Tools are limited to ${root}`
+  const who =
+    modeSelect.value === 'auto'
+      ? 'Questions it cannot settle go to the approval model, and to you when that model cannot answer.'
+      : 'Questions it cannot settle stop the turn and wait for you.'
+  return `${base}. ${who} New sessions start in whichever mode you chose last.`
+}
+
+/**
+ * Switch the mode. The answer comes back from the main process rather than
+ * being assumed here: a switch to auto that was refused returns the mode the
+ * session is still in, and the picker snaps back to it.
+ */
+async function switchMode(): Promise<void> {
+  if (activeSessionId === null) return
+  const wanted = modeSelect.value === 'auto' ? 'auto' : 'ask'
+  const view = await nh.setPermissionMode(activeSessionId, wanted)
+  applyMode(view)
+  if (wanted === 'auto' && view.mode !== 'auto') {
+    chat.errorBlock(`Auto mode is not available: ${view.problem ?? 'no approval model is configured'}. Choose an approval model in Settings.`)
+  }
+}
+
+/**
  * A native select sizes itself to its widest option, so a visible one would
  * shove the chips along the row whenever a model had a long id. The select is
  * invisible and laid over the chip; this writes what it says onto the label
@@ -362,11 +412,9 @@ function modelPick(value: string): { providerId: string; model: string } | null 
 }
 
 /**
- * The composer chips: what a turn will run, switchable without opening settings.
- *
- * Every configured provider is in the model list, grouped by name. Switching
- * provider is not a separate step taken somewhere else first: the thing being
- * chosen is a model, and which endpoint serves it follows from the pick.
+ * The composer chips: what a turn will run, switchable without opening
+ * settings. Every configured provider is in the model list, grouped by name:
+ * the thing being chosen is a model, and the endpoint follows from the pick.
  */
 function renderActive(status: ConfigStatus): void {
   const active = status.active
@@ -473,9 +521,8 @@ function renderShell(): void {
   diffView.hidden = !onDiff
   hero.hidden = open
   seat(open)
-  // Neither of these can be messaged: a subagent was given its whole task when
-  // it started and answers once, and a diff is a thing that already happened.
-  // Leaving the composer over either would offer to send a message into it.
+  // Neither of these can be messaged: a subagent was given its whole task
+  // when it started and answers once, and a diff already happened.
   showDock(!sideways && !onDiff)
   backButton.hidden = !sideways && !onDiff
 
@@ -528,8 +575,9 @@ function renderShell(): void {
   if (workspace !== undefined) {
     scopeChip.textContent = workspace.name
     scopeChip.title = `Scoped to ${workspace.root}`
-    accessChip.title = `Tools are limited to ${workspace.root}`
+    accessChip.title = modeTitle(workspace.root)
   }
+  void renderMode()
   // The composer stays live during a turn: the next message can be written
   // while this one runs, and Send is the stop button until the turn ends.
   renderAgents()
@@ -560,8 +608,7 @@ function renderAgents(): void {
 
 /**
  * Switching agent rebuilds the session's prompt and tool list on the next turn.
- * The effort chip is left alone: how hard to think is the user's setting, and
- * a role that moved it would overwrite an answer they had already given.
+ * The effort chip is left alone: how hard to think is the user's setting.
  */
 async function switchAgent(): Promise<void> {
   const sessionId = activeSessionId
@@ -611,7 +658,7 @@ async function openSession(id: string): Promise<void> {
     void refreshMcp(id)
     // What this session has already spent. Without it a re-opened session reads
     // as one that has cost nothing.
-    chat.showStoredUsage(opened.session.usage, opened.session.subagentUsage)
+    chat.showStoredUsage(opened.session.usage, opened.session.subagentUsage, opened.session.harnessUsage, opened.session.harnessCostUsd)
     renderShell()
     input.focus()
   } catch (err) {
@@ -661,11 +708,10 @@ async function send(): Promise<void> {
   const sessionId = activeSessionId
   if (sessionId === null) return
 
-  // A key pasted into the composer is taken out of the message here, before the
-  // window draws it: from this point on the text carries a `{{secret:name}}`
-  // reference, and the real value lives only in the main process. The same swap
-  // happens again in the main process, so nothing depends on this call for the
-  // secret to be caught. This is what keeps it off the screen.
+  // A key pasted into the composer is taken out of the message here, before
+  // the window draws it, which is what keeps it off the screen. The same swap
+  // happens again in the main process, so nothing depends on this call for
+  // the secret to be caught.
   const captured = await nh.captureSecrets(text).catch(() => ({ text, captured: [] }))
   const safe = captured.text
 
@@ -725,6 +771,9 @@ composer.addEventListener('click', () => {
 modelSelect.addEventListener('change', () => void switchActive())
 effortSelect.addEventListener('change', () => void switchActive())
 agentSelect.addEventListener('change', () => void switchAgent())
+modeSelect.addEventListener('change', () => {
+  void switchMode().catch((err: unknown) => chat.errorBlock(message(err)))
+})
 backButton.addEventListener('click', () => {
   if (showing !== null) closeDiff()
   else closeSubagent()

@@ -50,7 +50,7 @@ export const READ_TOOL = defineTool<ReadArgs>({
     // Scope first: whether the file exists is none of the session's business
     // until it is allowed to look there at all.
     const allowed = await access.check(rel, 'read')
-    if (!allowed.ok) return { ok: false, summary: allowed.reason, content: allowed.reason, isError: true }
+    if (!allowed.ok) return { ok: false, summary: allowed.reason, content: allowed.reason, isError: true, prevented: true }
     const abs = allowed.path
 
     const info = await stat(abs).catch(() => null)

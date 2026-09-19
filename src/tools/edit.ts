@@ -75,7 +75,7 @@ export const EDIT_TOOL = defineTool<EditArgs>({
   parse: parseArgs,
   async run({ path: rel, old_string, new_string, replace_all }, { access }): Promise<ToolResult> {
     const allowed = await access.check(rel, 'write')
-    if (!allowed.ok) return failed(allowed.reason)
+    if (!allowed.ok) return { ...failed(allowed.reason), prevented: true }
     const abs = allowed.path
 
     const info = await stat(abs).catch((err: unknown) => (err instanceof Error ? err : new Error(String(err))))
@@ -112,8 +112,7 @@ export const EDIT_TOOL = defineTool<EditArgs>({
       return failed(`could not write ${rel}: ${err instanceof Error ? err.message : String(err)}`)
     }
     // What changed, rather than how many times something matched. The window
-    // opens it as a diff and the model reads the same lines, so neither has to
-    // take the edit on trust.
+    // opens it as a diff and the model reads the same lines.
     const diff = unifiedDiff(rel, content, edited)
     const done = `edited ${rel} (${replacements} ${replacements === 1 ? 'replacement' : 'replacements'}, ${statText(diff.stat)})`
     return { ok: true, summary: done, content: `${done}\n\n${diffBlock(diff)}` }

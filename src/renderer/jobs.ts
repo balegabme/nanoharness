@@ -4,21 +4,13 @@ import type { JobView } from '../core/jobs.js'
 import type { NanoBridge } from '../ipc/contract.js'
 
 /**
- * The subagents that are running right now, and what they have streamed.
+ * The subagents that are running right now, and what they have streamed. This
+ * module holds no UI: a subagent is opened from whatever started it and drawn
+ * in the same view the main agent is, so this is the bookkeeping behind it.
  *
- * A subagent has no place of its own in the window. It is opened from the thing
- * that started it, the `spawn` tool call in the conversation or the note a
- * background job leaves, and shown in the same view the main agent is shown
- * in. So this module holds no UI: it is the bookkeeping behind that view.
- *
- * A subagent's events arrive under its job id as `sessionId`, in the same shape
- * the main agent emits, and are kept here per subagent, so one nobody is
- * watching can still be opened mid-run and read from the beginning.
- *
- * Only running subagents are held. When one finishes, its whole conversation
- * has already been written to disk, so the buffer is dropped and opening it
- * later reads the transcript instead. That is also what makes a subagent from
- * last week open the same way as one that finished a second ago.
+ * Events arrive under the job id as `sessionId` and are kept per subagent, so
+ * one nobody is watching can still be opened mid-run and read from the start.
+ * Only running subagents are held; a finished one is already on disk.
  */
 
 let jobs: JobView[] = []
@@ -81,13 +73,13 @@ export function stateLabel(state: JobView['state']): string {
  * `docs/harness/agents.md` says why an answer alone is not enough to go on.
  *
  * `tools/spawn.ts` writes the same line for the model. The renderer is its own
- * bundle and takes no runtime import from `core/` or `tools/` (a type import is
- * erased at build time, so those are fine; a call is a real import), which is
- * why this function exists twice. Change one and change the other.
+ * bundle and takes no runtime import from `core/`, so this exists twice.
+ * Change one and change the other.
  */
 export function toolsText(tools: ToolStats): string {
   if (tools.calls === 0) return 'no tool calls'
-  return `${tools.calls} tool call${tools.calls === 1 ? '' : 's'}, ${tools.ok} ok, ${tools.failed} failed`
+  const stopped = tools.prevented === 0 ? '' : `, ${tools.prevented} prevented`
+  return `${tools.calls} tool call${tools.calls === 1 ? '' : 's'}, ${tools.ok} ok, ${tools.failed} failed${stopped}`
 }
 
 /** True when this id is a subagent's, so its stream is not the open session's. */

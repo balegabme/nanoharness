@@ -1,5 +1,5 @@
 // doc: docs/harness/providers.md
-import { BAD_SSE, NO_BODY, ProviderError, retryAfterMs } from '../core/provider.js'
+import { BAD_SSE, NO_BODY, ProviderError, StreamBrokenError, retryAfterMs } from '../core/provider.js'
 import type { ChatProvider, ChatInput } from '../core/provider.js'
 import type { ChatChunk, ChatMessage, JsonSchema, ThinkingBlock, ToolCall, ToolInput, TurnUsage } from '../core/types.js'
 import { emptyUsage } from '../core/types.js'
@@ -54,8 +54,8 @@ export function budgetFor(effort: Effort, ceiling?: number): number {
   if (budget === 0 || ceiling === undefined || budget + BASE_MAX_TOKENS <= ceiling) return budget
   const spare = ceiling - BASE_MAX_TOKENS
   const room = Math.floor(spare >= MIN_BUDGET ? spare : ceiling / 2)
-  // Under the API's floor there is no budget worth sending. Thinking is dropped
-  // and the whole ceiling answers, which beats a request the model refuses.
+  // Under the API's floor there is no budget worth sending. Thinking is
+  // dropped and the whole ceiling answers.
   return room < MIN_BUDGET ? 0 : room
 }
 
@@ -171,7 +171,7 @@ export function createAnthropicProvider(opts: AnthropicOptions): ChatProvider {
         const text = await res.text()
         throw new ProviderError(`provider ${res.status}: ${text.slice(0, 200)}`, res.status, retryAfterMs(res.headers.get('retry-after')))
       }
-      if (!res.body) throw new ProviderError(NO_BODY, res.status)
+      if (!res.body) throw new StreamBrokenError(NO_BODY)
 
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
@@ -217,8 +217,8 @@ export function createAnthropicProvider(opts: AnthropicOptions): ChatProvider {
                 } else if (block?.type === 'thinking') {
                   thinking.set(event.index, { kind: 'thinking', text: '' })
                 } else if (block?.type === 'redacted_thinking') {
-                  // Encrypted by the API, unreadable here, and still required
-                  // back verbatim - so it is carried, not shown.
+                  // Encrypted by the API, unreadable here, and still
+                  // required back verbatim, so it is carried, not shown.
                   thinking.set(event.index, { kind: 'redacted', data: block.data ?? '' })
                 }
                 break
@@ -337,13 +337,13 @@ function parseEvent(line: string): StreamEvent | null {
   try {
     return JSON.parse(data) as StreamEvent
   } catch {
-    throw new Error(BAD_SSE)
+    throw new StreamBrokenError(BAD_SSE)
   }
 }
 
 /**
- * Usage arrives in two halves — input counts at `message_start`, output counts
- * at `message_delta` — so the totals accumulate instead of overwriting.
+ * Usage arrives in two halves, input counts at `message_start` and output
+ * counts at `message_delta`, so the totals accumulate instead of overwriting.
  */
 function applyUsage(usage: TurnUsage, wire: WireUsage | undefined): void {
   if (!wire) return
@@ -354,7 +354,7 @@ function applyUsage(usage: TurnUsage, wire: WireUsage | undefined): void {
 }
 
 /**
- * `GET {baseURL}/v1/models` — the settings screen's test call, same job as its
+ * `GET {baseURL}/v1/models`, the settings screen's test call, same job as its
  * OpenAI counterpart: reaching it proves the endpoint answers and the key is
  * accepted, and the ids fill the model picker.
  */

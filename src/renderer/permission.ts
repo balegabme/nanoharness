@@ -18,6 +18,7 @@ const title = must<HTMLElement>('perm-title')
 const detail = must<HTMLElement>('perm-detail')
 const pathLine = must<HTMLElement>('perm-path')
 const rootLine = must<HTMLElement>('perm-root')
+const problemLine = must<HTMLElement>('perm-problem')
 const onceButton = must<HTMLButtonElement>('perm-once')
 const sessionButton = must<HTMLButtonElement>('perm-session')
 const denyButton = must<HTMLButtonElement>('perm-deny')
@@ -56,6 +57,10 @@ function show(ask: Ask): void {
     onceButton.textContent = 'Allow once'
     sessionButton.textContent = 'Allow for this session'
   }
+  // Auto mode was on and the approval model could not answer, so the question
+  // arrives here after all, with the reason on it.
+  problemLine.hidden = ask.problem === undefined
+  problemLine.textContent = ask.problem === undefined ? '' : `Auto mode could not decide this one: ${ask.problem}. Deciding it yourself.`
   if (!dialog.open) dialog.showModal()
   denyButton.focus()
   // The turn is parked until this is answered, and a modal on a window nobody

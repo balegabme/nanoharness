@@ -5,7 +5,7 @@ import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createProvider } from '../providers/factory.js'
-import { BASH_TOOL, GUARDED_BASH_TOOL } from '../tools/bash.js'
+import { BASH_TOOL, GUARDED_BASH_TOOL, warmShell } from '../tools/bash.js'
 import { READ_TOOL } from '../tools/read.js'
 import { WRITE_TOOL } from '../tools/write.js'
 import { EDIT_TOOL } from '../tools/edit.js'
@@ -23,14 +23,29 @@ import { hasUnknownSecret, secretsBlock } from '../core/secrets.js'
 import { flushSecrets, forgetSecret, secretList, secretVault } from './secret-store.js'
 import { Session } from '../core/session.js'
 import { appendUsage } from '../core/usage-log.js'
+import { Judge, approvalProblem, goalsFrom, mergeRules } from '../core/approval.js'
+import type { ApprovalConfig, PermissionMode } from '../core/approval.js'
 import { resolveFacts } from '../core/config.js'
 import { emptyUsage } from '../core/types.js'
 import { IPC_CHANNELS } from '../ipc/contract.js'
-import { configStatus, deleteProvider, loadProviderConfig, probeProvider, saveProvider, setActive } from './config-store.js'
+import {
+  approvalEndpoints,
+  configStatus,
+  defaultMode,
+  deleteProvider,
+  loadProviderConfig,
+  probeProvider,
+  readStored,
+  saveApproval,
+  saveProvider,
+  setActive,
+  setDefaultMode,
+} from './config-store.js'
 import { PermissionBroker, gateState, promptingGate } from './permission.js'
-import type { GateState } from './permission.js'
+import type { ApprovalRecord, GateState } from './permission.js'
 import {
   addWorkspace,
+  appendApproval,
   createSession,
   deleteSession,
   loadNotes,
@@ -56,7 +71,7 @@ import type { JobView } from '../core/jobs.js'
 import type { PromptEnvironment } from '../core/prompt.js'
 import type { SubagentSetup, SubagentSlot } from '../core/spawn.js'
 import type { Tool } from '../core/session.js'
-import type { AppEvent, McpServerStatus } from '../core/types.js'
+import type { AppEvent, McpServerStatus, TurnUsage } from '../core/types.js'
 import type {
   ActiveSetRequest,
   AgentSummary,
@@ -66,6 +81,7 @@ import type {
   ConfigStatus,
   McpStatusView,
   PermissionDecision,
+  PermissionModeView,
   ProviderSaveRequest,
   SessionOpenResponse,
   SessionSendRequest,
@@ -79,10 +95,9 @@ const require = createRequire(import.meta.url)
 const pkg = require('../../package.json') as { version: string }
 
 /**
- * Every event forwarded to the window, which is every event there is. It is
- * written as a keyed object rather than a list because a list can be short by
- * one: an event type added to `AppEvent` and forgotten here reaches nothing and
- * fails nowhere. Leave one out of this object and the build stops.
+ * Every event forwarded to the window, which is every event there is. A keyed
+ * object rather than a list, so leaving one out stops the build instead of
+ * silently forwarding nothing.
  */
 const FORWARDED: Record<AppEvent['type'], true> = {
   'session.started': true,
@@ -108,11 +123,9 @@ const FORWARDED: Record<AppEvent['type'], true> = {
 const EVENT_TYPES = Object.keys(FORWARDED) as AppEvent['type'][]
 
 /**
- * Where this build's own source is, when it is on disk to be read. A packaged
- * app without it says nothing, instead of pointing at a folder that is not
- * there. The session may read it without a prompt, and the harness editor is
- * the one role told where it is, so harness work arrives as a question for that
- * subagent instead of as a path the parent goes off to explore.
+ * Where this build's own source is, when it is on disk to be read; a packaged
+ * app without it says nothing rather than pointing at a folder that is not
+ * there. The harness editor is the one role told where it is.
  */
 function harnessFacts(): HarnessFacts | undefined {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -187,10 +200,8 @@ function subagentBus(sender: WebContents, parent: () => Session | undefined): (s
 /**
  * How many times a session has been retired. A build reads this when it starts
  * and again once its servers are up: a different number means the settings it
- * was built against are gone, so it closes what it opened instead of handing
- * back a session nobody asked for. Without it, a save that lands mid-build
- * retires a session that does not exist yet, and the build then installs its
- * hub over the top, leaving a set of subprocesses with nothing holding them.
+ * was built against are gone, so it closes what it opened. Without it, a save
+ * landing mid-build leaves a set of subprocesses with nothing holding them.
  */
 const epochs = new Map<string, number>()
 
@@ -201,10 +212,7 @@ function epochOf(sessionId: string): number {
 /**
  * Drop live sessions and close what they opened, so the next turn rebuilds
  * against the configuration as it stands; the stored transcript is what makes
- * it lossless. A settings write that changes what a session is built from does
- * this, and one carrying only prices and effort levels does not. Leaking an MCP
- * subprocess per save would be a process pile-up nobody sees until the machine
- * slows down.
+ * it lossless. A write carrying only prices and effort levels does not do this.
  *
  * Resolves when every server has actually exited, which is what quitting needs;
  * a settings write does not wait.
@@ -259,12 +267,9 @@ function jobsFor(sender: WebContents): JobRegistry {
     })
   }
   // A background job is the one thing the user watches that the conversation
-  // knows nothing about: it starts inside a turn and answers after it. Both
-  // ends go into the session's own notes, so re-opening the session still says
-  // a job ran and how it went.
-  // A foreground spawn is not one of these: the parent's turn is blocked on it
-  // and gets its answer as a tool result, so a note saying the same thing would
-  // be the same event told twice.
+  // knows nothing about: it starts inside a turn and answers after it, so both
+  // ends go into the session's notes. A foreground spawn is not one of these:
+  // its answer arrives as a tool result, and a note would tell it twice.
   bus.on('job.started', event => {
     // The marker makes the note the way in while the job is still running: it
     // is the only mention of the subagent until it answers.
@@ -281,7 +286,7 @@ function jobsFor(sender: WebContents): JobRegistry {
     // as it now stands, or the window and the file disagree until the next
     // message is sent.
     if (parent !== undefined) {
-      void setSessionUsage(event.job.sessionId, parent.spent, parent.spentBySubagents).catch((err: unknown) => {
+      void setSessionUsage(event.job.sessionId, spendOf(parent)).catch((err: unknown) => {
         process.stderr.write(`session usage: ${err instanceof Error ? err.message : String(err)}\n`)
       })
     }
@@ -318,7 +323,7 @@ const TOOLS: Record<string, Tool> = {
 /**
  * The role's tools, minus the two that only make sense in one place: only a
  * background job may report progress, and a subagent may not summon another
- * one, since a tree of agents is a bill nobody asked for.
+ * one.
  */
 function toolsFor(role: AgentRole, options: { canSpawn: boolean; isJob: boolean }): Tool[] {
   const definition = AGENTS[role]
@@ -358,20 +363,102 @@ function sessionFor(sender: WebContents, sessionId: string): Promise<Session> {
 }
 
 /**
- * What each open session has already been allowed, keyed by session id. A live
- * `Session` is retired and rebuilt whenever what it was built from changes, a
- * secret is captured or the role is switched; the user's answers were about the session,
- * not about the process that happened to build it, so they outlive the
- * rebuild. Deleting a session forgets them with it.
+ * What each open session has already been allowed, keyed by session id. The
+ * user's answers were about the session, not about the process that happened
+ * to build it, so they outlive a rebuild. Deleting a session forgets them.
  */
 const permissions = new Map<string, GateState>()
 
-function permissionsFor(sessionId: string): GateState {
+async function permissionsFor(sessionId: string): Promise<GateState> {
   const existing = permissions.get(sessionId)
   if (existing) return existing
-  const state = gateState()
+  // A new session starts in whichever mode the user last chose. The grants
+  // themselves never persist, being answers about one run of the app, but the
+  // mode is a preference and is stored.
+  const mode = await defaultMode()
+  // Read the map again on the far side of that await. Two callers racing here
+  // would otherwise each make a state and the second replace the first. The
+  // gate holds the object it was handed, so switching to auto would leave the
+  // live gate in `ask`, silently. That is the one failure this mode must not
+  // have.
+  const settled = permissions.get(sessionId)
+  if (settled) return settled
+  const state = gateState(mode)
   permissions.set(sessionId, state)
   return state
+}
+
+/**
+ * One approval model per session, so the rung that answered first goes on
+ * answering. Plan §15 wants a stable prefix, and nothing records a switch of
+ * judge mid-session.
+ */
+const judges = new Map<string, Judge>()
+
+async function judgeFor(sessionId: string): Promise<Judge> {
+  const existing = judges.get(sessionId)
+  if (existing) return existing
+  const stored = await readStored()
+  const judge = new Judge({
+    endpoints: approvalEndpoints,
+    rules: mergeRules(stored.approval?.rules),
+    ...(stored.approval?.effort === undefined ? {} : { effort: stored.approval.effort }),
+  })
+  judges.set(sessionId, judge)
+  return judge
+}
+
+/** A session's running totals, in the shape the store writes. */
+function spendOf(session: Session): { total: TurnUsage; subagents: TurnUsage; harness: TurnUsage; harnessCostUsd: number } {
+  return { total: session.spent, subagents: session.spentBySubagents, harness: session.spentByHarness, harnessCostUsd: session.harnessCost }
+}
+
+/**
+ * What one automatic decision costs and where it is written down. The tokens go
+ * on the session's counter as the harness's own; the line goes to the session's
+ * approval log, so a decision the user never saw is still one they can read. A
+ * log that cannot be written is a warning, never the end of the turn.
+ */
+function recordApproval(sessionId: string, record: ApprovalRecord): void {
+  const session = sessions.get(sessionId)
+  if (session !== undefined && record.outcome !== undefined) {
+    session.addHarnessUsage(record.outcome.usage, record.outcome.costUsd)
+  }
+  void appendApproval({
+    at: record.at,
+    sessionId,
+    intent: record.action.intent,
+    ...(record.action.command === undefined ? {} : { command: record.action.command }),
+    ...(record.action.paths.length === 0 ? {} : { paths: [...record.action.paths] }),
+    ...(record.outcome === undefined
+      ? {}
+      : {
+          verdict: record.outcome.verdict,
+          rule: record.outcome.rule,
+          reason: record.outcome.reason,
+          model: record.outcome.model,
+          ms: record.outcome.ms,
+          usage: record.outcome.usage,
+          ...(record.outcome.costUsd === null ? {} : { costUsd: record.outcome.costUsd }),
+        }),
+    ...(record.problem === undefined ? {} : { problem: record.problem }),
+  }).catch((err: unknown) => {
+    process.stderr.write(`approval log: ${err instanceof Error ? err.message : String(err)}\n`)
+  })
+}
+
+/**
+ * Why auto mode cannot be turned on, or nothing when it can. Read from the
+ * stored settings each time rather than cached: a provider deleted in the
+ * settings screen should take the mode with it.
+ */
+async function approvalGap(): Promise<string | undefined> {
+  const stored = await readStored()
+  return approvalProblem(stored.approval, stored.providers)
+}
+
+function modeView(mode: PermissionMode, problem: string | undefined): PermissionModeView {
+  return problem === undefined ? { mode } : { mode, problem }
 }
 
 async function buildSession(sender: WebContents, sessionId: string): Promise<Session> {
@@ -410,9 +497,9 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
   // the user merely clicked on. This is the answer arriving late.
   bus.emit({ type: 'mcp.status', sessionId, servers: [...hub.status], live: true, at: Date.now() })
 
-  // What MCP the session actually has, told to the agent in its own words: a
-  // model with no such block answers "what tools do you have" from its training
-  // set, and invents a policy to explain a server it was never told about.
+  // What MCP the session actually has, told to the agent in its own words. A
+  // model with no such block answers "what tools do you have" from its
+  // training set.
   const paths = mcpPaths(root)
   const secrets = await secretVault()
   const context = [
@@ -431,21 +518,28 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
   ]
   const systemPrompt = agentPrompt(role, environment(root), context)
   const tools = [...toolsFor(role, { canSpawn: true, isJob: false }), ...hub.tools()]
-  // A subagent is held to the parent's boundary, and to the same broker: an
-  // "allow for this session" the user already gave covers the work they asked
-  // for, whoever ends up doing it.
+  // A subagent is held to the parent's boundary and the same broker: an "allow
+  // for this session" covers the work the user asked for, whoever does it. A
+  // clone is built from the parent's live transcript, which the gate also reads
+  // for the goals it judges against; the holder ties the two together.
+  const parent: { session?: Session } = {}
+
   const access = promptingGate({
     root,
     sessionId,
     broker: brokerFor(sender),
-    state: permissionsFor(sessionId),
+    state: await permissionsFor(sessionId),
     redact: text => secrets.redact(text),
+    judge: await judgeFor(sessionId),
+    // The user's own messages, read off the live transcript at the moment the
+    // question is asked. Never the assistant's and never a tool result: tool
+    // output is the part an attacker can write into.
+    goals: () => goalsFrom(parent.session?.transcript ?? []),
+    onDecision: record => {
+      recordApproval(sessionId, record)
+    },
     ...(HARNESS === undefined ? {} : { readable: [HARNESS.root] }),
   })
-
-  // A clone is built from the parent's live transcript, and the parent does not
-  // exist until the call below; the holder is what ties the two together.
-  const parent: { session?: Session } = {}
 
   const spent = await sessionUsage(sessionId)
 
@@ -454,13 +548,11 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
     // waited on, so its report is the answer it comes back with.
     const isJob = slot.background
     if (request.mode === 'clone') {
-      // A clone is the parent, one message later: the same prompt, the same
-      // tool list and the same history, so the provider's cache answers the
-      // whole prefix. "The same tool list" is literal: the tool definitions sit
-      // in front of the messages, so dropping one would invalidate exactly the
-      // bytes the mode exists to reuse. `spawn` therefore stays in the list and
-      // refuses at the call, and a background clone has no `job_update`. It
-      // reports once, at the end.
+      // A clone is the parent one message later: same prompt, same tool list,
+      // same history, so the provider's cache answers the whole prefix. The
+      // tool definitions sit in front of the messages, so dropping one would
+      // invalidate the bytes this exists to reuse, so `spawn` stays in the
+      // list and refuses at the call instead.
       return {
         systemPrompt,
         tools,
@@ -468,9 +560,9 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
         effort: config.effort,
       }
     }
-    // Every agent thinks as hard as the user asked this session to think. A
-    // per-role default would change the price of a turn from a chip the user
-    // can see to a table only the code knows.
+    // Every agent thinks as hard as the user asked this session to think.
+    // There is no per-role default: the chip in the window is the whole
+    // answer.
     return {
       systemPrompt: agentPrompt(request.role, environment(root), [
         ...(await roleContext(request.role, root, HARNESS)),
@@ -510,7 +602,7 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
       access,
       history: await loadTranscript(sessionId),
       secrets,
-      ...(spent === null ? {} : { usage: spent.total, subagentUsage: spent.subagents }),
+      ...(spent === null ? {} : { usage: spent.total, subagentUsage: spent.subagents, harnessUsage: spent.harness, harnessCostUsd: spent.harnessCostUsd }),
       spawn: createSpawnHost({
         sessionId,
         role,
@@ -551,9 +643,8 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
         },
         // Sending a failed write to stderr would tell nobody, and by then the
         // window has already drawn a card offering to open that conversation.
-        // So it is drawn as an error in the conversation itself, where the user
-        // is already looking and needs no click, and kept in the transcript
-        // beside the turn it belongs to.
+        // So it is drawn as an error in the conversation itself and kept in the
+        // transcript beside the turn it belongs to.
         problem: text => {
           parent.session?.fault(text)
         },
@@ -641,6 +732,10 @@ function quit(event: Electron.Event): void {
 app.whenReady().then(() => {
   app.setAppUserModelId(APP_ID)
   serveRenderer()
+  // Read the shell's PATH while the window is still being built. Nothing waits
+  // on it, and doing it here means the agent's first command is as quick as its
+  // second rather than being the one that sources the profile.
+  warmShell()
 
   ipcMain.handle(IPC_CHANNELS.ping, () => ({ ok: true, version: pkg.version }))
 
@@ -658,12 +753,10 @@ app.whenReady().then(() => {
 
   ipcMain.handle(IPC_CHANNELS.configProbe, (_event: IpcMainInvokeEvent, req: ConfigProbeRequest): Promise<ConfigProbeResult> => probeProvider(req))
 
-  // A settings write that changes what a session is built from retires the live
-  // sessions: they hold a provider built from the old configuration, so the next
-  // turn rebuilds against the new one. The stored transcript is what makes that
-  // lossless. A write that only carries prices and effort levels leaves them
-  // running, because Fetch models stores those on its own and a turn in flight
-  // should not end because somebody looked at the model list.
+  // A settings write that changes what a session is built from retires the
+  // live sessions, and the stored transcript makes that lossless. One carrying
+  // only prices and effort levels leaves them running: a turn in flight should
+  // not end because somebody looked at the model list.
   ipcMain.handle(IPC_CHANNELS.configSaveProvider, async (_event: IpcMainInvokeEvent, req: ProviderSaveRequest): Promise<ConfigStatus> => {
     if (await saveProvider(req)) void retire()
     return configStatus()
@@ -799,6 +892,37 @@ app.whenReady().then(() => {
     },
   )
 
+  ipcMain.handle(IPC_CHANNELS.permissionMode, async (_event: IpcMainInvokeEvent, sessionId: string): Promise<PermissionModeView> => {
+    const state = await permissionsFor(sessionId)
+    return modeView(state.mode, await approvalGap())
+  })
+
+  /**
+   * Switch how a session answers permission questions. Asking for auto mode
+   * with nothing to ask is refused outright, never accepted and then ignored.
+   */
+  ipcMain.handle(
+    IPC_CHANNELS.permissionSetMode,
+    async (_event: IpcMainInvokeEvent, req: { sessionId: string; mode: PermissionMode }): Promise<PermissionModeView> => {
+      const state = await permissionsFor(req.sessionId)
+      const gap = await approvalGap()
+      if (req.mode === 'auto' && gap !== undefined) return modeView(state.mode, gap)
+      state.mode = req.mode
+      // The judge is rebuilt with the next question, so a ladder edited while
+      // the session was in `ask` is the one auto mode comes back on with.
+      judges.delete(req.sessionId)
+      await setDefaultMode(req.mode)
+      return modeView(req.mode, gap)
+    },
+  )
+
+  ipcMain.handle(IPC_CHANNELS.configSaveApproval, async (_event: IpcMainInvokeEvent, approval: ApprovalConfig): Promise<ConfigStatus> => {
+    await saveApproval(approval)
+    // Every live judge was built from the old ladder and the old rules.
+    judges.clear()
+    return configStatus()
+  })
+
   ipcMain.handle(IPC_CHANNELS.permissionRespond, (event: IpcMainInvokeEvent, req: { id: string; decision: PermissionDecision }) => {
     brokerFor(event.sender).resolve(req.id, req.decision)
   })
@@ -816,15 +940,13 @@ app.whenReady().then(() => {
     const vault = await secretVault()
     const text = vault.capture(req.text).text
     // A key captured after this session was built gives it a reference its
-    // system prompt has never heard of, and a model that reads
-    // `{{secret:name}}` with nothing explaining it asks for the key it already
-    // has. The session is retired so the next build names it. That costs one
-    // cache miss and a hub restart, once, the first time a key appears.
+    // system prompt has never heard of, and a model reading `{{secret:name}}`
+    // with nothing to explain it asks for the key it already has. Retiring the
+    // session costs one cache miss, once, the first time a key appears.
     //
-    // The comparison is against what the prompt was built with. Comparing
-    // against the vault as it stood a moment ago would never fire: the window
-    // captures the message before it draws it, so by here the name is already
-    // stored and a second capture changes nothing.
+    // The comparison is against what the prompt was built with. Against the
+    // vault as it stood a moment ago it would never fire: the window captures
+    // the message before it draws it, so the name is already stored by here.
     const built = promptSecrets.get(req.sessionId)
     if (built !== undefined && hasUnknownSecret(built, vault.names())) await retire(req.sessionId)
     const session = await sessionFor(event.sender, req.sessionId)
@@ -834,7 +956,7 @@ app.whenReady().then(() => {
     // answer is not a message, and a crash mid-turn should leave the session
     // exactly as it was before the message was sent.
     await saveTranscript(req.sessionId, session.transcript, session.notes)
-    const updated = await noteTurn(req.sessionId, text, usage, session.spentBySubagents)
+    const updated = await noteTurn(req.sessionId, text, spendOf(session))
 
     // One line per completed turn, so `nh usage` has something to read. A log
     // that cannot be written is worth a warning and no more than that.
@@ -858,13 +980,10 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
-  // An MCP server is a subprocess this app started, so quitting has to take
-  // them with it. Not `window-all-closed`, because closing the last window on
-  // macOS does not end the app, and not `will-quit` either: that fires after
-  // every window is gone, and a window taking its `webContents` with it takes
-  // its job registry too (see `jobRegistries` above), so there would be no
-  // running job left to write down. `before-quit` runs while both are still
-  // here.
+  // An MCP server is a subprocess this app started, so quitting takes them
+  // with it. Not `window-all-closed`, which does not end the app on macOS, and
+  // not `will-quit`, which fires after a window has taken its job registry
+  // with it. `before-quit` runs while both are still here.
   app.on('before-quit', quit)
 
   app.on('window-all-closed', () => app.quit())

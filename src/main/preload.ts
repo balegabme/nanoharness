@@ -1,6 +1,7 @@
 // doc: docs/harness/ui.md
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC_CHANNELS } from '../ipc/contract.js'
+import type { ApprovalConfig, PermissionMode } from '../core/approval.js'
 import type {
   ActiveSetRequest,
   AgentSummary,
@@ -11,6 +12,7 @@ import type {
   McpStatusView,
   NanoBridge,
   PermissionDecision,
+  PermissionModeView,
   PingResponse,
   ProviderSaveRequest,
   SecretView,
@@ -40,6 +42,9 @@ const bridge: NanoBridge = {
   transcriptPath: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.sessionTranscriptPath, id) as Promise<string>,
   respondToPermission: (id: string, decision: PermissionDecision) =>
     ipcRenderer.invoke(IPC_CHANNELS.permissionRespond, { id, decision }) as Promise<void>,
+  permissionMode: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.permissionMode, sessionId) as Promise<PermissionModeView>,
+  setPermissionMode: (sessionId: string, mode: PermissionMode) =>
+    ipcRenderer.invoke(IPC_CHANNELS.permissionSetMode, { sessionId, mode }) as Promise<PermissionModeView>,
   setSessionRole: (sessionId: string, role: AgentRole) =>
     ipcRenderer.invoke(IPC_CHANNELS.sessionSetRole, { sessionId, role }) as Promise<SessionView>,
   jobs: () => ipcRenderer.invoke(IPC_CHANNELS.jobsList) as Promise<JobView[]>,
@@ -54,6 +59,7 @@ const bridge: NanoBridge = {
   saveProvider: (request: ProviderSaveRequest) => ipcRenderer.invoke(IPC_CHANNELS.configSaveProvider, request) as Promise<ConfigStatus>,
   deleteProvider: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.configDeleteProvider, id) as Promise<ConfigStatus>,
   setActive: (request: ActiveSetRequest) => ipcRenderer.invoke(IPC_CHANNELS.configSetActive, request) as Promise<ConfigStatus>,
+  saveApproval: (approval: ApprovalConfig) => ipcRenderer.invoke(IPC_CHANNELS.configSaveApproval, approval) as Promise<ConfigStatus>,
   probeProvider: (request: ConfigProbeRequest) => ipcRenderer.invoke(IPC_CHANNELS.configProbe, request) as Promise<ConfigProbeResult>,
   openExternal: (url: string) => ipcRenderer.invoke(IPC_CHANNELS.openExternal, url) as Promise<void>,
   onEvent(listener) {

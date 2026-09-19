@@ -1,6 +1,6 @@
 // doc: docs/harness/overview.md
 import { EventBus } from './event-bus.js'
-import { ProviderError, RETRY_AFTER_CAP_MS, isRetryable } from './provider.js'
+import { ProviderError, backoffFor, isRetryable, sleep } from './provider.js'
 import type { ChatProvider } from './provider.js'
 import type { Effort, ModelFacts } from './config.js'
 import { costOf, moneyText } from './cost.js'
@@ -8,7 +8,7 @@ import { workspaceGate } from './scope.js'
 import type { AccessGate } from './scope.js'
 import { emptyToolStats, emptyUsage } from './types.js'
 import { SecretVault } from './secrets.js'
-import type { ChatMessage, SessionNote, ThinkingBlock, ToolCall, ToolInput, ToolResult, ToolStats, TurnUsage } from './types.js'
+import type { ChatMessage, PreventedCall, SessionNote, ThinkingBlock, ToolCall, ToolInput, ToolResult, ToolStats, TurnUsage } from './types.js'
 import type { SpawnHost } from './spawn.js'
 import type { JobRegistry } from './jobs.js'
 
@@ -29,20 +29,15 @@ export interface ToolContext {
 export interface Tool {
   input: ToolInput
   /**
-   * True for a tool that only reads. The loop may then run it at the same time
-   * as another call from the same assistant message. Only an explicit true
-   * opts in: a tool that says nothing runs alone, so a new write tool is
-   * exclusive by default.
+   * True for a tool that only reads, which the loop may run at the same time as
+   * another call from the same message. A tool that says nothing runs alone.
    */
   parallel?: boolean
   /**
    * True for a tool whose arguments must reach it exactly as the model wrote
    * them, `{{secret:name}}` and all. Every other tool gets the real values
-   * substituted in (`SecretVault.revealDeep`), because a tool is where a key is
-   * finally used. `spawn` and `job_update` never use their arguments; they turn
-   * them into text: a subagent's first message, a note in the window, a line in
-   * a transcript. Filling those in would put the key back on the wire and back
-   * on disk, which is the whole thing this avoids.
+   * substituted in. `spawn` and `job_update` only turn their arguments into
+   * text, so filling those in would put the key back on the wire and on disk.
    */
   keepsPlaceholders?: boolean
   run(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult>
@@ -82,15 +77,9 @@ function isJsonObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * The tool loop is not capped. A cap is a harness deciding that a long task is
- * a bug, and it fails badly: the turn ends mid-investigation, with no answer
- * and nothing on screen to say why.
- *
- * A model going in circles is detectable on its own terms: the *same* tool with
- * the *same* arguments, over and over. The third identical call is not run,
- * since the answer would be the answer it already has, and the model is told
- * so. If it keeps asking after that, the turn ends with a note saying exactly
- * this happened.
+ * The tool loop is not capped; a model going in circles is caught on its own
+ * terms instead. The third identical call is refused and the model told so, and
+ * at the sixth the turn ends with a note saying that is what happened.
  */
 const REPEAT_REFUSE = 3
 const REPEAT_ABORT = 6
@@ -98,15 +87,10 @@ const REPEAT_ABORT = 6
 /** Failures in a row after which the model is told it is thrashing. Not a stop. */
 const FAILURE_NUDGE = 5
 
-/**
- * How many times one round is asked for before the turn gives up.
- *
- * A provider that answers 429 or drops the socket has said nothing about the
- * conversation, so the same request is worth making again. Five attempts covers
- * a rate limit that clears and a gateway that restarts; past that the fault is
- * not going away on its own and the user should be told rather than watched
- * over for another minute.
- */
+const CLOSING_NOTE_ODDS = 1 / 10_000
+const CLOSING_NOTE = 'I love you <3 — balega, creator of nanoharness'
+
+/** How many times one round is asked for before the turn gives up. */
 const ROUND_ATTEMPTS = 5
 
 /** Waits between attempts, in milliseconds. One entry per gap, so four. */
@@ -114,17 +98,28 @@ const BACKOFF_MS = [500, 1500, 4000, 8000]
 
 /**
  * The tools whose `path` argument names a file the turn changed. A `bash` call
- * can write a file too, and nothing here can see that it did, so the summary
- * says these are the files `edit` and `write` touched and claims nothing wider.
- *
- * `chat.ts` keeps the same two names for its own question, which is which
- * results end in a diff. The renderer is a separate bundle and takes no runtime
- * import from `core/`, so the list exists twice. Change one and change the other.
+ * can write one too and nothing here can see that it did, so the summary claims
+ * nothing wider. `chat.ts` keeps the same list; change one and change the other.
  */
 const WRITERS = new Set(['edit', 'write'])
 
 /** Paths listed before the line gives up and counts the rest. */
 const FILES_LISTED = 12
+
+/**
+ * What a prevented call was about, for the list under the summary.
+ */
+function preventedTarget(call: ToolCall): string {
+  try {
+    const parsed: unknown = JSON.parse(call.args)
+    if (typeof parsed !== 'object' || parsed === null) return ''
+    const { path, command } = parsed as { path?: unknown; command?: unknown }
+    if (typeof command === 'string' && command !== '') return command
+    return typeof path === 'string' ? path : ''
+  } catch {
+    return ''
+  }
+}
 
 /**
  * The file a finished call changed, or null when it changed none. The arguments
@@ -145,8 +140,7 @@ function writtenPath(call: ToolCall): string | null {
 
 /**
  * A duration as the summary says it: `2m 14s` over a minute, seconds under one,
- * and `<1s` for a turn that came back before the first tick. Rounding that one
- * to `0s` reads as a clock that is not running.
+ * and `<1s` for a turn that came back before the first tick.
  */
 function elapsedText(ms: number): string {
   if (ms < 1000) return '<1s'
@@ -166,33 +160,18 @@ function fileList(files: readonly string[]): string {
 
 /**
  * The line a turn ends on: how much tool work it took, which files came out of
- * it different, and how long the user waited. It is built here because it is
- * stored with the transcript, so a session re-opened next week shows the line it
- * showed live. The model is never sent it.
+ * it different, and how long the user waited. Stored with the transcript, so a
+ * re-opened session shows the line it showed live. The model is never sent it.
  */
 function turnSummary(tools: ToolStats, files: readonly string[], ms: number, spent: number | null): string {
+  // "prevented" is only ever shown when there is one.
+  const stopped = tools.prevented === 0 ? '' : `, ${tools.prevented} prevented`
   const calls =
     tools.calls === 0
       ? 'no tool calls'
-      : `${tools.calls} tool call${tools.calls === 1 ? '' : 's'}, ${tools.ok} ok, ${tools.failed} failed`
+      : `${tools.calls} tool call${tools.calls === 1 ? '' : 's'}, ${tools.ok} ok, ${tools.failed} failed${stopped}`
   const cost = spent === null ? '' : ` · ${moneyText(spent)}`
   return `${calls}${fileList(files)} · ${elapsedText(ms)}${cost}`
-}
-
-/**
- * How long to wait before attempt number `attempt + 1`.
- *
- * A provider that sent `Retry-After` is answered on its own terms, capped so a
- * header asking for an hour does not hang the turn on one. Otherwise the
- * schedule above applies, spread over a random part of the last quarter: five
- * windows all retrying on the same 500ms tick is the same thundering herd that
- * rate-limited them, and the spread is what breaks the lockstep (plan §11).
- */
-function backoffFor(err: unknown, attempt: number): number {
-  const asked = err instanceof ProviderError ? err.retryAfterMs : undefined
-  if (asked !== undefined) return Math.min(asked, RETRY_AFTER_CAP_MS)
-  const base = BACKOFF_MS[attempt - 1] ?? 8000
-  return Math.round(base * (0.75 + Math.random() * 0.25))
 }
 
 export interface SessionOptions {
@@ -202,10 +181,8 @@ export interface SessionOptions {
   systemPrompt: string
   effort?: Effort
   /**
-   * What is known about this model: what it charges, so a turn can say what it
-   * cost, and the most output it will produce, so a request is built inside
-   * that. Absent when nobody has described it, which leaves the cost off the
-   * line rather than guessed at.
+   * What it charges and the most output it will produce. Absent when nobody has
+   * described this model, which leaves the cost off the line rather than guessed.
    */
   facts?: ModelFacts
   /** Defaults to a hard block outside `cwd`; the app passes one that can ask. */
@@ -220,11 +197,13 @@ export interface SessionOptions {
   usage?: TurnUsage
   /** The subagents' share of `usage`, so a rebuild does not lose the split. */
   subagentUsage?: TurnUsage
+  /** The harness's own share of `usage`, kept across a rebuild for the same reason. */
+  harnessUsage?: TurnUsage
+  /** What that share cost, at the prices of the models that actually ran it. */
+  harnessCostUsd?: number
   /**
-   * The keys the user pasted. The model holds placeholders for them; this is
-   * the only object that can turn one back into a value, and it does so for
-   * tool arguments alone. Left out, nothing is substituted and nothing is
-   * redacted, which is the right behaviour for a session with no secrets.
+   * The keys the user pasted. The model holds placeholders for them; this is the
+   * only object that can turn one back into a value, for tool arguments alone.
    */
   secrets?: SecretVault
 }
@@ -241,8 +220,7 @@ export class Session {
   private failures = 0
   /**
    * The provider sent a usage report that could not be read, and the fault is
-   * already recorded. Said once: a provider that does this does it every turn,
-   * and it is the same fact each time.
+   * already recorded. Said once per session.
    */
   private usageProblemNoted = false
   /** Set for the turn in hand, so its summary line does not price a report it could not read. */
@@ -250,20 +228,32 @@ export class Session {
   private totalUsage = emptyUsage()
   private turnUsage = emptyUsage()
   /**
-   * The part of `totalUsage` that subagents spent. Kept apart because a turn
-   * that delegates can spend fifty thousand tokens without this session
-   * generating more than a paragraph, and one number cannot say that.
+   * The part of `totalUsage` that subagents spent. Kept apart: a turn that
+   * delegates can spend fifty thousand tokens while this session writes a
+   * paragraph.
    */
   private subagentUsage: TurnUsage = emptyUsage()
+  /**
+   * The part of `totalUsage` the harness spent on its own behalf rather than on
+   * the conversation: today the approval model, later a summariser or a titler.
+   */
+  private harnessUsage: TurnUsage = emptyUsage()
+  /**
+   * What `harnessUsage` cost, in dollars, summed as each call was made.
+   */
+  private harnessCostUsd = 0
   /** What this session's own tool calls came to, for whoever started it. */
   private readonly tally = emptyToolStats()
   /**
    * The same three numbers for the turn running now, plus the files it changed
-   * and when it started. The session-wide `tally` cannot answer "what did that
-   * last message cost me", which is the question a user asks with the answer
-   * still on screen, so the turn keeps its own count.
+   * and when it started. `tally` is session-wide and cannot answer "what did
+   * that last message cost me".
    */
   private turnTally = emptyToolStats()
+  /**
+   * What the permission system stopped this turn, in the order it stopped it.
+   */
+  private turnPrevented: PreventedCall[] = []
   private readonly turnFiles = new Set<string>()
   private turnStartedAt = 0
   // Stop is cooperative: the in-flight request is aborted and the loop ends at
@@ -272,11 +262,9 @@ export class Session {
   private controller: AbortController | null = null
   private stopped = false
   /**
-   * Answers from background subagents that have not been folded into the
-   * conversation yet. They arrive whenever the job happens to finish, which is
-   * usually in the middle of something: a message pushed between a tool call
-   * and its result is a request both providers refuse. So they wait here for a
-   * point where the transcript is balanced.
+   * Answers from background subagents not yet folded into the conversation. A
+   * message pushed between a tool call and its result is a request both
+   * providers refuse, so they wait here for a balanced point in the transcript.
    */
   private readonly pending: string[] = []
 
@@ -290,19 +278,17 @@ export class Session {
     this.access = options.access ?? workspaceGate(options.cwd)
     this.secrets = options.secrets ?? new SecretVault()
     this.messages.push({ role: 'system', content: options.systemPrompt })
-    // A resumed session keeps its running total: the turns it is resuming from
-    // were paid for, and a counter that restarts at zero says they were not.
-    // A stored total whose `input` counted the cached tokens keeps that overlap
-    // for the life of the session. It cannot be repaired: the figure does not
-    // say which wire produced it, and an Anthropic one was always correct. The
-    // alternative would be discarding a real number to avoid an approximate
-    // one. `usage-log.ts` drops old lines instead, because it adds totals
-    // across sessions.
+    // A resumed session keeps its running total: those turns were paid for, and
+    // a counter that restarts at zero says they were not. A stored total that
+    // counted cached tokens keeps that overlap. It cannot be repaired: the
+    // figure does not say which wire produced it.
     this.totalUsage = { ...(options.usage ?? emptyUsage()) }
     // Seeded beside the total it is part of. Left at zero, the first usage
     // event of a rebuilt session would report that subagents had spent nothing
     // and the next turn would write that over the stored breakdown.
     this.subagentUsage = { ...(options.subagentUsage ?? emptyUsage()) }
+    this.harnessUsage = { ...(options.harnessUsage ?? emptyUsage()) }
+    this.harnessCostUsd = options.harnessCostUsd ?? 0
     // A resumed session keeps its own system prompt, not the stored one: the
     // prompt is built fresh each launch and may have changed since.
     for (const message of options.history ?? []) {
@@ -337,26 +323,35 @@ export class Session {
   /**
    * What the turn came to. It goes to the window as an event and to the stored
    * transcript as a note of its own kind. `docs/harness/ui.md` says why it is
-   * not simply another note.
+   * drawn apart from a note.
    */
   private summarize(text: string): void {
-    // The paths came from tool arguments, which hold `{{secret:name}}` and never
-    // a value, so this scrub should find nothing. `note` and `fault` scrub on the
-    // same reasoning; a stored string that skips the boundary is the one that
-    // eventually carries something.
+    // The paths came from tool arguments, which hold `{{secret:name}}` and
+    // never a value, so this should find nothing.
     const safe = this.secrets.redact(text)
-    this.record('summary', safe)
-    this.bus.emit({ type: 'session.summary', sessionId: this.options.sessionId, turn: this.turn, text: safe, at: Date.now() })
+    // The list goes through the same scrub the text does. A prevented command
+    // is one the model wrote, so it is the likeliest string here to be
+    // carrying a pasted key.
+    const stopped = this.turnPrevented.map(one => ({
+      ...one,
+      target: this.secrets.redact(one.target),
+      reason: this.secrets.redact(one.reason),
+    }))
+    this.record('summary', safe, stopped)
+    this.bus.emit({
+      type: 'session.summary',
+      sessionId: this.options.sessionId,
+      turn: this.turn,
+      text: safe,
+      ...(stopped.length === 0 ? {} : { prevented: stopped }),
+      at: Date.now(),
+    })
   }
 
   /**
    * The harness failed at its own job around the turn. A tool reporting a bad
-   * result is ordinary and goes through `note`.
-   *
-   * A note is drawn in the margin voice and read as commentary, which is too
-   * quiet for this. A fault is drawn as an error, in the flow where the user is
-   * already looking, and recorded as one so a re-opened session shows it the
-   * same way, without a click.
+   * result is ordinary and goes through `note`, which is drawn as margin
+   * commentary; a fault is drawn and recorded as an error.
    */
   fault(text: string): void {
     const safe = this.secrets.redact(text)
@@ -365,10 +360,8 @@ export class Session {
   }
 
   /**
-   * The provider sent a usage report that could not be read, so this turn's
-   * cost is unknown. Nothing is invented to cover the gap and the answer the
-   * user already paid for is kept; the one thing that is wrong is said out
-   * loud, once.
+   * The provider sent a usage report that could not be read, so this turn's cost
+   * is unknown. Nothing is invented to cover the gap.
    */
   private noteUsageProblem(problem: string): void {
     this.turnUsageProblem = true
@@ -379,27 +372,22 @@ export class Session {
 
   /**
    * Something the conversation should carry on from, arriving from outside the
-   * turn: the answer a background subagent finished with.
-   *
-   * It is queued, then folded in at the next point where the transcript is
-   * balanced: the top of a turn, or the end of a round. A background answer
-   * that lands mid-round therefore reaches the model in that same turn, which
-   * is what lets an agent start three jobs and use all three.
+   * turn: the answer a background subagent finished with. It is folded in at the
+   * next balanced point, the top of a turn or the end of a round, so an
+   * answer that lands mid-round still reaches the model in that same turn.
    */
   deliver(text: string): void {
     this.pending.push(text)
-    // With no turn in flight there is no unanswered tool call to land in the
-    // middle of, so it goes straight in. Queueing it here would strand it:
-    // between turns nothing is coming that would drain the queue. The caller
-    // stores the transcript after this, so an answer that arrives while the
-    // user is away survives the app closing.
+    // With no turn in flight there is nothing to land in the middle of, so it
+    // goes straight in. Queueing it here would strand it: between turns nothing
+    // is coming that would drain the queue.
     if (!this.running) this.flushPending()
   }
 
   /**
    * Fold anything queued straight in, because there is no next round to fold
-   * it at: the process is ending. A queued answer left here would be lost,
-   * since the transcript written a moment later is what survives.
+   * it at: the process is ending, and the transcript written a moment later is
+   * what survives.
    */
   settle(): void {
     this.flushPending()
@@ -415,11 +403,17 @@ export class Session {
    * way, such as an error or a stop. Recorded without an event, so the renderer
    * draws it once live and once on replay, never twice.
    */
-  private record(kind: SessionNote['kind'], text: string): void {
-    // The journal is written to disk, so it is a boundary like any other: an
-    // error quoting a request, or a note quoting a subagent, goes through the
-    // same scrub a tool result does.
-    this.journal.push({ kind, text: this.secrets.redact(text), turn: this.turn, after: this.transcript.length, at: Date.now() })
+  private record(kind: SessionNote['kind'], text: string, prevented?: readonly PreventedCall[]): void {
+    // The journal is written to disk, so it is a boundary like any other.
+    // `prevented` was scrubbed by its caller, the only one that has it.
+    this.journal.push({
+      kind,
+      text: this.secrets.redact(text),
+      turn: this.turn,
+      after: this.transcript.length,
+      at: Date.now(),
+      ...(prevented === undefined || prevented.length === 0 ? {} : { prevented: [...prevented] }),
+    })
   }
 
   /** Notes from an earlier run of this session, replayed alongside the history. */
@@ -434,11 +428,8 @@ export class Session {
 
   /**
    * End the turn now: abort the request in flight and stop the tool loop.
-   *
-   * Subagents go with it. A subagent is this session spending money under
-   * another name, and nothing else in the app can ever end a background one, so
-   * a stop that left them running would stop the part the user can see and none
-   * of the part they are paying for.
+   * Subagents go with it, since nothing else in the app can end a background
+   * one.
    */
   stop(): void {
     this.options.spawn?.stopAll()
@@ -462,6 +453,16 @@ export class Session {
     return { ...this.subagentUsage }
   }
 
+  /** The harness's own share of `spent`: approval checks and anything like them. */
+  get spentByHarness(): TurnUsage {
+    return { ...this.harnessUsage }
+  }
+
+  /** What that share came to, priced as it was spent. */
+  get harnessCost(): number {
+    return this.harnessCostUsd
+  }
+
   /** How many tool calls this session made, and how they went. */
   get toolStats(): ToolStats {
     return { ...this.tally }
@@ -470,23 +471,42 @@ export class Session {
   /**
    * Tokens a subagent of this session spent. A subagent is billed to whoever
    * started it, so its usage lands in the same total and leaves by the same
-   * event, which is what puts a spawn's cost in the window's counter while the
-   * spawn is still running.
-   *
-   * The event carries no `streamMs`. The spawn's tokens came off a stream this
-   * session never timed, and it was very likely generating at the same moment,
-   * so there is no interval the two of them share. `src/renderer/metrics.ts` is
-   * where an event without one is absorbed.
+   * event. The event carries no `streamMs`: those tokens came off a stream this
+   * session never timed, and there is no interval the two of them share.
    */
   addSubagentUsage(delta: TurnUsage): void {
     this.addUsage(delta)
     addInto(this.subagentUsage, delta)
+    this.emitUsage()
+  }
+
+  /**
+   * Tokens the harness spent on a side-call of its own, an approval check, with
+   * what it cost at that model's prices. Null when nobody has priced the model:
+   * an unpriced call adds its tokens and leaves the money alone.
+   */
+  addHarnessUsage(delta: TurnUsage, costUsd: number | null): void {
+    this.addUsage(delta)
+    addInto(this.harnessUsage, delta)
+    if (costUsd !== null) this.harnessCostUsd += costUsd
+    this.emitUsage()
+  }
+
+  /**
+   * The running totals, as one event. `streamMs` is only ever set by a round
+   * this session timed itself: a subagent's tokens and a side-call's came off
+   * streams nobody here held a clock on.
+   */
+  private emitUsage(streamMs?: number): void {
     this.bus.emit({
       type: 'usage',
       sessionId: this.options.sessionId,
       turn: this.turn,
       usage: { ...this.totalUsage },
       subagent: { ...this.subagentUsage },
+      harness: { ...this.harnessUsage },
+      harnessCostUsd: this.harnessCostUsd,
+      ...(streamMs === undefined ? {} : { streamMs }),
       at: Date.now(),
     })
   }
@@ -506,6 +526,7 @@ export class Session {
     this.turnUsage = emptyUsage()
     this.turnUsageProblem = false
     this.turnTally = emptyToolStats()
+    this.turnPrevented = []
     this.turnFiles.clear()
     this.turnStartedAt = Date.now()
     this.stopped = false
@@ -529,32 +550,26 @@ export class Session {
     } finally {
       this.controller = null
       // What the turn came to, before anything else is folded in, so the line
-      // lands under the turn it is about. Every way out of a turn passes here,
-      // including the error and the stop, which are the endings whose cost the
-      // user most wants to see.
-      // Priced from the model that actually ran the turn, which is why this is
-      // here and not in the window: the window knows only what is selected now.
+      // lands under the turn it is about. Every way out of a turn passes here.
+      // Priced from the model that actually ran it, which is why this is here
+      // and not in the window: the window knows only what is selected now.
       const facts = this.options.facts
       // A turn whose usage nobody reported is not a turn that cost nothing, so
-      // the cost is left off the line rather than printed as $0. The tokens are
-      // the test: a report that failed to parse leaves them at zero, and so
-      // does a provider that sends no report at all.
+      // the cost is left off the line rather than printed as $0.
       const counted = this.turnUsage.input + this.turnUsage.output + this.turnUsage.cacheRead + this.turnUsage.cacheWrite
       const known = facts !== undefined && counted > 0 && !this.turnUsageProblem
       const spent = known ? costOf(this.turnUsage, facts) : null
       this.summarize(turnSummary(this.turnTally, [...this.turnFiles], Date.now() - this.turnStartedAt, spent))
-      // A job that finished during the last round of the turn queued its answer
-      // and then found no round left to be folded into. The transcript is
-      // balanced here on every path out, and the caller writes it immediately
-      // after, so this is the last chance to keep it.
+      // A job that finished during the last round queued its answer and found
+      // no round left to be folded into. The transcript is balanced here on
+      // every path out, so this is the last chance to keep it.
       this.flushPending()
     }
   }
 
   /**
    * Rounds until the model stops asking for tools. There is no round budget: a
-   * task that needs forty calls gets forty, and the user has the running cost in
-   * the window and the stop button if that is not what they wanted.
+   * task that needs forty calls gets forty.
    */
   private async runRounds(sessionId: string): Promise<TurnUsage> {
     this.repeat = { key: '', count: 0 }
@@ -563,27 +578,16 @@ export class Session {
     for (;;) {
       const { text, toolCalls, usage, thinking, streamMs } = await this.drainRound()
       this.addUsage(usage)
-      this.bus.emit({
-        type: 'usage',
-        sessionId,
-        turn: this.turn,
-        usage: { ...this.totalUsage },
-        subagent: { ...this.subagentUsage },
-        streamMs,
-        at: Date.now(),
-      })
+      this.emitUsage(streamMs)
 
       // An assistant message with no text, no tool calls and no thinking draws
-      // a blank in the window, and some providers refuse to take it back. The
-      // round is still over, which the code below handles; nothing is written
-      // down for it.
+      // a blank in the window, and some providers refuse to take it back.
       if (text !== '' || toolCalls.length > 0 || thinking.length > 0) {
         this.messages.push({
           role: 'assistant',
-          // The model's own words go through the same scrub a tool result does.
-          // Everything it reads is redacted first, so it should never hold a
-          // key, and "should never" is not a boundary. This is where the whole
-          // string exists, so a value split across two deltas is caught here.
+          // The model's own words go through the same scrub a tool result
+          // does. This is where the whole string exists, so a value split
+          // across two deltas is caught here.
           content: this.secrets.empty ? text : this.secrets.redact(text),
           ...(toolCalls.length > 0 ? { toolCalls } : {}),
           ...(thinking.length > 0 ? { thinking } : {}),
@@ -600,17 +604,17 @@ export class Session {
       }
 
       if (toolCalls.length === 0) {
-        // A turn that ends with nothing to show is the failure the user reads as
-        // "it gave up": no answer, no error, nothing on screen. Say so.
+        // No answer, no error and nothing on screen is the one ending the
+        // user cannot act on. Say so.
         if (text.trim() === '') this.note('The turn ended without an answer. Send that again, or ask for what is missing.')
+        else if (Math.random() < CLOSING_NOTE_ODDS) this.note(CLOSING_NOTE)
         this.bus.emit({ type: 'session.finished', sessionId, turn: this.turn, at: Date.now() })
         return this.totalUsage
       }
 
       // Calls run together where the tools say it is safe, and in the model's
-      // order either way. A batch of reads costs one wait instead of one per
-      // file; a write still runs alone, because the next call in the message
-      // may be about the file it just changed.
+      // order either way. A write runs alone: the next call in the message may
+      // be about the file it just changed.
       await this.executeTools(toolCalls)
 
       // Every tool call now has its result, so the transcript is balanced and a
@@ -637,17 +641,9 @@ export class Session {
    * One round, asked for as many times as it takes or until `ROUND_ATTEMPTS` is
    * out.
    *
-   * A retry throws away whatever the failed attempt had already streamed, which
-   * is why the window is told: half an answer left on screen under a second,
-   * different answer is worse than no answer at all. What the attempt was
-   * charged for is kept, though, and carried into the round that eventually
-   * succeeds, since a counter that showed only the attempt that worked would
-   * under-report every rate-limited turn.
-   *
-   * That count is whatever the wire reported before it broke. Anthropic sends
-   * the prompt's cost at `message_start`, which arrives as a `usage` chunk; an
-   * OpenAI-compatible stream reports at the end, so an attempt that never got
-   * there carries nothing and there is nothing to carry.
+   * A retry throws away whatever the failed attempt had streamed, which is why
+   * the window is told. What it was charged for is kept and carried into the
+   * round that succeeds, so a rate-limited turn is not under-reported.
    */
   private async drainRound(): Promise<{ text: string; toolCalls: ToolCall[]; usage: TurnUsage; thinking: ThinkingBlock[]; streamMs: number }> {
     const sessionId = this.options.sessionId
@@ -672,30 +668,13 @@ export class Session {
         // event and carries the same words. Replay reads it back from here.
         this.record('note', text)
         this.bus.emit({ type: 'round.retry', sessionId, turn: this.turn, attempt: attempt + 1, of: ROUND_ATTEMPTS, text, at: Date.now() })
-        await this.pause(backoffFor(err, attempt))
-        // Stop pressed during the wait. Another attempt would spend the
-        // person's money on an answer they have already said they do not want,
-        // and rethrowing would end the turn as an error rather than as the stop
-        // it was. An empty round is what an aborted stream hands back, so the
-        // loop winds down the one way it knows.
+        await sleep(backoffFor(err, attempt, BACKOFF_MS), this.controller?.signal)
+        // Stop pressed during the wait. An empty round is what an aborted
+        // stream hands back, so the loop winds down the way it knows rather
+        // than ending the turn as an error.
         if (this.stopped) return { text: '', toolCalls: [], usage: carried, thinking: [], streamMs: 0 }
       }
     }
-  }
-
-  /** Wait between attempts, cut short if the person presses Stop. */
-  private async pause(ms: number): Promise<void> {
-    const signal = this.controller?.signal
-    if (signal?.aborted === true) return
-    await new Promise<void>(resolve => {
-      const timer = setTimeout(done, ms)
-      function done(): void {
-        clearTimeout(timer)
-        signal?.removeEventListener('abort', done)
-        resolve()
-      }
-      signal?.addEventListener('abort', done, { once: true })
-    })
   }
 
   /**
@@ -707,10 +686,8 @@ export class Session {
     const toolCalls: ToolCall[] = []
     const thinking: ThinkingBlock[] = []
     let usage = emptyUsage()
-    // Timed from the first chunk rather than from the request, so the number
-    // is generation speed and not generation speed plus however long the
-    // provider queued. Tool calls run after this returns, so their time is
-    // outside it either way.
+    // Timed from the first chunk rather than from the request, so the number is
+    // generation speed and not generation speed plus however long it queued.
     let firstChunkAt = 0
 
     const chunks = this.provider.stream({
@@ -735,9 +712,8 @@ export class Session {
             break
           case 'thinking_block':
             // Kept in the transcript, so it is scrubbed like everything else
-            // that is written down. A signed block is left exactly as the
-            // provider signed it: editing it invalidates the signature, and it
-            // is the one thing that has to go back on the wire byte for byte.
+            // written down. A signed block is left exactly as the provider
+            // signed it: editing it invalidates the signature.
             thinking.push(
               chunk.block.kind === 'thinking' && chunk.block.signature === undefined
                 ? { ...chunk.block, text: this.safe(chunk.block.text) }
@@ -831,14 +807,20 @@ export class Session {
       this.turnTally.ok += 1
       const path = writtenPath(call)
       if (path !== null) this.turnFiles.add(path)
+    } else if (result.prevented === true) {
+      // Not counted as a failure: nothing went wrong, the harness stopped it.
+      // The run of failures below still grows, because five refusals in a row
+      // is a model going round in circles whatever refused it.
+      this.tally.prevented += 1
+      this.turnTally.prevented += 1
+      this.turnPrevented.push({ tool: call.name, target: preventedTarget(call), reason: result.summary, at: Date.now() })
     } else {
       this.tally.failed += 1
       this.turnTally.failed += 1
     }
     this.failures = result.ok ? 0 : this.failures + 1
-    // Debugging is mostly failures, so a run of them does not end the turn. It
-    // is still worth saying out loud, because a model that cannot see the
-    // pattern will keep going the same way.
+    // Debugging is mostly failures, so a run of them does not end the turn,
+    // only says so.
     if (this.failures === FAILURE_NUDGE) {
       result.content = `${result.content ?? result.summary}\n\n[harness: ${this.failures} tool calls in a row have failed. Change approach, or tell the user what is blocking you.]`
     }
@@ -860,10 +842,8 @@ export class Session {
   }
 
   /**
-   * A key out of whatever the tool said. A shell that echoes its own command
-   * line, a config file read back, a curl that prints the request it made:
-   * each would otherwise put the value the model must not see straight into
-   * the conversation, and from there into the stored transcript.
+   * A key out of whatever the tool said: a shell that echoes its own command
+   * line, a config file read back, a curl that prints the request it made.
    */
   private scrub(result: ToolResult): ToolResult {
     if (this.secrets.empty) return result
@@ -908,9 +888,8 @@ export class Session {
       return { ok: false, summary: `args must be a JSON object for ${tool.input.name}`, isError: true }
     }
     // The one place a secret becomes itself again: the arguments of a call that
-    // is about to run. Everything upstream of here holds `{{secret:name}}` and
-    // nothing else, the transcript and the request and the window alike, and a
-    // tool that only turns its arguments back into text is upstream too.
+    // is about to run. Everything upstream holds `{{secret:name}}` and nothing
+    // else, and a tool that only turns its arguments into text is upstream too.
     const args = tool.keepsPlaceholders === true ? parsed : (this.secrets.revealDeep(parsed) as Record<string, unknown>)
     try {
       return await tool.run(args, {
@@ -920,11 +899,9 @@ export class Session {
         ...(this.options.job === undefined ? {} : { job: this.options.job }),
       })
     } catch (err) {
-      // A tool that threw rather than returned is a tool failure, and the loop
-      // needs a result either way. Without this, one rejected promise loses the
-      // whole message: the calls beside it have no answer, and the next request
-      // carries an assistant turn with tool calls nothing ever replied to,
-      // which both providers reject. `scrub` redacts what the error quotes.
+      // A tool that threw rather than returned is still a tool failure, and the
+      // loop needs a result either way. Without this the calls beside it have no
+      // answer, and the next request carries tool calls nothing replied to.
       const message = `${tool.input.name} failed: ${err instanceof Error ? err.message : String(err)}`
       return { ok: false, summary: message, content: message, isError: true }
     }

@@ -40,10 +40,8 @@ export class ProviderError extends Error {
 
 /**
  * `Retry-After` in milliseconds, or undefined when there is no usable header.
- *
- * The header comes in two shapes, a count of seconds and an HTTP date, and both
- * are in the spec, so both are read. A provider that says when it will be ready
- * knows its own load better than any schedule written here.
+ * It comes in two shapes, a count of seconds and an HTTP date, and both are in
+ * the spec.
  */
 export function retryAfterMs(header: string | null): number | undefined {
   if (header === null) return undefined
@@ -58,40 +56,117 @@ export function retryAfterMs(header: string | null): number | undefined {
 export const RETRY_AFTER_CAP_MS = 60_000
 
 /**
- * The two failures a provider reports by breaking rather than by answering.
- * `isRetryable` matches on them, so they are named here and thrown from there
- * instead of each wire spelling its own string.
+ * A stream that broke rather than a request that was refused: the body never
+ * arrived, or an event stopped halfway through.
+ *
+ * A class rather than a message, so that rewording the sentence cannot silently
+ * stop the retry. It carries no status: the response whose body never arrived
+ * had perfectly good headers.
  */
+export class StreamBrokenError extends ProviderError {
+  constructor(message: string) {
+    super(message)
+    this.name = 'StreamBrokenError'
+  }
+}
+
+/** The wording, so both wires break off in the same words. */
 export const NO_BODY = 'no response body'
 export const BAD_SSE = 'provider sent malformed SSE chunk'
 
 /**
- * Statuses worth sending the same request again for: the provider is busy, in
- * front of something that is, or briefly broken. Everything else is the request
- * itself being wrong, and a second identical attempt would be told so again.
+ * The 4xx statuses worth sending the same request again for: each is the server
+ * saying "not now" rather than "not this". Every other 4xx is the request
+ * itself being wrong, and the same bytes are wrong again on arrival.
  */
-const RETRY_STATUS = new Set([408, 409, 425, 429, 500, 502, 503, 504, 529])
+const RETRY_ANYWAY = new Set([408, 425, 429])
 
-/** Node's fetch reports a dropped connection through `cause.code`. */
-const RETRY_CODE = new Set(['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EPIPE', 'ENETUNREACH', 'EAI_AGAIN', 'UND_ERR_SOCKET'])
+/**
+ * Node reports a connection that never delivered a response through `code`, on
+ * the error or on something in its `cause` chain. This is a closed, documented
+ * set, so naming its members is safe. What is left out is left out on purpose:
+ * an expired certificate fails the same way five times running.
+ */
+const RETRY_CODE = new Set([
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'ECONNABORTED',
+  'ETIMEDOUT',
+  'EPIPE',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'ENETDOWN',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'UND_ERR_SOCKET',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_BODY_TIMEOUT',
+])
+
+/**
+ * The first `code` in an error's cause chain, which is where the reason for a
+ * bare `fetch failed` is kept. Walked rather than opened once, because undici
+ * nests: a `TypeError` over an `AggregateError` over the real socket error.
+ */
+export function causeCode(err: unknown): string | undefined {
+  for (let at: unknown = err; at instanceof Error; at = at.cause) {
+    const code: unknown = (at as { code?: unknown }).code
+    if (typeof code === 'string') return code
+  }
+  return undefined
+}
 
 /**
  * Whether the same request is worth making again.
  *
- * An abort is never retried: it is the person having pressed Stop, and trying
- * again would be the harness arguing with them.
+ * The rule is the one HTTP already states, so there is no list of statuses to
+ * maintain. A 5xx is the server saying it failed. A 4xx is the server saying
+ * the request was wrong, and a proxy answering in its own numbers (Cloudflare
+ * uses 520 through 527) lands on the right side of that line without anyone
+ * adding it.
+ *
+ * An abort is never retried: the person pressed Stop.
  */
 export function isRetryable(err: unknown): boolean {
   if (!(err instanceof Error)) return false
   if (err.name === 'AbortError') return false
-  // A stream that stopped mid-event, or never started, is a connection that
-  // broke rather than a conversation the provider refused. These are checked
-  // ahead of the status, because a body that never arrived is thrown with the
-  // response's own status, and that status is a 2xx: the headers were fine.
-  if (err.message === BAD_SSE) return true
-  if (err.message === NO_BODY) return true
-  if (err.message === 'fetch failed') return true
-  if (err instanceof ProviderError) return err.status === undefined || RETRY_STATUS.has(err.status)
-  const code: unknown = err.cause instanceof Error ? (err.cause as { code?: unknown }).code : undefined
-  return typeof code === 'string' && RETRY_CODE.has(code)
+  if (err instanceof ProviderError) {
+    // No status means nothing came back carrying one: a broken stream, or a
+    // failure the wire reported from inside an already-successful response.
+    if (err.status === undefined) return true
+    return err.status >= 500 || RETRY_ANYWAY.has(err.status)
+  }
+  const code = causeCode(err)
+  return code !== undefined && RETRY_CODE.has(code)
+}
+
+/**
+ * How long to wait before attempt number `attempt + 1`, given the schedule of
+ * gaps that caller keeps. A provider that sent `Retry-After` is answered on its
+ * own terms, capped so an hour-long header does not hang the turn. Otherwise
+ * the schedule applies, jittered over its last quarter to break the lockstep.
+ */
+export function backoffFor(err: unknown, attempt: number, schedule: readonly number[]): number {
+  const asked = err instanceof ProviderError ? err.retryAfterMs : undefined
+  if (asked !== undefined) return Math.min(asked, RETRY_AFTER_CAP_MS)
+  const base = schedule[attempt - 1] ?? schedule.at(-1) ?? 0
+  return Math.round(base * (0.75 + Math.random() * 0.25))
+}
+
+/**
+ * Wait, and stop waiting early if the person presses Stop. It resolves either
+ * way rather than rejecting.
+ */
+export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted === true) return Promise.resolve()
+  return new Promise<void>(resolve => {
+    const timer = setTimeout(done, ms)
+    function done(): void {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', done)
+      resolve()
+    }
+    signal?.addEventListener('abort', done, { once: true })
+  })
 }

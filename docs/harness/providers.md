@@ -19,10 +19,10 @@ Files:
 
 ## OpenAI provider
 
-`POST {baseURL}/chat/completions` — see [base URLs](#base-urls) for where the
-version segment comes from — with `stream: true` and
-`stream_options: {"include_usage": true}` — without the second one OpenAI sends
-no usage at all and every turn records zero tokens. Servers that do not know
+`POST {baseURL}/chat/completions`, with `stream: true` and
+`stream_options: {"include_usage": true}`. See [base URLs](#base-urls) for where
+the version segment comes from. Without that second option OpenAI sends no usage
+at all and every turn records zero tokens. Servers that do not know
 the field ignore it. SSE lines
 (`data: ...`), tool-call arguments arrive as fragments and are accumulated
 per call index.
@@ -104,19 +104,19 @@ leaking into the session loop:
   thought: the thinking tokens are inside `output_tokens` and are not broken
   out.
 - **Thinking blocks are signed and must come back.** When a turn uses tools, the
-  next request has to carry the assistant's `thinking` blocks — text plus the
-  `signature` that arrived on `signature_delta` — ahead of the text and
+  next request has to carry the assistant's `thinking` blocks, text plus the
+  `signature` that arrived on `signature_delta`, ahead of the text and
   `tool_use` blocks, in the order they were produced. The API verifies the
   signature and rejects an edited, reordered or missing block. `redacted_thinking`
   blocks are encrypted, unreadable here, and passed back untouched. So thinking
   is collected whole (`ChatChunk` gains `thinking_block`), stored on the
-  assistant message, and replayed on the wire — not merely streamed to the
+  assistant message, and replayed on the wire, rather than streamed to the
   screen and dropped.
 
 ## Effort
 
-One neutral scale — `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`
-— because the two wires express the same idea in different units. The mapping is
+One neutral scale, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`,
+because the two wires express the same idea in different units. The mapping is
 not invented; each side uses the field its own API documents:
 
 | effort | OpenAI-compatible | Anthropic-compatible |
@@ -133,9 +133,9 @@ not invented; each side uses the field its own API documents:
 leaves the field out. No model takes all six words: families differ, and a value
 a model does not know comes back as a 400 or is dropped without a word. Which ones a model does take is a fact about
 that model, so it is read from the endpoint and kept per model rather than
-guessed from the id — see [Model facts](#model-facts).
+guessed from the id. See [Model facts](#model-facts).
 
-Anthropic has no effort word — it takes a token budget — so the levels become
+Anthropic has no effort word. It takes a token budget, so the levels become
 budgets. The floor is the API's own: a budget must be at least 1,024 tokens and
 strictly below `max_tokens`, which is why `max_tokens` is derived from the budget
 rather than set independently. The four original levels kept their budgets when
@@ -189,7 +189,7 @@ a list of seven would be inventing the answer.
 ### When nothing describes a model
 
 Most endpoints are in none of those rows. Asked directly, many answer with the
-bare shape — an id, an object type, a timestamp, an owner — and nothing about
+bare shape, an id, an object type, a timestamp and an owner, with nothing about
 price or thinking. Nothing else is consulted when that happens. The harness
 talks to the endpoints the user configured and to nothing else (plan §16), so a
 third-party price list is not fetched behind their back, and a figure from one
@@ -210,8 +210,9 @@ list, the prices and the effort levels are on disk before the user gets to the
 Save button. A provider being typed in for the first time is left alone until
 they press it.
 
-A settings write that changes the active provider's record — its address, wire
-kind, key or allowlist — or moves the active selection retires the live
+A settings write that changes the active provider's record, meaning its
+address, wire kind, key or allowlist, or that moves the active selection,
+retires the live
 sessions, which rebuild from the stored transcript on their next turn. A write
 that touches another provider's fields, or one carrying nothing but prices and
 effort levels, leaves them running: **Fetch models** makes that write on its
@@ -248,20 +249,20 @@ that changed models mid-way reads as an estimate; its tooltip says so.
 
 Nothing about a vendor is compiled in. There is no default base URL, no default
 model, and no fallback key: an incomplete configuration raises `ConfigError`
-naming exactly what is missing, and the app opens its setup screen instead of
-quietly talking to somebody's cloud.
+naming exactly what is missing, and the app opens its setup screen rather than
+talking to somebody's cloud unasked.
 
 The settings screen is the only way in. A provider has to be configured before
-anything can run at all, so there is one place to configure it — no environment
-variables shadowing what the screen shows, and nothing to export before the app
-is usable. `resolveConfig` (`src/core/config.ts`) reads what was saved:
+anything can run at all, so there is one place to configure it. No environment
+variable shadows what the screen shows, and there is nothing to export before
+the app is usable. `resolveConfig` (`src/core/config.ts`) reads what was saved:
 
 | file | holds |
 |---|---|
 | `<user-data>/config.json` | the provider records and the active selection |
 | `<user-data>/credentials.bin` | every API key, encrypted by the OS, indexed by provider id |
 
-A **provider record** is `{id, name, kind, baseURL, models}` — as many as the
+A **provider record** is `{id, name, kind, baseURL, models}`, as many as the
 user wants, mixing kinds freely: a local server, a gateway and a vendor account
 side by side. The **active selection** is
 `{providerId, model, effort}`: which of them a turn actually runs, switchable
@@ -293,7 +294,7 @@ A settings file written by the single-provider version is migrated on read: its
 is also the id its stored key is found under, so an existing install keeps
 working without anything being retyped.
 
-The settings file is **secret-free by schema** (plan §16) — `StoredConfig` has
+The settings file is **secret-free by schema** (plan §16): `StoredConfig` has
 no `apiKey` field at all, so it can be read, copied or pasted into an issue
 without leaking anything. The key lives in its own file, encrypted through
 Electron `safeStorage` (DPAPI on Windows, Keychain on macOS, libsecret on
@@ -305,7 +306,7 @@ the user typed over it; both are keyed by model id and both are absent until
 there is something to hold. `models` is the allowlist the user ticked for that
 provider. Saving refuses an
 active model that is not on it, so a session can only ever run something chosen
-on purpose. An empty list means no list — the model is whatever is typed, which
+on purpose. An empty list means no list: the model is whatever is typed, which
 is how a proxy without `/v1/models` still works.
 
 A settings write that changes the active provider's record or the selection
@@ -314,32 +315,55 @@ model or effort rather than the one the window started with.
 
 ## Listing models
 
-`listModels` calls `GET {baseURL}/models` — the same path on both wires, each
-with its own auth headers, and the same version rule as every other endpoint —
-and returns sorted, de-duplicated ids, each with whatever the answer said about
+`listModels` calls `GET {baseURL}/models`, the same path on both wires, each
+with its own auth headers and the same version rule as every other endpoint. It
+returns sorted, de-duplicated ids, each with whatever the answer said about
 it. The settings screen uses it for both its buttons: reaching the endpoint at
 all is the connection test, and the ids are the model picker. A 404 is reported as
 "this server has no model list" rather than as a failure, because plenty of
 OpenAI-compatible proxies do not implement it. Failures come back as values, not
-exceptions — a typo in a URL is an expected outcome of a settings screen — and
-an unreachable host is named with its address and error code instead of Node's
+exceptions, because a typo in a URL is an expected outcome of a settings
+screen, and an unreachable host is named with its address and error code instead of Node's
 bare `fetch failed`.
 
 ## When a request fails
 
 A round is asked for up to five times. Both wires throw `ProviderError`, which
 carries the HTTP status where there was one, and `isRetryable` in
-`src/core/provider.ts` decides from that: 408, 409, 425, 429, 500, 502, 503, 504
-and 529 are worth asking again, a 400 or a 401 would be refused the same way
-however often it was sent, and an `AbortError` is the user pressing Stop. A
-socket that drops mid-stream, a malformed SSE chunk and a `fetch failed` are all
-retried too, since none of them is an answer. The waits are 0.5s, 1.5s, 4s and
-8s, each shortened by a random part of its last quarter so that several windows
-coming off the same rate limit do not all return on the same tick. A
-`Retry-After` header replaces the schedule for that attempt and is honoured up
-to a minute, past which the provider is asking for longer than a turn should
-hang on one header. Stop cuts a wait short: a person who has pressed it does not
-get another attempt made on their behalf.
+`src/core/provider.ts` decides from it by the rule HTTP already states rather
+than from a list of numbers. A 5xx is the server saying it failed, so the same
+request may well work a second time; a 4xx is the server saying the request was
+wrong, and it will be wrong in the same way when it arrives again. Three 4xx
+statuses are exceptions, because each means "not now" rather than "not this":
+408, 425 and 429.
+
+The rule matters more than it sounds. Most hosted endpoints sit behind a proxy
+that answers in numbers of its own; Cloudflare alone has 520 through 527. A
+hand-written list of retryable statuses would have to name every one of them,
+and a 522 it had not heard of would read as a malformed request not worth
+sending again, the opposite of what it means.
+
+Two things are retried without a status. A stream that broke, whether the body
+never arrived or an SSE event stopped halfway, is thrown as `StreamBrokenError`,
+which is a class rather than a message so that rewording the sentence cannot
+silently switch the retry off. A connection that never delivered a response at
+all is recognised by the `code` in its `cause` chain, which is where Node keeps
+the reason behind a bare `fetch failed`; the codes are named because they are a
+closed set, and what is outside it is a misconfiguration that fails identically
+on every further attempt: an expired certificate, or a hostname that does not
+match. An `AbortError` is the user pressing Stop and is never retried.
+
+The waits are 0.5s, 1.5s, 4s and 8s, each shortened by a random part of its last
+quarter so that several windows coming off the same rate limit do not all return
+on the same tick. A `Retry-After` header replaces the schedule for that attempt
+and is honoured up to a minute, past which the provider is asking for longer
+than a turn should hang on one header. Stop cuts a wait short: a person who has
+pressed it does not get another attempt made on their behalf.
+
+`backoffFor` and `sleep` live here rather than in the session, because the
+approval judge in `src/core/approval.ts` retries a rung of its ladder on the
+same policy with a shorter schedule of its own. One backoff, one place that
+honours `Retry-After`.
 
 The harder failure arrives after the headers. Anthropic reports an
 overloaded model as an `error` event inside a stream whose status was 200, so
@@ -353,9 +377,9 @@ as 500, because what breaks halfway through a stream is nearly always the
 provider having trouble. `src/providers/failure.test.ts` holds that table to its
 word.
 
-A retry starts the round from the top, which means whatever had already streamed
-is thrown away: half a sentence of one answer with another answer welded onto it
-is worse than either. Nothing partial reaches the transcript, because the
+A retry starts the round from the top, which means whatever had already
+streamed is thrown away rather than welded onto the answer that replaces it.
+Nothing partial reaches the transcript, because the
 transcript is written when a round returns, and the window is told to take back
 what it drew by the `round.retry` event. What a failed attempt was charged for
 is carried onto the round that succeeds, so a rate-limited turn still counts the

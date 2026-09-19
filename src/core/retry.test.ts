@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Session } from './session.js'
-import { ProviderError } from './provider.js'
+import { NO_BODY, ProviderError, StreamBrokenError } from './provider.js'
 import { emptyUsage } from './types.js'
 import type { ChatProvider } from './provider.js'
 import type { AppEvent, ChatChunk, SessionNote } from './types.js'
@@ -156,9 +156,9 @@ describe('a request the provider refuses', () => {
 })
 
 describe('a body that never arrived', () => {
-  it('is retried, even though the status on it is the 200 the headers carried', async () => {
+  it('is retried, though the response it came from was a 200', async () => {
     const provider = new FlakyProvider(round =>
-      round === 1 ? { chunks: [], fail: new ProviderError('no response body', 200) } : say('Done.'),
+      round === 1 ? { chunks: [], fail: new StreamBrokenError(NO_BODY) } : say('Done.'),
     )
 
     const { session } = await run(provider, 'hello')

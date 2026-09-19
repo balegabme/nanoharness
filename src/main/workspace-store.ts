@@ -1,5 +1,5 @@
 // doc: docs/harness/sessions.md
-import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { basename, join } from 'node:path'
 import { isAgentRole } from '../core/agents.js'
@@ -39,6 +39,10 @@ interface StoredSession {
   usage?: TurnUsage
   /** The subagents' share of `usage`, so a re-opened session keeps the split. */
   subagentUsage?: TurnUsage
+  /** The harness's own share of `usage`: approval checks and anything like them. */
+  harnessUsage?: TurnUsage
+  /** What that share cost, summed at the prices of the models that ran it. */
+  harnessCostUsd?: number
 }
 
 interface WorkspaceState {
@@ -62,10 +66,7 @@ export function transcriptPath(id: string): string {
  * result quotes back to the model.
  *
  * A subagent is a second conversation, not a stretch of the first, so it is
- * stored as one. Folding its rounds into the parent's transcript would make
- * the parent's file unreadable and its replay wrong. Leaving it unwritten
- * leaves the only trace of a minute's work by another agent as the paragraph
- * it chose to end with.
+ * stored as one rather than folded into the parent's rounds.
  */
 export function subagentDir(sessionId: string): string {
   return join(userDataDir(), 'sessions', sessionId, 'subagents')
@@ -147,7 +148,7 @@ export function parseState(parsed: unknown): WorkspaceState {
   if (Array.isArray(raw.sessions)) {
     for (const entry of raw.sessions) {
       if (typeof entry !== 'object' || entry === null) continue
-      const { id, workspaceId, title, role, createdAt, updatedAt, usage, subagentUsage } = entry as Record<string, unknown>
+      const { id, workspaceId, title, role, createdAt, updatedAt, usage, subagentUsage, harnessUsage, harnessCostUsd } = entry as Record<string, unknown>
       const [i, w] = [str(id), str(workspaceId)]
       if (i === null || w === null) continue
       // A session whose workspace is gone would be unreachable in the sidebar.
@@ -167,6 +168,8 @@ export function parseState(parsed: unknown): WorkspaceState {
         // total that is not true.
         ...(isUsage(usage) ? { usage } : {}),
         ...(isUsage(subagentUsage) ? { subagentUsage } : {}),
+        ...(isUsage(harnessUsage) ? { harnessUsage } : {}),
+        ...(typeof harnessCostUsd === 'number' && Number.isFinite(harnessCostUsd) && harnessCostUsd >= 0 ? { harnessCostUsd } : {}),
       })
     }
   }
@@ -185,7 +188,12 @@ function isUsage(value: unknown): value is TurnUsage {
 function isToolStats(value: unknown): value is ToolStats {
   if (typeof value !== 'object' || value === null) return false
   const raw = value as Record<string, unknown>
-  return ['calls', 'ok', 'failed'].every(key => typeof raw[key] === 'number')
+  if (!['calls', 'ok', 'failed'].every(key => typeof raw[key] === 'number')) return false
+  // A session stored before preventions were counted has the other three and not
+  // this one. Zero is the honest answer: nothing was counted, so nothing is
+  // claimed.
+  if (typeof raw.prevented !== 'number') raw.prevented = 0
+  return true
 }
 
 async function readState(): Promise<WorkspaceState> {
@@ -211,9 +219,8 @@ export async function workspaceStatus(): Promise<WorkspaceStatus> {
 }
 
 /**
- * Adopt a folder. The same folder is never added twice, because two entries
- * pointing at one directory would split its sessions across two sidebar groups
- * for no reason, so an existing one is returned instead.
+ * Adopt a folder. The same folder is never added twice: an existing entry is
+ * returned instead.
  */
 export async function addWorkspace(dir: string): Promise<WorkspaceView> {
   const root = await realResolve(dir)
@@ -243,6 +250,7 @@ export async function removeWorkspace(id: string): Promise<void> {
 /** A session's transcript and every subagent transcript underneath it. */
 async function forgetFiles(id: string): Promise<void> {
   await rm(transcriptPath(id), { force: true })
+  await rm(approvalLogPath(id), { force: true })
   await rm(join(userDataDir(), 'sessions', id), { recursive: true, force: true })
 }
 
@@ -264,10 +272,9 @@ export async function deleteSession(id: string): Promise<void> {
 }
 
 /**
- * Rename a session. The auto-title is the first thing that was asked, which is
- * a good default and a bad name for a session that ran all afternoon. So the
- * name becomes the user's once they set one, and `noteTurn` stops overwriting
- * it the moment it stops saying "New session".
+ * Rename a session. The auto-title is the first thing that was asked. Once the
+ * user sets a name the name is theirs, and `noteTurn` stops overwriting it the
+ * moment it stops saying "New session".
  */
 export async function renameSession(id: string, title: string): Promise<SessionView> {
   const name = title.trim().replace(/\s+/g, ' ')
@@ -291,13 +298,26 @@ export async function setSessionRole(id: string, role: AgentRole): Promise<Sessi
 }
 
 /** What a session has spent so far, for seeding it when it is rebuilt. */
-export async function sessionUsage(id: string): Promise<{ total: TurnUsage; subagents: TurnUsage } | null> {
+export async function sessionUsage(id: string): Promise<SessionSpend | null> {
   const state = await readState()
   const stored = state.sessions.find(s => s.id === id)
   if (stored?.usage === undefined) return null
-  // A session stored before the split was kept has a total and no breakdown of
+  // A session stored before a split was kept has a total and no breakdown of
   // it. Zero is the only honest answer: the tokens are in the total either way.
-  return { total: stored.usage, subagents: stored.subagentUsage ?? emptyUsage() }
+  return {
+    total: stored.usage,
+    subagents: stored.subagentUsage ?? emptyUsage(),
+    harness: stored.harnessUsage ?? emptyUsage(),
+    harnessCostUsd: stored.harnessCostUsd ?? 0,
+  }
+}
+
+/** A session's running total and the two shares of it that are not the conversation. */
+export interface SessionSpend {
+  total: TurnUsage
+  subagents: TurnUsage
+  harness: TurnUsage
+  harnessCostUsd: number
 }
 
 /**
@@ -307,12 +327,14 @@ export async function sessionUsage(id: string): Promise<{ total: TurnUsage; suba
  * land on the parent's counter with no turn left to store them: without this
  * the window and the file disagree until the next message is sent.
  */
-export async function setSessionUsage(id: string, usage: TurnUsage, subagentUsage: TurnUsage): Promise<void> {
+export async function setSessionUsage(id: string, spend: SessionSpend): Promise<void> {
   const state = await readState()
   const session = state.sessions.find(s => s.id === id)
   if (session === undefined) return
-  session.usage = usage
-  session.subagentUsage = subagentUsage
+  session.usage = spend.total
+  session.subagentUsage = spend.subagents
+  session.harnessUsage = spend.harness
+  session.harnessCostUsd = spend.harnessCostUsd
   await writeState(state)
 }
 
@@ -334,20 +356,19 @@ export async function sessionRoot(id: string): Promise<string | null> {
  * A session is named after the first thing asked of it, which is what the user
  * will recognise in the sidebar. Later messages only move it up the list.
  */
-export async function noteTurn(
-  id: string,
-  firstText: string,
-  usage?: TurnUsage,
-  subagentUsage?: TurnUsage,
-): Promise<SessionView | null> {
+export async function noteTurn(id: string, firstText: string, spend?: SessionSpend): Promise<SessionView | null> {
   const state = await readState()
   const session = state.sessions.find(s => s.id === id)
   if (session === undefined) return null
   session.updatedAt = Date.now()
   // The session's own running total, so re-opening it shows what it has cost
   // rather than starting the count at zero.
-  if (usage !== undefined) session.usage = usage
-  if (subagentUsage !== undefined) session.subagentUsage = subagentUsage
+  if (spend !== undefined) {
+    session.usage = spend.total
+    session.subagentUsage = spend.subagents
+    session.harnessUsage = spend.harness
+    session.harnessCostUsd = spend.harnessCostUsd
+  }
   if (session.title === 'New session') {
     const line = firstText.trim().replace(/\s+/g, ' ')
     if (line !== '') session.title = line.length > TITLE_MAX ? `${line.slice(0, TITLE_MAX - 1)}…` : line
@@ -434,4 +455,43 @@ export function toTranscriptView(messages: ChatMessage[]): TranscriptMessage[] {
     out.push(view)
   }
   return out
+}
+
+/**
+ * Where a session's automatic permission decisions are written: one JSON line
+ * per pass through the approval model, beside the transcript it belongs to.
+ *
+ * Append-only and separate from the transcript file on purpose. The transcript
+ * is rewritten whole at the end of a turn and a decision happens in the middle
+ * of one, so folding the two together would lose a crashed turn's record of
+ * what it was allowed to do. Nothing draws this file; it exists to be read
+ * afterwards.
+ */
+export function approvalLogPath(sessionId: string): string {
+  return join(userDataDir(), 'sessions', `${sessionId}.approvals.jsonl`)
+}
+
+/** One decision as it is stored. `verdict` is absent when the judge could not answer. */
+export interface StoredApproval {
+  v: number
+  at: number
+  sessionId: string
+  intent: string
+  command?: string
+  paths?: string[]
+  verdict?: string
+  rule?: string
+  reason?: string
+  model?: string
+  ms?: number
+  usage?: TurnUsage
+  costUsd?: number
+  problem?: string
+}
+
+export const APPROVAL_SCHEMA = 1
+
+export async function appendApproval(record: Omit<StoredApproval, 'v'>): Promise<void> {
+  await mkdir(join(userDataDir(), 'sessions'), { recursive: true })
+  await appendFile(approvalLogPath(record.sessionId), `${JSON.stringify({ v: APPROVAL_SCHEMA, ...record })}\n`, 'utf8')
 }

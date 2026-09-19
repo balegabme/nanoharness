@@ -155,9 +155,8 @@ describe('a provider whose usage report cannot be read', () => {
 
     await s.run('first')
 
-    // The turn already said the cost is unknown. A $0 on the same turn's line
-    // would be the harness contradicting itself, and $0 reads as free.
-    // The rest of the line is still there; the cost is the one part left off.
+    // The turn already said the cost is unknown, and $0 reads as free. The
+    // rest of the line is still there; the cost is the one part left off.
     const summary = s.notes.filter(note => note.kind === 'summary').at(-1)
     expect(summary?.text).toBe('no tool calls · <1s')
     expect(summary?.text).not.toContain('$')
@@ -323,8 +322,9 @@ describe('the line a turn ends on', () => {
           { kind: 'done', usage: emptyUsage() },
         ]
       }
-      // A write outside the session's folder is refused, so the turn has a
-      // failure in it and nothing is added to the list of files it changed.
+      // A write outside the session's folder is refused by the gate, so the
+      // turn has a prevented call in it, not a failed one, and nothing is
+      // added to the list of files it changed.
       if (round === 2) return call('write', { path: '../escape.txt', content: 'nope' }, 'w3')
       return say('both files written')
     })
@@ -334,8 +334,13 @@ describe('the line a turn ends on', () => {
 
     const summary = s.notes.at(-1)
     expect(summary?.kind).toBe('summary')
-    expect(summary?.text).toContain('3 tool calls, 2 ok, 1 failed')
+    expect(summary?.text).toContain('3 tool calls, 2 ok, 0 failed, 1 prevented')
     expect(summary?.text).toContain('2 files changed: notes/one.txt, notes/two.txt')
+    // What was stopped travels with the summary, so the line can be opened for
+    // the reason and a re-opened session still has it.
+    expect(summary?.prevented).toHaveLength(1)
+    expect(summary?.prevented?.[0]).toMatchObject({ tool: 'write', target: '../escape.txt' })
+    expect(summary?.prevented?.[0]?.reason).not.toBe('')
     // A mock provider answers in under a tick, which is the one duration that
     // has to read as a time rather than as a stopped clock.
     expect(summary?.text.endsWith('· <1s')).toBe(true)

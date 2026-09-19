@@ -28,7 +28,7 @@ export interface Transport {
 
 /**
  * `npx` on Windows is `npx.cmd`, a batch script, and `spawn()` does not go
- * through a shell — so spawning it by name fails with ENOENT on the one
+ * through a shell, so spawning it by name fails with ENOENT on the one
  * platform where it looks like it should work. The fix every MCP client ends up
  * with is `cmd /c`, applied only to the script-shaped launchers: `uvx` and an
  * absolute path do not need it and are slower through a shell (plan §7).
@@ -42,21 +42,54 @@ export function stdioCommand(command: string, args: readonly string[]): { comman
 }
 
 /**
- * SIGTERM then SIGKILL on POSIX. On Windows there are no signals: `kill()` is a
- * `TerminateProcess` on that one process, so the tree goes through `taskkill`,
- * and a failure there is ignored because the process may simply have exited
- * first.
+ * Ask this platform to end the child, and resolve once the request has actually
+ * been made, rather than once it has been started.
+ *
+ * On POSIX that is a system call and `hard` picks the signal. On Windows it is
+ * another process, one that walks the tree first, measured at three seconds on
+ * an idle machine; that is the cost of asking and says nothing about how
+ * stubborn the child is, so it is awaited here rather than charged to the grace
+ * period below. `hard` changes nothing there: a `taskkill` without `/F` posts a
+ * window message, and a stdio server has no window to receive it.
+ *
+ * A `taskkill` that fails is ignored. Most likely the process had already
+ * exited, and the wait that follows is what decides either way.
  */
-function kill(child: ChildProcessWithoutNullStreams, hard = false): void {
+function kill(child: ChildProcessWithoutNullStreams, hard = false): Promise<void> {
   if (process.platform !== 'win32' || child.pid === undefined) {
     child.kill(hard ? 'SIGKILL' : 'SIGTERM')
-    return
+    return Promise.resolve()
   }
-  const done = (): void => undefined
-  spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' })
-    .on('error', done)
-    .on('exit', done)
+  return new Promise<void>(resolve => {
+    const done = (): void => resolve()
+    spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' })
+      .on('error', done)
+      .on('exit', done)
+  })
 }
+
+/** Whether the child ended within `ms`. False means it is still running. */
+function exited(child: ChildProcessWithoutNullStreams, ms: number): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true)
+  return new Promise<boolean>(resolve => {
+    const timer = setTimeout(() => {
+      child.off('exit', done)
+      resolve(false)
+    }, ms)
+    function done(): void {
+      clearTimeout(timer)
+      resolve(true)
+    }
+    child.once('exit', done)
+  })
+}
+
+/**
+ * How long a child gets to end after the kill has been delivered, per attempt.
+ * The delivery is awaited separately, so this is the child's own time: a server
+ * still alive a second after a `taskkill /F` does not need a moment longer.
+ */
+const EXIT_GRACE_MS = 1_000
 
 export interface StdioOptions {
   command: string
@@ -70,8 +103,7 @@ export interface StdioOptions {
  * A local server as a subprocess, newline-delimited JSON on stdin and stdout.
  *
  * `stderr` is where these servers log, including on a perfectly healthy start,
- * so it is drained and ignored. Treating it as an error signal is the classic
- * way to declare a working server broken.
+ * so it is drained and ignored, never read as an error signal.
  */
 export class StdioTransport implements Transport {
   private child: ChildProcessWithoutNullStreams | null = null
@@ -154,14 +186,17 @@ export class StdioTransport implements Transport {
 
   /**
    * Killing the child is not the same as the child being gone: it still holds
-   * its pipes and, on Windows, its handles on whatever it was started from.
-   * Closing waits for the exit, so "the hub is closed" means the process really
-   * has ended rather than been asked to.
+   * its pipes and, on Windows, its handles on whatever it was started from. So
+   * this waits for the exit, and a caller that has awaited it can delete the
+   * directory the server was started in.
    *
-   * On Windows the child may also not be the server. A `cmd /c npx …` launcher
-   * is the process this owns, and the actual server is its grandchild; killing
-   * the launcher leaves that grandchild running with its parent gone. `taskkill
-   * /T` is the only way to take the tree, so that is what a win32 close does.
+   * On Windows the child may not be the server either: a `cmd /c npx …`
+   * launcher is the process this owns and the server is its grandchild, so
+   * `taskkill /T` takes the tree.
+   *
+   * A process that will not die at all is given up on after the second attempt
+   * rather than waited for forever, since this is on the path an app quit
+   * takes.
    */
   async close(): Promise<void> {
     this.closed = true
@@ -169,18 +204,15 @@ export class StdioTransport implements Transport {
     this.child = null
     if (child === null || child.exitCode !== null) return
     child.stdin.end()
-    kill(child)
-    await new Promise<void>(resolve => {
-      const timer = setTimeout(() => {
-        // It ignored the polite one. Nothing waits on this forever.
-        kill(child, true)
-        resolve()
-      }, 2000)
-      child.once('exit', () => {
-        clearTimeout(timer)
-        resolve()
-      })
-    })
+
+    await kill(child)
+    if (await exited(child, EXIT_GRACE_MS)) return
+    // On POSIX the first signal was the polite one and this is the escalation.
+    // On Windows it was already `taskkill /F`, so this is the same request
+    // made twice. It is worth one more go, since the first may have lost a
+    // race with the process still starting up.
+    await kill(child, true)
+    await exited(child, EXIT_GRACE_MS)
   }
 }
 
@@ -195,14 +227,13 @@ export interface HttpOptions {
  * Streamable HTTP: one endpoint, and a POST that comes back either as a JSON
  * body or as an SSE stream the server upgraded to because the call is slow.
  *
- * A tools-only client never needs the standalone GET stream — every message it
- * cares about is the answer to something it asked — so this reads only the
- * response to each POST. `Mcp-Session-Id` is echoed back on every subsequent
- * request; a server that forgets the session closes this transport, and the
- * session gets its tools back the next time the hub is built. Re-initializing
- * underneath a running conversation is deliberately not done: the tool
- * definitions are already in the cached prefix of every request, so a silent
- * reconnect that returned a different catalog would be worse than an error.
+ * A tools-only client never needs the standalone GET stream, so this reads only
+ * the response to each POST. `Mcp-Session-Id` is echoed back on every request
+ * after the first; a server that forgets the session closes this transport, and
+ * the tools come back the next time the hub is built. Re-initializing under a
+ * running conversation is deliberately not done: the tool definitions are in
+ * the cached prefix, and a reconnect returning a different catalog would
+ * contradict them.
  */
 export class HttpTransport implements Transport {
   private sessionId: string | null = null

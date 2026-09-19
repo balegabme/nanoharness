@@ -158,6 +158,21 @@ stored with the transcript, so a session opened next week still shows what each
 turn cost; `sessions.md` has the shape. Every ending gets one, an error and a
 stop included.
 
+A turn the permission system stopped something in counts those calls **apart
+from the failures**, as `2 ok, 0 failed, 1 prevented`, and the line becomes a
+disclosure you can open on what was stopped and why, each entry carrying the
+refusal in the words it was refused with. The count is only ever shown when
+there is one, so an ordinary turn reads exactly as it always did.
+
+The two are separate because they ask different things of whoever reads the
+line. A failure is the work going wrong and is the agent's problem; a prevention
+is the harness doing its job and is the user's to review. It matters most in
+auto mode, where the decisions were made while nobody was watching: a run that
+comes back "14 ok, 0 failed, 2 prevented" went well and stopped two things, and
+being able to open those two is the difference between trusting the mode and
+hoping. The list travels with the summary into the stored transcript, so it is
+still there next week.
+
 A note block says what the run did, as its own rule across the flow, dim where
 an error block is red. The window uses it for anything that is about the run
 rather than about the conversation: a stop, a turn that came back with no answer
@@ -231,7 +246,7 @@ cannot leave a provider with no model to run.
 Each model in the fetched list carries what the fetch found out about it: its
 price per million tokens, and the effort levels it takes. A model nobody has
 described is marked ⚠ and reads what is missing beside its id, because the mark
-has to say what to do about it — and what to do is the cogwheel at the end of
+has to say what to do about it, and what to do is the cogwheel at the end of
 the row, which opens the levels and the four prices for that model: in, out,
 and the two halves of the cache, which fall back to the input rate when they are
 left blank. The cogwheel stays lit while its fields are open. Typed
@@ -261,7 +276,7 @@ it had. What a model takes is a fact about that model, read from the endpoint an
 kept per provider; `providers.md` covers where it comes from and what happens
 when nobody supplies it. Switching to a narrower model clamps the level to the
 nearest one it does take, ties going to the quieter of the two, and writes that
-back — so what a turn runs on is what the chip says.
+back, so what a turn runs on is what the chip says.
 
 The model picker holds every configured provider's ticked models, grouped by
 provider name, and picking one from another provider moves the session there in

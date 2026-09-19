@@ -3,7 +3,7 @@ import { el, pretty } from './dom.js'
 import { costOf, moneyText } from './facts.js'
 import { hitText, promptTokens, Throughput } from './metrics.js'
 import type { TranscriptMessage } from '../ipc/contract.js'
-import type { AppEvent, SessionNote, TurnUsage } from '../core/types.js'
+import type { AppEvent, PreventedCall, SessionNote, TurnUsage } from '../core/types.js'
 import type { ModelFacts } from '../core/config.js'
 
 /**
@@ -12,11 +12,9 @@ import type { ModelFacts } from '../core/config.js'
  * is requested and grows its result when it returns, and the answer types
  * itself out underneath.
  *
- * A view is a class rather than a module of globals because there are two of
- * them: the conversation, and the subagent the user has opened. A subagent is
- * an agent doing exactly what the main one does, so it is drawn by exactly the
- * same code. A second, dimmer rendering of the same events would be a second
- * thing to keep correct and never as good as the first.
+ * A class rather than a module of globals because there are two of them: the
+ * conversation, and the subagent the user has opened. A subagent does what the
+ * main agent does, so it is drawn by the same code.
  */
 
 /** Everything one flow needs to draw itself. */
@@ -86,6 +84,22 @@ export function usageText(usage: TurnUsage): string {
   return `in ${usage.input} · out ${usage.output} · cached ${usage.cacheRead}${written} · hit ${hitText(usage)}${reasoning}`
 }
 
+/**
+ * One running total minus a share of it, so the remainder can be priced on its
+ * own. Every field is clamped at zero: the two totals arrive in separate events
+ * and a share that is momentarily ahead of the total it belongs to would
+ * otherwise show as a negative token count.
+ */
+function without(total: TurnUsage, share: TurnUsage): TurnUsage {
+  return {
+    input: Math.max(0, total.input - share.input),
+    output: Math.max(0, total.output - share.output),
+    cacheRead: Math.max(0, total.cacheRead - share.cacheRead),
+    cacheWrite: Math.max(0, total.cacheWrite - share.cacheWrite),
+    reasoning: Math.max(0, total.reasoning - share.reasoning),
+  }
+}
+
 function metric(name: string, value: string, kind?: string): HTMLElement {
   const pill = el('span', kind === undefined ? 'metric' : `metric ${kind}`)
   pill.append(el('b', undefined, value), el('span', undefined, name))
@@ -133,6 +147,14 @@ export class ChatView {
   private roundNodes: HTMLElement[] = []
   /** The subagents' share of the running total, as of the last usage event. */
   private subagentSpend: TurnUsage | null = null
+  /**
+   * The harness's own share of the running total, and what it cost. The dollars
+   * arrive already summed, because those calls ran on their own models at their
+   * own prices; pricing them here would charge an approval check at the rate of
+   * the model it was protecting.
+   */
+  private harnessSpend: TurnUsage | null = null
+  private harnessCostUsd = 0
   /** What the selected model charges, or null while nobody has priced it. */
   private facts: ModelFacts | null = null
   /** The totals the usage line is showing, so a repricing can redraw them. */
@@ -198,15 +220,25 @@ export class ChatView {
     if (usage === null) return
 
     line.append(metric('in', String(usage.input)), metric('out', String(usage.output)), metric('cached', String(usage.cacheRead)))
-    // Whose output it was. A turn that hands its work to three agents pays for
-    // all of them, so the total can read fifty thousand with this session
-    // having written a paragraph; one number cannot say that.
+    // Whose output it was. A turn that hands its work to three agents pays
+    // for all of them, so the total can read fifty thousand with this session
+    // having written a paragraph.
     const byAgents = this.subagentSpend?.output ?? 0
     if (byAgents > 0) line.append(metric('by agents', String(byAgents), 'sub'))
+    // The harness spending on its own behalf: an approval check, and whatever
+    // else later joins it. In the total because it is billed, named apart
+    // because it is not the model answering the question that was asked.
+    const byHarness = (this.harnessSpend?.input ?? 0) + (this.harnessSpend?.output ?? 0)
+    if (byHarness > 0) line.append(metric('harness', String(byHarness), 'sub'))
     // Only Anthropic ever reports a cache write, and a row of pills reading 0
     // on every other provider is a column of noise.
     if (usage.cacheWrite > 0) line.append(metric('written', String(usage.cacheWrite)))
-    const spent = this.facts === null ? null : costOf(usage, this.facts)
+    // The conversation's own tokens are what the session's model priced, so the
+    // harness's share comes out before the multiplication and its dollars go
+    // back in afterwards.
+    const conversation = this.harnessSpend === null ? usage : without(usage, this.harnessSpend)
+    const priced = this.facts === null ? null : costOf(conversation, this.facts)
+    const spent = priced === null ? (this.harnessCostUsd > 0 ? this.harnessCostUsd : null) : priced + this.harnessCostUsd
     if (spent !== null) line.append(metric('spent', moneyText(spent), 'cost'))
     if (promptTokens(usage) > 0) line.append(metric('hit', hitText(usage), 'hit'))
     if (usage.reasoning > 0) line.append(metric('reasoning', String(usage.reasoning)))
@@ -214,13 +246,15 @@ export class ChatView {
     if (rate !== null) line.append(metric('tok/s', rate.toFixed(rate < 10 ? 1 : 0), 'rate'))
     const share = byAgents > 0 ? `
 ${byAgents} of the output was written by subagents this session started.` : ''
+    const harness = byHarness > 0 ? `
+${byHarness} were spent by the harness itself, on approval checks, priced at that model's own rate.` : ''
     // The per-turn figure under each answer is priced by the model that ran
     // that turn. This one prices every token at what the model selected now
     // charges, so a session that changed models reads as an estimate.
-    const priced = spent === null ? '' : `
+    const note = spent === null ? '' : `
 Priced at the rate of the model selected now.`
     line.title = `${usageText(usage)}
-Every turn added up, subagents included.${share}${priced}`
+Every turn added up, subagents included.${share}${harness}${note}`
   }
 
   /**
@@ -229,9 +263,11 @@ Every turn added up, subagents included.${share}${priced}`
    * includes the agents this one started; the rate does not, for the reason
    * `metrics.ts` gives.
    */
-  noteUsage(usage: TurnUsage, streamMs?: number, subagent?: TurnUsage): void {
+  noteUsage(usage: TurnUsage, streamMs?: number, subagent?: TurnUsage, harness?: TurnUsage, harnessCostUsd?: number): void {
     this.throughput.note(usage, streamMs)
     if (subagent !== undefined) this.subagentSpend = subagent
+    if (harness !== undefined) this.harnessSpend = harness
+    if (harnessCostUsd !== undefined) this.harnessCostUsd = harnessCostUsd
     this.setUsage(usage)
   }
 
@@ -246,9 +282,11 @@ Every turn added up, subagents included.${share}${priced}`
   }
 
   /** What a re-opened session has already spent. Nothing was timed, so no rate. */
-  showStoredUsage(usage: TurnUsage | undefined, subagent?: TurnUsage): void {
+  showStoredUsage(usage: TurnUsage | undefined, subagent?: TurnUsage, harness?: TurnUsage, harnessCostUsd?: number): void {
     this.throughput.seed(usage?.output ?? 0)
     this.subagentSpend = subagent ?? null
+    this.harnessSpend = harness ?? null
+    this.harnessCostUsd = harnessCostUsd ?? 0
     this.setUsage(usage ?? null)
   }
 
@@ -277,10 +315,42 @@ Every turn added up, subagents included.${share}${priced}`
    * it took, which files it left different, and how long it ran. It is drawn
    * dimmer than a note, for the reason `docs/harness/ui.md` gives.
    */
-  summaryBlock(text: string): void {
-    const wrapper = el('div', 'block summary')
-    wrapper.textContent = text
-    this.append(wrapper)
+  summaryBlock(text: string, prevented?: readonly PreventedCall[]): void {
+    // A turn that was stopped from doing something is the one case where the
+    // line has more to say than it can fit, so it becomes a disclosure rather
+    // than a second block.
+    if (prevented === undefined || prevented.length === 0) {
+      const wrapper = el('div', 'block summary')
+      wrapper.textContent = text
+      this.append(wrapper)
+      return
+    }
+
+    // The count itself is the affordance: opening it is what shows what was
+    // stopped.
+    const card = el('details', 'block summary prevented')
+    const head = el('summary')
+    const mark = `${prevented.length} prevented`
+    const cut = text.indexOf(mark)
+    if (cut === -1) head.append(el('span', 'summary-text', text))
+    else {
+      head.append(
+        el('span', 'summary-text', text.slice(0, cut)),
+        el('span', 'prevented-more', mark),
+        el('span', 'summary-text', text.slice(cut + mark.length)),
+      )
+    }
+    const list = el('div', 'prevented-list')
+    for (const one of prevented) {
+      const row = el('div', 'prevented-row')
+      const head2 = el('div', 'prevented-head')
+      head2.append(el('code', 'prevented-tool', one.tool))
+      if (one.target !== '') head2.append(el('code', 'prevented-target', one.target))
+      row.append(head2, el('div', 'prevented-reason', one.reason))
+      list.append(row)
+    }
+    card.append(head, list)
+    this.append(card)
   }
 
   /** A line about the run itself rather than about the conversation. */
@@ -311,11 +381,8 @@ Every turn added up, subagents included.${share}${priced}`
 
   /**
    * Make a `spawn` card open its subagent. The card is the subagent as far as
-   * the reader is concerned, so the whole head of it is the way in: clicking
-   * anywhere on it shows that conversation instead of folding the card open on
-   * the arguments, which are the least interesting thing about it. A button
-   * saying so would be a second target for the click the whole row already
-   * takes, which is why the card carries none.
+   * the reader is concerned, so the whole head of it is the way in rather than
+   * folding open on the arguments.
    */
   private linkCard(card: HTMLDetailsElement, id: string): void {
     if (card.dataset.subagent === id) return
@@ -331,11 +398,9 @@ Every turn added up, subagents included.${share}${priced}`
   }
 
   /**
-   * A spawn that has started and not answered yet. A foreground subagent blocks
-   * the parent's turn, so its tool card sits there running for as long as it
-   * takes; without this the card would name a subagent nobody could open. The
-   * card becomes a way in the moment the job starts, and when the result lands
-   * it keeps the link it already has.
+   * A spawn that has started and not answered yet. A foreground subagent
+   * blocks the parent's turn, so its card sits there running and is openable
+   * before the result lands.
    */
   liveSubagent(id: string): void {
     const cards = [...this.host.stream.querySelectorAll<HTMLDetailsElement>('details.block.tool')].reverse()
@@ -430,13 +495,10 @@ Every turn added up, subagents included.${share}${priced}`
   }
 
   /**
-   * The answer, told apart from the running commentary above it. A turn is
-   * mostly tool cards and half-sentences between them; the thing the user
-   * actually asked for is the last block.
-   *
-   * Marking it is deliberately something that happens at the *end* of a turn
-   * rather than a guess made while it streams: an assistant block that turns
-   * out to be followed by another tool call was never the answer.
+   * The answer, told apart from the running commentary above it: a turn is
+   * mostly tool cards and half-sentences, and the thing the user asked for is
+   * the last block. Marked at the end of the turn rather than while it streams,
+   * because a block followed by another tool call was never the answer.
    */
   private markFinal(wrapper: HTMLElement | null): void {
     if (wrapper === null) return
@@ -450,10 +512,9 @@ Every turn added up, subagents included.${share}${priced}`
     const summary = card.querySelector('summary')
     if (summary instanceof HTMLElement) summary.dataset.state = ok ? 'done' : 'failed'
     const id = subagentId(text)
-    // The diff is the long half of an edit's result and the half worth a whole
-    // pane, so the card keeps the line that says what changed and hands the
-    // rest to the view that can show it properly. Only the two tools that write
-    // one are asked: a `read` of a patch file ends in a diff fence too, and that
+    // The card keeps the line that says what changed and hands the diff to
+    // the view that can show it properly. Only the two tools that write one
+    // are asked: a `read` of a patch file ends in a diff fence too, and that
     // card is showing a file rather than a change it made.
     const diff = ok && WRITES.has(card.querySelector('.tool-name')?.textContent ?? '') ? toolDiff(text) : null
     if (id !== null) card.append(el('pre', undefined, withoutMarker(text)))
@@ -488,7 +549,7 @@ Every turn added up, subagents included.${share}${priced}`
         if (note === undefined || note.after > upto) return
         next += 1
         if (note.kind === 'error') this.errorBlock(note.text)
-        else if (note.kind === 'summary') this.summaryBlock(note.text)
+        else if (note.kind === 'summary') this.summaryBlock(note.text, note.prevented)
         else this.noteBlock(note.text)
       }
     }
@@ -559,7 +620,7 @@ Every turn added up, subagents included.${share}${priced}`
       case 'usage':
         // The running total belongs beside the session's name, not as another
         // block pushing the conversation up.
-        this.noteUsage(event.usage, event.streamMs, event.subagent)
+        this.noteUsage(event.usage, event.streamMs, event.subagent, event.harness, event.harnessCostUsd)
         break
       case 'round.started':
         this.startRound()
@@ -582,12 +643,11 @@ Every turn added up, subagents included.${share}${priced}`
         this.assistantBlock = null
         break
       case 'session.note':
-        // Why a turn ended the way it did, in the flow rather than in a log
-        // nobody opens.
+        // Why a turn ended the way it did, in the flow rather than in a log.
         this.noteBlock(event.text)
         break
       case 'session.summary':
-        this.summaryBlock(event.text)
+        this.summaryBlock(event.text, event.prevented)
         break
       case 'session.started':
       case 'permission.request':
