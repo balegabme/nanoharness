@@ -35,6 +35,7 @@ pnpm doc-check
 - `providers.md` — provider layer, wire format, auth, provider settings
 - `tools.md` — tool specs, the arg-validation boundary, caps
 - `cli.md` — the `nh` command: `doc-check`, `usage`, `mcp`
+- `cost.md` — the usage report, and the spend view drawn from it
 - `ui.md` — the desktop window, the context bridge, the renderer
 - `sessions.md` — folders, sessions, transcripts, and the scope rule
 - `agents.md` — the three roles, spawn modes, and background jobs

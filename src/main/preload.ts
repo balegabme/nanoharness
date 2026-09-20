@@ -25,6 +25,7 @@ import type {
 import type { AgentRole } from '../core/agents.js'
 import type { JobView } from '../core/jobs.js'
 import type { AppEvent } from '../core/types.js'
+import type { UsageReport } from '../core/usage-report.js'
 
 // The renderer never sees ipcRenderer itself, only the calls on this bridge.
 const bridge: NanoBridge = {
@@ -61,6 +62,7 @@ const bridge: NanoBridge = {
   setActive: (request: ActiveSetRequest) => ipcRenderer.invoke(IPC_CHANNELS.configSetActive, request) as Promise<ConfigStatus>,
   saveApproval: (approval: ApprovalConfig) => ipcRenderer.invoke(IPC_CHANNELS.configSaveApproval, approval) as Promise<ConfigStatus>,
   probeProvider: (request: ConfigProbeRequest) => ipcRenderer.invoke(IPC_CHANNELS.configProbe, request) as Promise<ConfigProbeResult>,
+  usageReport: (days: number | null) => ipcRenderer.invoke(IPC_CHANNELS.usageReport, days) as Promise<UsageReport>,
   openExternal: (url: string) => ipcRenderer.invoke(IPC_CHANNELS.openExternal, url) as Promise<void>,
   onEvent(listener) {
     const handler = (_event: Electron.IpcRendererEvent, payload: AppEvent): void => listener(payload)

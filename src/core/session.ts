@@ -208,6 +208,22 @@ export interface SessionOptions {
   secrets?: SecretVault
 }
 
+/**
+ * One turn as the usage log keeps it: what it spent, which parts of the
+ * harness spent it, what that came to, and how long the model generated for.
+ * The shares are inside `usage` rather than additions to it.
+ */
+export interface TurnSpend {
+  usage: TurnUsage
+  subagent: TurnUsage
+  harness: TurnUsage
+  /** Null where the model carried no prices, or the usage report was unreadable. */
+  costUsd: number | null
+  subagentCostUsd: number
+  harnessCostUsd: number
+  streamMs: number
+}
+
 export class Session {
   readonly bus: EventBus
   readonly access: AccessGate
@@ -250,6 +266,17 @@ export class Session {
    * that last message cost me".
    */
   private turnTally = emptyToolStats()
+  /**
+   * The subagents' and the harness's shares of the turn in hand, and what the
+   * second of them cost. The session-wide totals beside them cannot answer
+   * "who spent this turn", which is what the usage log records and the cost
+   * dashboard groups by.
+   */
+  private turnSubagentUsage = emptyUsage()
+  private turnHarnessUsage = emptyUsage()
+  private turnHarnessCostUsd = 0
+  /** Generating time this turn, summed over its rounds, with no tool time in it. */
+  private turnStreamMs = 0
   /**
    * What the permission system stopped this turn, in the order it stopped it.
    */
@@ -477,6 +504,7 @@ export class Session {
   addSubagentUsage(delta: TurnUsage): void {
     this.addUsage(delta)
     addInto(this.subagentUsage, delta)
+    addInto(this.turnSubagentUsage, delta)
     this.emitUsage()
   }
 
@@ -488,7 +516,11 @@ export class Session {
   addHarnessUsage(delta: TurnUsage, costUsd: number | null): void {
     this.addUsage(delta)
     addInto(this.harnessUsage, delta)
-    if (costUsd !== null) this.harnessCostUsd += costUsd
+    addInto(this.turnHarnessUsage, delta)
+    if (costUsd !== null) {
+      this.harnessCostUsd += costUsd
+      this.turnHarnessCostUsd += costUsd
+    }
     this.emitUsage()
   }
 
@@ -516,14 +548,51 @@ export class Session {
     return this.turn
   }
 
-  /** Usage for the most recent `run()` alone, where `run()` returns the session total. */
-  get lastTurnUsage(): TurnUsage {
-    return { ...this.turnUsage }
+  /**
+   * The most recent `run()` alone, where `run()` returns the session total.
+   * This is what the usage log records, so everything the cost dashboard
+   * attributes a turn by is on it.
+   */
+  get lastTurn(): TurnSpend {
+    return {
+      usage: { ...this.turnUsage },
+      subagent: { ...this.turnSubagentUsage },
+      harness: { ...this.turnHarnessUsage },
+      costUsd: this.turnCost(),
+      subagentCostUsd: this.priced(this.turnSubagentUsage) ?? 0,
+      harnessCostUsd: this.turnHarnessCostUsd,
+      streamMs: this.turnStreamMs,
+    }
+  }
+
+  /**
+   * What the turn in hand cost. The conversation and its subagents are priced
+   * at the model this session runs; the harness's side-calls come already
+   * priced at the models that answered them, which are usually cheaper ones.
+   *
+   * Null where the session's model carries no prices, or where the provider
+   * sent a usage report that could not be read: a turn nobody can price is not
+   * a turn that cost nothing.
+   */
+  private turnCost(): number | null {
+    const conversation = this.priced(subtract(this.turnUsage, this.turnHarnessUsage))
+    return conversation === null ? null : conversation + this.turnHarnessCostUsd
+  }
+
+  /** `usage` at this session's model's prices, or null when it has none. */
+  private priced(usage: TurnUsage): number | null {
+    const facts = this.options.facts
+    if (facts === undefined || this.turnUsageProblem) return null
+    return costOf(usage, facts)
   }
 
   async run(userText: string): Promise<TurnUsage> {
     this.turn += 1
     this.turnUsage = emptyUsage()
+    this.turnSubagentUsage = emptyUsage()
+    this.turnHarnessUsage = emptyUsage()
+    this.turnHarnessCostUsd = 0
+    this.turnStreamMs = 0
     this.turnUsageProblem = false
     this.turnTally = emptyToolStats()
     this.turnPrevented = []
@@ -553,12 +622,10 @@ export class Session {
       // lands under the turn it is about. Every way out of a turn passes here.
       // Priced from the model that actually ran it, which is why this is here
       // and not in the window: the window knows only what is selected now.
-      const facts = this.options.facts
       // A turn whose usage nobody reported is not a turn that cost nothing, so
       // the cost is left off the line rather than printed as $0.
       const counted = this.turnUsage.input + this.turnUsage.output + this.turnUsage.cacheRead + this.turnUsage.cacheWrite
-      const known = facts !== undefined && counted > 0 && !this.turnUsageProblem
-      const spent = known ? costOf(this.turnUsage, facts) : null
+      const spent = counted > 0 ? this.turnCost() : null
       this.summarize(turnSummary(this.turnTally, [...this.turnFiles], Date.now() - this.turnStartedAt, spent))
       // A job that finished during the last round queued its answer and found
       // no round left to be folded into. The transcript is balanced here on
@@ -578,6 +645,9 @@ export class Session {
     for (;;) {
       const { text, toolCalls, usage, thinking, streamMs } = await this.drainRound()
       this.addUsage(usage)
+      // A round the provider never timed adds nothing: the turn's rate is over
+      // the stream this session held a clock on, not over the wall clock.
+      if (streamMs !== undefined) this.turnStreamMs += streamMs
       this.emitUsage(streamMs)
 
       // An assistant message with no text, no tool calls and no thinking draws
@@ -920,6 +990,17 @@ function copyInto(target: TurnUsage, source: TurnUsage): void {
   target.cacheRead = source.cacheRead
   target.cacheWrite = source.cacheWrite
   target.reasoning = source.reasoning
+}
+
+/** A usage report with one of its shares taken out. */
+function subtract(total: TurnUsage, share: TurnUsage): TurnUsage {
+  return {
+    input: total.input - share.input,
+    output: total.output - share.output,
+    cacheRead: total.cacheRead - share.cacheRead,
+    cacheWrite: total.cacheWrite - share.cacheWrite,
+    reasoning: total.reasoning - share.reasoning,
+  }
 }
 
 /** Add one usage report into a running total, in place. */

@@ -6,6 +6,7 @@ import type { JobState, JobView } from '../core/jobs.js'
 import type { AccessIntent } from '../core/scope.js'
 import type { SpawnMode } from '../core/spawn.js'
 import type { AppEvent, McpServerStatus, SessionNote, ToolStats, TurnUsage } from '../core/types.js'
+import type { UsageReport } from '../core/usage-report.js'
 
 export const IPC_CHANNELS = {
   ping: 'ipc:ping',
@@ -37,6 +38,7 @@ export const IPC_CHANNELS = {
   secretsList: 'secrets:list',
   secretsForget: 'secrets:forget',
   secretsCapture: 'secrets:capture',
+  usageReport: 'usage:report',
   openExternal: 'shell:open-external',
 } as const
 
@@ -335,6 +337,11 @@ export interface NanoBridge {
   /** Set the approval model ladder. An empty list turns auto mode off for good. */
   saveApproval(approval: ApprovalConfig): Promise<ConfigStatus>
   probeProvider(request: ConfigProbeRequest): Promise<ConfigProbeResult>
+  /**
+   * What has been spent, grouped for the spend view. `days` counts back from
+   * today in whole local days; null is everything the log holds.
+   */
+  usageReport(days: number | null): Promise<UsageReport>
   /** Hand an https link to the OS browser. The window itself never navigates. */
   openExternal(url: string): Promise<void>
   /** Subscribe to live session events. Returns an unsubscribe function. */

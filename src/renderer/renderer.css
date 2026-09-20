@@ -812,6 +812,231 @@ body {
   background: var(--nh-hover);
 }
 
+/* What has been spent, drawn in the same place and the same frame as the two
+   views above it. What is different is whose it is: a subagent and a diff
+   belong to a session, and this belongs to the window. */
+.cost-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: var(--s3) var(--s6) 0;
+  animation: rise var(--nh-base) var(--nh-ease);
+}
+
+.cost-window {
+  color: var(--nh-label-caption);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.cost-stream {
+  padding: var(--s4) 0 var(--s6);
+}
+
+.cost-headline,
+.cost-chart,
+.cost-table,
+.cost-empty,
+.cost-note,
+.cost-problem {
+  width: 100%;
+  max-width: var(--nh-column);
+  margin: 0 auto var(--s6);
+}
+
+.cost-stream h3,
+.cost-window-note {
+  margin: 0 0 var(--s2);
+  color: var(--nh-label-caption);
+  font: 500 10px var(--nh-font-sans);
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+/* The one number the view is opened for, and the only thing on the page set
+   large enough to read from across a desk. */
+.cost-figure {
+  margin: 0 0 var(--s3);
+  font: 600 34px/1.1 var(--nh-font-sans);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.cost-headline .usage-line {
+  flex-wrap: wrap;
+}
+
+/* The total is short by whatever the unpriced turns came to, which is a
+   caveat on the figure above rather than a fault, so it is amber and quiet. */
+.cost-floor {
+  margin: var(--s3) 0 0;
+  color: var(--nh-state-warn);
+  font-size: 11.5px;
+}
+
+.cost-chart-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  margin-bottom: var(--s2);
+}
+
+.cost-chart-head h3 {
+  margin: 0;
+}
+
+.cost-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--nh-label-caption);
+  font-size: 10.5px;
+}
+
+.cost-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: var(--nh-accent);
+}
+
+.cost-swatch.hit {
+  height: 2px;
+  border-radius: var(--nh-radius-pill);
+  background: var(--nh-state-ok);
+}
+
+/* One drawing at one size, scaled to whatever the column is. Overflow shows
+   because the axis labels sit outside the plot. */
+.cost-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.cost-bar-mark {
+  fill: var(--nh-accent);
+  opacity: 0.85;
+}
+
+.cost-chart g:hover .cost-bar-mark {
+  opacity: 1;
+}
+
+/* Money is the accent and the hit rate is green, the two colours they already
+   carry in the pills at the top of the window. */
+.cost-hit-line {
+  fill: none;
+  stroke: var(--nh-state-ok);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.cost-hit-dot {
+  fill: var(--nh-state-ok);
+}
+
+.cost-rule {
+  stroke: var(--nh-border-l2);
+  stroke-width: 1;
+}
+
+.cost-rule.dashed {
+  stroke-dasharray: 3 4;
+}
+
+.cost-axis {
+  fill: var(--nh-label-caption);
+  font: 400 10px var(--nh-font-sans);
+}
+
+.cost-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 38px 76px;
+  align-items: center;
+  gap: var(--s3);
+  height: 30px;
+  padding: 0 var(--s2);
+  border-radius: var(--nh-radius-chip);
+  font-size: 12px;
+}
+
+.cost-row:hover {
+  background: var(--nh-hover);
+}
+
+.cost-row > span {
+  position: relative;
+}
+
+/* A row's share of the dearest row, behind the text rather than beside it, so
+   the shape of a breakdown reads before any of the numbers do. */
+.cost-row > .cost-share {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--share, 0%);
+  border-radius: var(--nh-radius-chip);
+  background: var(--nh-accent-wash);
+  pointer-events: none;
+}
+
+.cost-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--nh-label-secondary);
+}
+
+.cost-turns {
+  color: var(--nh-label-caption);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.cost-hit {
+  color: var(--nh-accent);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.cost-money {
+  color: var(--nh-label-primary);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* The name is gone and the spend is not, so the row looks like what it is: a
+   record of something that is no longer there. */
+.cost-row.gone .cost-label,
+.cost-row.rest .cost-label {
+  color: var(--nh-label-caption);
+}
+
+.cost-row.gone .cost-label {
+  font-style: italic;
+}
+
+.cost-empty,
+.cost-note {
+  color: var(--nh-label-caption);
+  font-size: 11.5px;
+}
+
+.cost-problem {
+  color: var(--nh-state-error);
+  font-size: 12px;
+}
+
+/* The session's own total is also the way into every session's. */
+.usage-line.link {
+  cursor: pointer;
+}
+
 .side-foot {
   display: flex;
   align-items: center;

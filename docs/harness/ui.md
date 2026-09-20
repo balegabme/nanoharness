@@ -6,8 +6,8 @@ its own, which is why the window can be rebuilt without touching the core.
 
 Files:
 - src/main/window.ts — BrowserWindow, the `app://` scheme, navigation lockdown
-- src/main/preload.ts — the context bridge, with ping, send, workspaces, sessions, rename, transcript paths, role, jobs, one subagent's stored conversation, agents, MCP status, secrets, config, permission answers, external links, onEvent
-- src/renderer/index.ts — the shell, which session is open, the agent, model and effort chips, and the diff pane
+- src/main/preload.ts — the context bridge, with ping, send, workspaces, sessions, rename, transcript paths, role, jobs, one subagent's stored conversation, agents, MCP status, secrets, config, permission answers, the usage report, external links, onEvent
+- src/renderer/index.ts — the shell, which session is open, the agent, model and effort chips, and the diff and spend panes
 - src/renderer/composer.ts — the composer in its two seats, and the height the flow clears
 - src/renderer/jobs.ts — the running subagents and the buffered stream of each one
 - src/renderer/sidebar.ts — folders and their sessions, search, add and delete
@@ -438,6 +438,18 @@ A diff sits over whichever flow opened it, so an edit made by a subagent opens
 from the subagent's own view and back goes there rather than all the way home.
 The text comes out of the stored tool result, which means a session reopened
 next week opens its diffs the same way it opens its subagents.
+
+## Spend
+
+The third thing drawn where the conversation is, after a subagent and a diff,
+and the only one of them that is not a session's: what every session has spent,
+opened from the Spend item in the sidebar foot or from the topbar usage line,
+and left by the same back button. It covers whatever was open rather than
+closing it, so back returns to the diff or the subagent that was there.
+
+The renderer does no arithmetic on it. The main process sends a finished report
+over `usage:report` and this view draws it, for the reason every number in the
+window has one home: `cost.md` has the report, the chart and the rules.
 
 ## The answer, and the rest of the turn
 

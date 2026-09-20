@@ -10,6 +10,7 @@ import type { AgentRole } from '../core/agents.js'
 import type { JobState } from '../core/jobs.js'
 import type { SpawnMode } from '../core/spawn.js'
 import type { ChatMessage, SessionNote, ToolStats, TurnUsage } from '../core/types.js'
+import type { UsageNames } from '../core/usage-report.js'
 import type { SessionView, TranscriptMessage, WorkspaceStatus, WorkspaceView } from '../ipc/contract.js'
 
 /**
@@ -342,6 +343,31 @@ export async function setSessionUsage(id: string, spend: SessionSpend): Promise<
 export async function sessionRole(id: string): Promise<AgentRole | null> {
   const state = await readState()
   return state.sessions.find(s => s.id === id)?.role ?? null
+}
+
+/**
+ * What a turn of this session has to be filed under: its folder and its agent.
+ * Read before the turn runs, because a session deleted while it ran still
+ * spent money and the index no longer knows whose it was.
+ */
+export async function sessionIdentity(id: string): Promise<{ workspaceId: string; role: AgentRole } | null> {
+  const state = await readState()
+  const session = state.sessions.find(s => s.id === id)
+  return session === undefined ? null : { workspaceId: session.workspaceId, role: session.role }
+}
+
+/**
+ * What the folders and sessions are called right now, for the cost dashboard.
+ * The usage log stores ids alone, so this is the other half of a row that says
+ * a name; an id missing from here belonged to something since deleted.
+ */
+export async function usageNames(): Promise<UsageNames> {
+  const state = await readState()
+  const folders: Record<string, string> = {}
+  const sessions: Record<string, string> = {}
+  for (const workspace of state.workspaces) folders[workspace.id] = workspace.name
+  for (const session of state.sessions) sessions[session.id] = session.title
+  return { folders, sessions }
 }
 
 /** The root a session is scoped to, or null once its workspace is gone. */

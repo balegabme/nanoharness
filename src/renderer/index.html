@@ -50,6 +50,13 @@
         <nav class="tree wide-only" id="tree" aria-label="Sessions"></nav>
 
         <div class="side-foot">
+          <button class="foot-item" id="spend" type="button" title="What has been spent">
+            <!-- Three bars, which is the day chart the view opens on. -->
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+              <path d="M5 19v-6M12 19V5M19 19v-9" />
+            </svg>
+            <span class="label">Spend</span>
+          </button>
           <button class="foot-item" id="settings" type="button" title="Settings">
             <!-- Sliders, not a cogwheel: a 24-grid gear turns to mush at 16px. -->
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
@@ -81,7 +88,14 @@
             <span class="mcp-word">MCP</span>
           </span>
           <span class="spacer"></span>
-          <span class="usage-line" id="usage-line" title="This session, every turn added up" hidden></span>
+          <span
+            class="usage-line link"
+            id="usage-line"
+            role="button"
+            tabindex="0"
+            title="This session, every turn added up. Open it for everything spent."
+            hidden
+          ></span>
           <span class="chip" id="status" hidden></span>
         </header>
 
@@ -124,6 +138,32 @@
               <button class="btn sm outline" id="diff-copy" type="button">Copy diff</button>
             </header>
             <section class="stream diff-stream" id="diff-stream"></section>
+          </div>
+
+          <!--
+            What has been spent, drawn where the conversation is. It belongs to
+            the window rather than to a session: the tables are every folder,
+            session, model and agent the log has ever seen.
+          -->
+          <div class="cost-view" id="cost-view" hidden>
+            <header class="sub-head">
+              <span class="job-mode">Spend</span>
+              <span class="cost-window" id="cost-window"></span>
+              <span class="spacer"></span>
+              <span class="chip-select" id="cost-range-chip">
+                <span class="chip-value" id="cost-range-value">last 30 days</span>
+                <svg class="chip-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+                <select id="cost-range" title="How far back to count" aria-label="How far back to count">
+                  <option value="7">last 7 days</option>
+                  <option value="30" selected>last 30 days</option>
+                  <option value="90">last 90 days</option>
+                  <option value="all">all time</option>
+                </select>
+              </span>
+            </header>
+            <section class="stream cost-stream" id="cost-stream"></section>
           </div>
 
           <section class="hero" id="hero">

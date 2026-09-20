@@ -149,6 +149,10 @@ the git log; none of the three is repeated here.
 **Tooling**
 - Doc map with `nh doc-check` in CI, the improvement ledger and its
   `log_improvement` tool, and `nh usage` over a per-turn usage log.
+- `nh usage [--days N]` prints what was spent per day, folder, session, model,
+  agent and phase, with the throughput each of them ran at. It is the same
+  report the window draws, built once in core, so the terminal and the window
+  cannot disagree about a figure.
 - Repository scaffold: tooling, CI, OSS files.
 
 **Desktop app**
@@ -178,6 +182,12 @@ the git log; none of the three is repeated here.
   for, and components that read only aliases, with one easing curve, three
   durations, and a single spacing and radius vocabulary. Dark only.
 - The brand mark is the window icon, the app icon, and the empty state.
+- A spend view, opened from the sidebar foot or from the session's own usage
+  line: what was spent over the window, a bar per day with the cache hit rate
+  drawn over it, and the same money broken down by folder, session, model,
+  agent and by which part of the harness spent it. The chart puts cost and hit
+  rate together because a day the bars jump while the line drops is a prompt
+  prefix that stopped matching.
 - A renderer that fails to load writes a banner into the page instead of leaving
   a blank window.
 

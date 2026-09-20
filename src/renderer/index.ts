@@ -1,6 +1,7 @@
 // doc: docs/harness/ui.md
 import { ChatView } from './chat.js'
 import { autoGrow, initComposer, seat, showDock } from './composer.js'
+import { initCost, refreshCost } from './cost.js'
 import { el, message, must, relativeTime } from './dom.js'
 import {
   bufferOf,
@@ -67,6 +68,9 @@ const statusChip = must<HTMLElement>('status')
 const titleLabel = must<HTMLElement>('session-title')
 const scopeChip = must<HTMLElement>('scope-chip')
 const settingsButton = must<HTMLButtonElement>('settings')
+const spendButton = must<HTMLButtonElement>('spend')
+const usageLine = must<HTMLElement>('usage-line')
+const costView = must<HTMLElement>('cost-view')
 const mcpChip = must<HTMLElement>('mcp-chip')
 const mcpOk = must<HTMLElement>('mcp-ok')
 const mcpBad = must<HTMLElement>('mcp-bad')
@@ -90,6 +94,11 @@ let agents: AgentSummary[] = []
 let viewing: string | null = null
 /** The diff on screen, or null. It sits over whichever flow opened it. */
 let showing: DiffOpen | null = null
+/**
+ * True while the spend view is on screen. It is the window's, not a
+ * session's, so it covers whatever was open and back returns to it.
+ */
+let onSpend = false
 
 /**
  * The conversation, and the subagent the user opened. Two views of the same
@@ -99,7 +108,7 @@ const chat = new ChatView({
   stream,
   tail: must<HTMLElement>('stream-tail'),
   mark: must<HTMLElement>('stream-mark'),
-  usageLine: must<HTMLElement>('usage-line'),
+  usageLine,
   openSubagent: id => void openSubagent(id),
   openDiff,
 })
@@ -152,6 +161,21 @@ function openDiff(diff: DiffOpen): void {
 /** Back to the flow the diff was opened from, subagent or conversation. */
 function closeDiff(): void {
   showing = null
+  renderShell()
+}
+
+/**
+ * What every session has spent, read fresh each time: the log is appended
+ * to by every turn in the window, so a view held open would go stale.
+ */
+function openSpend(): void {
+  onSpend = true
+  renderShell()
+  void refreshCost()
+}
+
+function closeSpend(): void {
+  onSpend = false
   renderShell()
 }
 
@@ -513,18 +537,26 @@ function renderEfforts(status: ConfigStatus): void {
 function renderShell(): void {
   const open = activeSessionId !== null
   // A diff sits over whichever flow opened it, so back from one goes to that
-  // flow rather than all the way home.
-  const onDiff = open && showing !== null
-  const sideways = open && viewing !== null && !onDiff
-  stream.hidden = !open || sideways || onDiff
+  // flow rather than all the way home. Spend covers all three and leaves them
+  // where they were.
+  const onDiff = !onSpend && open && showing !== null
+  const sideways = !onSpend && open && viewing !== null && !onDiff
+  stream.hidden = onSpend || !open || sideways || onDiff
   subView.hidden = !sideways
   diffView.hidden = !onDiff
-  hero.hidden = open
+  costView.hidden = !onSpend
+  hero.hidden = open || onSpend
   seat(open)
-  // Neither of these can be messaged: a subagent was given its whole task
-  // when it started and answers once, and a diff already happened.
-  showDock(!sideways && !onDiff)
-  backButton.hidden = !sideways && !onDiff
+  // None of these can be messaged: a subagent was given its whole task when it
+  // started and answers once, a diff already happened, and spend is a report.
+  showDock(!sideways && !onDiff && !onSpend)
+  backButton.hidden = !sideways && !onDiff && !onSpend
+
+  if (onSpend) {
+    titleLabel.textContent = 'Spend'
+    scopeChip.hidden = true
+    return
+  }
 
   if (onDiff && showing !== null) {
     titleLabel.textContent = showing.path
@@ -775,7 +807,8 @@ modeSelect.addEventListener('change', () => {
   void switchMode().catch((err: unknown) => chat.errorBlock(message(err)))
 })
 backButton.addEventListener('click', () => {
-  if (showing !== null) closeDiff()
+  if (onSpend) closeSpend()
+  else if (showing !== null) closeDiff()
   else closeSubagent()
 })
 diffCopy.addEventListener('click', () => {
@@ -798,6 +831,15 @@ subCopy.addEventListener('click', () => {
     .catch(() => {
       subCopy.textContent = 'Copy failed'
     })
+})
+spendButton.addEventListener('click', openSpend)
+// The session's own total is also the way into every session's.
+usageLine.addEventListener('click', openSpend)
+usageLine.addEventListener('keydown', event => {
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault()
+    openSpend()
+  }
 })
 settingsButton.addEventListener('click', () => openSettings('providers'))
 heroSettings.addEventListener('click', () => openSettings('providers'))
@@ -871,6 +913,7 @@ async function boot(): Promise<void> {
   }
 
   initSettings({ bridge: nh, onConfig: renderActive, version })
+  initCost(nh)
   agents = await nh.agents().catch(() => [])
   renderAgents()
   await initJobs(nh, {

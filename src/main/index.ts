@@ -22,7 +22,9 @@ import { loadServers, mcpPaths } from '../mcp/config.js'
 import { hasUnknownSecret, secretsBlock } from '../core/secrets.js'
 import { flushSecrets, forgetSecret, secretList, secretVault } from './secret-store.js'
 import { Session } from '../core/session.js'
-import { appendUsage } from '../core/usage-log.js'
+import { appendUsage, readUsage } from '../core/usage-log.js'
+import { buildReport } from '../core/usage-report.js'
+import type { UsageReport } from '../core/usage-report.js'
 import { Judge, approvalProblem, goalsFrom, mergeRules } from '../core/approval.js'
 import type { ApprovalConfig, PermissionMode } from '../core/approval.js'
 import { resolveFacts } from '../core/config.js'
@@ -56,6 +58,7 @@ import {
   renameSession,
   saveSubagent,
   saveTranscript,
+  sessionIdentity,
   sessionRole,
   sessionRoot,
   sessionUsage,
@@ -63,6 +66,7 @@ import {
   setSessionUsage,
   toTranscriptView,
   transcriptPath,
+  usageNames,
   workspaceStatus,
 } from './workspace-store.js'
 import { createWindow, serveRenderer } from './window.js'
@@ -851,6 +855,17 @@ app.whenReady().then(() => {
     return (await secretVault()).capture(text)
   })
 
+  /**
+   * The spend view, built here rather than in the window: the arithmetic is one
+   * copy in `usage-report.ts`, shared with `nh usage`, and the window is a
+   * separate bundle that cannot import it. The names come from the index, so a
+   * row for a deleted session says so instead of showing a bare id.
+   */
+  ipcMain.handle(IPC_CHANNELS.usageReport, async (_event: IpcMainInvokeEvent, days: number | null): Promise<UsageReport> => {
+    const log = await readUsage()
+    return buildReport(log.records, { days, skipped: log.skipped, names: await usageNames() })
+  })
+
   ipcMain.handle(IPC_CHANNELS.sessionDelete, async (_event: IpcMainInvokeEvent, id: string): Promise<WorkspaceStatus> => {
     void retire(id)
     permissions.delete(id)
@@ -950,6 +965,11 @@ app.whenReady().then(() => {
     const built = promptSecrets.get(req.sessionId)
     if (built !== undefined && hasUnknownSecret(built, vault.names())) await retire(req.sessionId)
     const session = await sessionFor(event.sender, req.sessionId)
+    // Read before the turn rather than after it: a session deleted while it was
+    // running still spent what it spent, and by then the index no longer knows
+    // which folder or which agent to file that line under.
+    const identity = await sessionIdentity(req.sessionId)
+    if (identity === null) throw new Error('that session is gone; start a new one from the sidebar')
     const usage = await session.run(text)
 
     // The transcript is written after the turn, not during it: a half-streamed
@@ -958,14 +978,24 @@ app.whenReady().then(() => {
     await saveTranscript(req.sessionId, session.transcript, session.notes)
     const updated = await noteTurn(req.sessionId, text, spendOf(session))
 
-    // One line per completed turn, so `nh usage` has something to read. A log
-    // that cannot be written is worth a warning and no more than that.
+    // One line per completed turn: what `nh usage` and the spend view are both
+    // built out of. A log that cannot be written is worth a warning and no more
+    // than that.
+    const turn = session.lastTurn
     await appendUsage({
       at: Date.now(),
       sessionId: session.options.sessionId,
+      workspaceId: identity.workspaceId,
       turn: session.turnNumber,
+      role: identity.role,
       model: session.options.model,
-      usage: session.lastTurnUsage,
+      usage: turn.usage,
+      subagent: turn.subagent,
+      harness: turn.harness,
+      costUsd: turn.costUsd,
+      subagentCostUsd: turn.subagentCostUsd,
+      harnessCostUsd: turn.harnessCostUsd,
+      streamMs: turn.streamMs,
     }).catch((err: unknown) => {
       process.stderr.write(`usage log: ${err instanceof Error ? err.message : String(err)}\n`)
     })

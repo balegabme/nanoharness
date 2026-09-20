@@ -7,7 +7,7 @@ Files:
 - src/cli/index.ts — argument dispatch, `--version`, help
 - src/cli/doc-check.ts — doc-map verification
 - src/cli/mcp.ts — the MCP config as commands: list, add, remove, check
-- src/cli/usage.ts — usage aggregation and report formatting
+- src/cli/usage.ts — the usage report, printed
 
 The version comes from `package.json` and nothing else (plan §16).
 
@@ -22,21 +22,31 @@ The plan also runs this as a `SessionStart` hook; that arrives with the hook
 runner in build step 7. Until then it is the `pnpm doc-check` script and a CI
 job.
 
-## nh usage [--json]
+## nh usage [--days N] [--json]
 
-Reads the usage log and reports totals, the cache hit rate
+Reads the usage log and prints what was spent: the totals, the cache hit rate
 (`cacheRead / (cacheRead + input + cacheWrite)`, plan §15's headline metric),
-and a per-model breakdown. A cache write is in the denominator because it is
-prompt the provider read in full and charged extra for, and it is printed on
-any row that has one so the percentage can be checked by hand.
+throughput, and a breakdown per day, folder, session, model, agent and phase. A
+cache write is in the denominator because it is prompt the provider read in
+full and charged extra for, and the counts are printed above the percentage so
+it can be checked by hand.
+
+This is the same report the window draws, built by `src/core/usage-report.ts`;
+`cost.md` explains the grouping, how an unpriced turn is counted, and why a
+deleted session keeps its row.
+
+`--days N` counts back N whole local days with today included. Without it the
+report covers everything the log holds. Anything that is not a day count is
+refused rather than read as all time, which would print a report for a window
+nobody asked for.
 
 Each line carries the schema version it was written under. A line from another
-version is skipped, not summed: before version 2, `input` on an
-OpenAI-compatible turn included the cached tokens that `cacheRead` also
-counted, and a line already on disk cannot be converted because it does not
-record which wire wrote it. The log is never rewritten, and there is no
-compatibility path: this project is pre-1.0, so a build reads its own schema
-and skips the rest.
+version is skipped, not summed: version 3 gives a line the folder, agent and
+per-phase money the report groups by, and version 2 before it changed what
+`input` means on an OpenAI-compatible turn. Neither can be converted from what
+is already on disk. The log is never rewritten, and there is no compatibility
+path: this project is pre-1.0, so a build reads its own schema and counts the
+rest as skipped.
 
 `--json` dumps the raw records instead, for piping somewhere else.
 

@@ -8,7 +8,7 @@ Files:
 - src/core/types.ts — shared types: events, usage, messages, tools
 - src/core/event-bus.ts — EventBus: emit + subscribe
 - src/core/session.ts — one session loop: provider stream, tool rounds, usage
-- src/core/usage-log.ts — append-only usage record in the OS user-data dir
+- src/core/usage-log.ts — append-only record of what each turn spent, in the OS user-data dir
 - src/core/roots.ts — workspace root vs harness root, and the harness-editor cwd
 - src/main/index.ts — Electron entry, typed IPC wiring
 - src/ipc/contract.ts — IPC channel names and payloads
@@ -87,7 +87,19 @@ the stored session keeps it beside the total so a session opened a week later
 still knows which of its output it wrote itself.
 
 Each completed turn is also appended to `usage.jsonl` in the OS user-data dir,
-never the repo. `nh usage` reads it back — see `cli.md`.
+never the repo. The line says which folder, session, agent and model spent it,
+the two shares inside the total, and what each of those came to in dollars at
+the prices the model carried at the time. It stores no names: folders get
+renamed and sessions get deleted, so ids are what a line keeps and names are
+resolved when it is read.
+
+The line is stamped with a schema version and a build reads only its own, since
+there is no converting a line that predates a change in what a field means. The
+project is pre-1.0 and the log is a record rather than a database, so a bump
+skips the old lines and counts them instead of migrating them.
+
+Reading it back is `cost.md`: one report, drawn by the window and printed by
+`nh usage`.
 
 ## IPC
 
