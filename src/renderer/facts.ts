@@ -40,6 +40,8 @@ export function resolveFacts(provider: Described | undefined, model: string): Mo
   }
   const maxOutput = typed.maxOutput ?? reported.maxOutput
   if (maxOutput !== undefined) merged.maxOutput = maxOutput
+  const vision = typed.vision ?? reported.vision
+  if (vision !== undefined) merged.vision = vision
   return merged
 }
 

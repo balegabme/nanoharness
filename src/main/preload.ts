@@ -63,6 +63,7 @@ const bridge: NanoBridge = {
   saveApproval: (approval: ApprovalConfig) => ipcRenderer.invoke(IPC_CHANNELS.configSaveApproval, approval) as Promise<ConfigStatus>,
   probeProvider: (request: ConfigProbeRequest) => ipcRenderer.invoke(IPC_CHANNELS.configProbe, request) as Promise<ConfigProbeResult>,
   usageReport: (days: number | null) => ipcRenderer.invoke(IPC_CHANNELS.usageReport, days) as Promise<UsageReport>,
+  usageClear: (days: number | null) => ipcRenderer.invoke(IPC_CHANNELS.usageClear, days) as Promise<UsageReport>,
   openExternal: (url: string) => ipcRenderer.invoke(IPC_CHANNELS.openExternal, url) as Promise<void>,
   onEvent(listener) {
     const handler = (_event: Electron.IpcRendererEvent, payload: AppEvent): void => listener(payload)

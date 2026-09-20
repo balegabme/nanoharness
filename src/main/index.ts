@@ -22,7 +22,7 @@ import { loadServers, mcpPaths } from '../mcp/config.js'
 import { hasUnknownSecret, secretsBlock } from '../core/secrets.js'
 import { flushSecrets, forgetSecret, secretList, secretVault } from './secret-store.js'
 import { Session } from '../core/session.js'
-import { appendUsage, readUsage } from '../core/usage-log.js'
+import { appendUsage, clearUsage, readUsage } from '../core/usage-log.js'
 import { buildReport } from '../core/usage-report.js'
 import type { UsageReport } from '../core/usage-report.js'
 import { Judge, approvalProblem, goalsFrom, mergeRules } from '../core/approval.js'
@@ -862,6 +862,12 @@ app.whenReady().then(() => {
    * row for a deleted session says so instead of showing a bare id.
    */
   ipcMain.handle(IPC_CHANNELS.usageReport, async (_event: IpcMainInvokeEvent, days: number | null): Promise<UsageReport> => {
+    const log = await readUsage()
+    return buildReport(log.records, { days, skipped: log.skipped, names: await usageNames() })
+  })
+
+  ipcMain.handle(IPC_CHANNELS.usageClear, async (_event: IpcMainInvokeEvent, days: number | null): Promise<UsageReport> => {
+    await clearUsage()
     const log = await readUsage()
     return buildReport(log.records, { days, skipped: log.skipped, names: await usageNames() })
   })

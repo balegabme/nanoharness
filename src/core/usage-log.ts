@@ -1,5 +1,5 @@
 // doc: docs/harness/overview.md
-import { appendFile, mkdir, readFile } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { isAgentRole } from './agents.js'
@@ -79,6 +79,15 @@ export function usageLogPath(env?: NodeJS.ProcessEnv, platform?: string): string
 export async function appendUsage(record: Omit<UsageRecord, 'v'>, path = usageLogPath()): Promise<void> {
   await mkdir(dirname(path), { recursive: true })
   await appendFile(path, `${JSON.stringify({ v: USAGE_SCHEMA, ...record })}\n`, 'utf8')
+}
+
+/**
+ * Throw the log away. There is no undo and nothing keeps a copy: the file is
+ * the record, so what this removes is gone. A log that was never written is
+ * not an error to clear.
+ */
+export async function clearUsage(path = usageLogPath()): Promise<void> {
+  await rm(path, { force: true })
 }
 
 export interface UsageLog {

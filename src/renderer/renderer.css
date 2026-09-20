@@ -830,6 +830,14 @@ body {
   letter-spacing: 0.04em;
 }
 
+/* The one control in this view that writes. Outlined at rest like the rest of
+   the head, red under the pointer. */
+.btn.outline.cost-clear:hover:enabled {
+  border-color: var(--nh-red-500);
+  background: var(--nh-red-500);
+  color: #fff;
+}
+
 .cost-stream {
   padding: var(--s4) 0 var(--s6);
 }
@@ -1539,6 +1547,26 @@ details.block pre + pre {
   white-space: nowrap;
   text-overflow: ellipsis;
   color: var(--nh-label-caption);
+}
+
+/* A second row in the head of a spawn card: what the subagent did, on the one
+   part of the card that is visible while it is folded. `order` keeps it under
+   the state mark, which is a pseudo-element and so is always last in source. */
+.block.tool[data-subagent] > summary {
+  flex-wrap: wrap;
+  padding-bottom: 4px;
+}
+
+.tool-note {
+  order: 1;
+  flex-basis: 100%;
+  padding-left: 13px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--nh-label-caption);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 
 .tool > summary::after {
@@ -2603,11 +2631,22 @@ button.chip:hover:enabled,
 }
 
 .model-efforts,
-.model-costs {
+.model-costs,
+.model-vision {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--s2);
+}
+
+.vision-select {
+  padding: 2px var(--s2);
+  border: 1px solid var(--nh-border-l2);
+  border-radius: var(--nh-radius-chip);
+  background: var(--nh-bg-layer-2);
+  color: var(--nh-label-primary);
+  font: 400 12px var(--nh-font-sans);
+  cursor: pointer;
 }
 
 .effort-box,

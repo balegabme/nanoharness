@@ -113,6 +113,9 @@ const CASES: ModelFacts[] = [
   { efforts: ['none', 'medium'], input: 3, output: 15 },
   { maxOutput: 64_000 },
   { efforts: ['low', 'medium'], maxOutput: 8_192 },
+  { vision: true },
+  { vision: false },
+  { input: 3, vision: true },
 ]
 
 function record(facts?: ModelFacts, overrides?: ModelFacts): ProviderRecord {
@@ -184,6 +187,38 @@ describe('a model list that names capabilities', () => {
 
   it('reads the prices it has no field for as missing, which is what marks the model', () => {
     expect(factGaps(readFacts(opus))).toEqual(['cost'])
+  })
+})
+
+describe('whether a model takes images', () => {
+  it('reads a list of input modalities, in either place it is written', () => {
+    expect(readFacts({ id: 'm', architecture: { input_modalities: ['text', 'image'] } }).vision).toBe(true)
+    expect(readFacts({ id: 'm', architecture: { input_modalities: ['text'] } }).vision).toBe(false)
+    expect(readFacts({ id: 'm', input_modalities: ['text', 'image', 'file'] }).vision).toBe(true)
+  })
+
+  it('reads the older arrow spelling of the same list', () => {
+    expect(readFacts({ id: 'm', architecture: { modality: 'text+image->text' } }).vision).toBe(true)
+    expect(readFacts({ id: 'm', architecture: { modality: 'text->text' } }).vision).toBe(false)
+  })
+
+  it('reads a capabilities block or a capabilities list', () => {
+    expect(readFacts({ id: 'm', capabilities: ['completion', 'vision'] }).vision).toBe(true)
+    expect(readFacts({ id: 'm', capabilities: ['completion'] }).vision).toBe(false)
+    expect(readFacts({ id: 'm', capabilities: { vision: { supported: true } } }).vision).toBe(true)
+    expect(readFacts({ id: 'm', capabilities: { vision: false } }).vision).toBe(false)
+  })
+
+  it('reads the flag a gateway sets beside its prices', () => {
+    expect(readFacts({ id: 'm', supports_vision: true }).vision).toBe(true)
+    expect(readFacts({ id: 'm', model_info: { supports_vision: false } }).vision).toBe(false)
+  })
+
+  it('leaves it unanswered when the endpoint said nothing', () => {
+    expect(readFacts({ id: 'm' }).vision).toBeUndefined()
+    expect(readFacts({ id: 'm', pricing: { prompt: '0.000003' } }).vision).toBeUndefined()
+    // Not a boolean, so not an answer: a string cannot be read as a yes.
+    expect(readFacts({ id: 'm', supports_vision: 'yes' }).vision).toBeUndefined()
   })
 })
 

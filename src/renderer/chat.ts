@@ -55,6 +55,18 @@ export function subagentId(text: string): string | null {
   return SUBAGENT.exec(text)?.[1] ?? null
 }
 
+/**
+ * The bracketed line a finished `spawn` ends with: the role it ran as, what its
+ * tool calls came to, how long it ran and what it cost. `tools/spawn.ts` writes
+ * it for the model, and the card reads it back so the window says the same
+ * thing without composing it twice.
+ */
+const SUBAGENT_COST = /\[([a-z-]+\/[a-z]+: [^\]]+)]/
+
+export function subagentCost(text: string): string | null {
+  return SUBAGENT_COST.exec(text)?.[1] ?? null
+}
+
 /** The same text with the marker taken out: the button says it better. */
 function withoutMarker(text: string): string {
   return text.replace(SUBAGENT, '').replace(/[ \t]+\n/g, '\n').trim()
@@ -517,8 +529,14 @@ Every turn added up, subagents included.${share}${harness}${note}`
     // are asked: a `read` of a patch file ends in a diff fence too, and that
     // card is showing a file rather than a change it made.
     const diff = ok && WRITES.has(card.querySelector('.tool-name')?.textContent ?? '') ? toolDiff(text) : null
-    if (id !== null) card.append(el('pre', undefined, withoutMarker(text)))
-    else card.append(el('pre', undefined, diff === null ? text : withoutDiff(text)))
+    if (id !== null) {
+      const body = withoutMarker(text)
+      const spent = subagentCost(body)
+      card.append(el('pre', undefined, spent === null ? body : body.replace(SUBAGENT_COST, '').trim()))
+      // The head is the only part of a folded card that shows, and the count
+      // is what tells a reader whether to open it.
+      if (spent !== null) summary?.append(el('span', 'tool-note', spent))
+    } else card.append(el('pre', undefined, diff === null ? text : withoutDiff(text)))
     // A foreground spawn was already linked when its job started; `linkCard`
     // leaves that one alone.
     if (id !== null) this.linkCard(card, id)

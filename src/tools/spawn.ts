@@ -1,5 +1,6 @@
 // doc: docs/harness/agents.md
-import { defineTool } from '../core/session.js'
+import { moneyText } from '../core/cost.js'
+import { defineTool, elapsedText } from '../core/session.js'
 import { AGENTS, AGENT_ROLES, isAgentRole } from '../core/agents.js'
 import { SPAWN_MODES, isSpawnMode } from '../core/spawn.js'
 import type { ArgsParse } from '../core/session.js'
@@ -25,9 +26,9 @@ function parseArgs(args: Record<string, unknown>): ArgsParse<SpawnArgs> {
 const roles = AGENT_ROLES.map(role => `${role} (${AGENTS[role].purpose})`).join('; ')
 
 /**
- * What the subagent did to reach its answer, as the line under its card: how
- * many calls it made, how many worked, how many came back an error.
- * `docs/harness/agents.md` says why an answer alone is not enough to go on.
+ * What the subagent did to reach its answer: how many calls it made, how many
+ * worked, how many came back an error. `docs/harness/agents.md` says why an
+ * answer alone is not enough to go on.
  */
 export function toolsText(tools: ToolStats): string {
   if (tools.calls === 0) return 'no tool calls'
@@ -89,7 +90,10 @@ export const SPAWN_TOOL = defineTool<SpawnArgs>({
     }
 
     const result = await spawn.run({ role, mode, task })
-    const cost = `[${role}/${result.mode}: ${toolsText(result.tools)} · in ${result.usage.input}, out ${result.usage.output}, cached ${result.usage.cacheRead}] [subagent:${result.id}]`
+    // The same shape a turn ends on: calls, then how long, then what it cost.
+    // The window reads this line back for the card.
+    const spent = result.costUsd === null ? '' : ` · ${moneyText(result.costUsd)}`
+    const cost = `[${role}/${result.mode}: ${toolsText(result.tools)} · ${elapsedText(result.ms)}${spent}] [subagent:${result.id}]`
     return { ok: true, summary: result.summary, content: `${result.summary}\n\n${cost}` }
   },
 })

@@ -140,9 +140,10 @@ function writtenPath(call: ToolCall): string | null {
 
 /**
  * A duration as the summary says it: `2m 14s` over a minute, seconds under one,
- * and `<1s` for a turn that came back before the first tick.
+ * and `<1s` for a turn that came back before the first tick. Exported because
+ * a subagent's card ends on the same line a turn does.
  */
-function elapsedText(ms: number): string {
+export function elapsedText(ms: number): string {
   if (ms < 1000) return '<1s'
   const seconds = Math.round(ms / 1000)
   if (seconds < 60) return `${seconds}s`

@@ -445,7 +445,31 @@ function modelEditor(id: string): HTMLElement {
     focusOn(`.model-edit-reset[data-model="${CSS.escape(id)}"]`)
   })
 
-  wrap.append(levels, costs, reset)
+  wrap.append(levels, costs, visionField(id, facts.vision), reset)
+  return wrap
+}
+
+/**
+ * Whether the model takes images. Three answers rather than a checkbox: an
+ * endpoint that published nothing has not said no, and a box left unticked
+ * would say it had.
+ */
+function visionField(id: string, value: boolean | undefined): HTMLElement {
+  const wrap = el('div', 'model-vision')
+  wrap.append(el('span', 'model-edit-label', 'Takes images'))
+  const pick = el('select', 'vision-select')
+  pick.dataset.model = id
+  for (const [option, label] of [['', 'not said'], ['yes', 'yes'], ['no', 'no']] as const) {
+    const choice = el('option', undefined, label)
+    choice.value = option
+    pick.append(choice)
+  }
+  pick.value = value === undefined ? '' : value ? 'yes' : 'no'
+  pick.addEventListener('change', () => {
+    writeOverride(id, { vision: pick.value === '' ? undefined : pick.value === 'yes' })
+    focusOn(`.vision-select[data-model="${CSS.escape(id)}"]`)
+  })
+  wrap.append(pick)
   return wrap
 }
 
@@ -472,7 +496,7 @@ function priceField(id: string, key: PriceKey, label: string, value: number | un
 }
 
 /** Fold one field into this model's corrections and redraw. */
-function writeOverride(id: string, patch: Partial<Record<'efforts' | PriceKey, Effort[] | number | undefined>>): void {
+function writeOverride(id: string, patch: Partial<Record<'efforts' | 'vision' | PriceKey, Effort[] | number | boolean | undefined>>): void {
   const next: ModelFacts = { ...overrides[id] }
   for (const [key, value] of Object.entries(patch)) {
     if (value === undefined || (Array.isArray(value) && value.length === 0)) delete next[key as keyof ModelFacts]

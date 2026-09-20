@@ -152,10 +152,10 @@ that wants less says so in the error.
 
 ## Model facts
 
-Three things about a model are worth knowing before a turn runs on it: which
-effort levels it takes, what it charges, and the most output it will produce.
-`readFacts`
-(`src/providers/model-facts.ts`) reads both out of the `/models` answer, and
+Four things about a model are worth knowing before a turn runs on it: which
+effort levels it takes, what it charges, the most output it will produce, and
+whether it takes images. `readFacts`
+(`src/providers/model-facts.ts`) reads them out of the `/models` answer, and
 `ModelFacts` in `src/core/config.ts` is what comes back. Prices are stored as US
 dollars per million tokens, because that is the unit vendors quote; every wire
 that carries a price sends dollars per token, and the multiplication happens
@@ -166,12 +166,13 @@ owner, a timestamp and sometimes a display name, and nothing about money or
 thinking. Servers that do answer those questions each picked their own field
 names, so the reader knows every spelling anyone has been seen to use:
 
-| shape | prices | effort levels | ceiling |
-|---|---|---|---|
-| a `capabilities` block | — | `capabilities.effort.<level>.supported` | `max_tokens` |
-| a `pricing` block | `pricing.prompt`, `.completion`, `.input_cache_read`, sometimes as strings | — | — |
-| reasoning metadata | — | `metadata.reasoning.supported_efforts` | — |
-| per-token costs | `model_info.input_cost_per_token` and friends, or the same names at the top level | — | — |
+| shape | prices | effort levels | ceiling | images |
+|---|---|---|---|---|
+| a `capabilities` block | — | `capabilities.effort.<level>.supported` | `max_tokens` | `capabilities.vision.supported`, or `vision` in a `capabilities` list |
+| a `pricing` block | `pricing.prompt`, `.completion`, `.input_cache_read`, sometimes as strings | — | — | — |
+| reasoning metadata | — | `metadata.reasoning.supported_efforts` | — | — |
+| per-token costs | `model_info.input_cost_per_token` and friends, or the same names at the top level | — | — | `supports_vision`, at the top level or in `model_info` |
+| an `architecture` block | — | — | — | `architecture.input_modalities`, or the older `modality: "text+image->text"` |
 
 A `capabilities` block is the one shape that states the levels outright, so it
 is read first. `none` is added to whatever it names, because on that wire the
@@ -185,6 +186,12 @@ which marks the model rather than guessing for it.
 A field that only says whether a model reasons at all, as `supported_parameters`
 does, is read by nothing: it never names the levels, and turning "reasons" into
 a list of seven would be inventing the answer.
+
+Images are the one fact with three states. A list of input modalities that
+does not name `image` is a no, and a flag set false is a no. An endpoint that
+mentions neither has not answered at all, and `vision` comes back undefined.
+The settings screen offers the same three, so a model nobody has described
+stays undescribed instead of being recorded as text only.
 
 ### When nothing describes a model
 

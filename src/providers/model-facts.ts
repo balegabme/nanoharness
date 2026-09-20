@@ -51,7 +51,38 @@ export function readFacts(entry: Record<string, unknown>): ModelFacts {
   if (output !== undefined) facts.output = output
   if (cacheRead !== undefined) facts.cacheRead = cacheRead
   if (cacheWrite !== undefined) facts.cacheWrite = cacheWrite
+
+  const vision = readVision(entry)
+  if (vision !== undefined) facts.vision = vision
   return facts
+}
+
+/**
+ * Whether the model takes images, in the spellings endpoints have been seen to
+ * use: a list of input modalities, a capabilities block or array, and the flag
+ * gateways set beside their prices.
+ *
+ * A `false` is an answer and is kept as one. An endpoint that names none of
+ * these has said nothing, so undefined reaches the settings screen as a
+ * question rather than as a no.
+ */
+function readVision(entry: Record<string, unknown>): boolean | undefined {
+  const architecture = object(entry.architecture)
+  const modalities = architecture?.input_modalities ?? entry.input_modalities
+  if (Array.isArray(modalities)) return modalities.some(one => one === 'image')
+  // `text+image->text`, the older spelling of the same list.
+  const modality = architecture?.modality
+  if (typeof modality === 'string') return modality.split('->')[0]?.split('+').includes('image') === true
+
+  const capabilities = entry.capabilities
+  if (Array.isArray(capabilities)) return capabilities.some(one => one === 'vision')
+  const declared = object(capabilities)?.vision
+  if (typeof declared === 'boolean') return declared
+  const supported = object(declared)?.supported
+  if (typeof supported === 'boolean') return supported
+
+  const flag = entry.supports_vision ?? object(entry.model_info)?.supports_vision
+  return typeof flag === 'boolean' ? flag : undefined
 }
 
 const PER_MILLION = 1_000_000

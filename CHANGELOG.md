@@ -27,9 +27,12 @@ the git log; none of the three is repeated here.
   The picker offers the levels the selected model takes, read from the endpoint;
   switching to a model with a narrower set clamps to the nearest level it has.
 - Each fetched model carries the effort levels it takes, its price per million
-  tokens, and the most output it will produce, wherever the endpoint's `/models`
-  answer says so. Every spelling of those fields anyone has been seen to use is
-  read, and nothing outside the configured endpoint is consulted. A model it
+  tokens, the most output it will produce, and whether it takes images,
+  wherever the endpoint's `/models` answer says so. Images have three states:
+  an endpoint that published nothing has not said no, and the setting offers
+  the same three, so a model nobody has described stays undescribed. Every
+  spelling of those fields anyone has been seen to use is read, and nothing
+  outside the configured endpoint is consulted. A model it
   describes with none of them is marked with a warning in settings and can be
   described by hand there. A typed answer outranks the endpoint, field by field,
   and survives the next fetch. Fetching the models of a provider already saved
@@ -182,12 +185,17 @@ the git log; none of the three is repeated here.
   for, and components that read only aliases, with one easing curve, three
   durations, and a single spacing and radius vocabulary. Dark only.
 - The brand mark is the window icon, the app icon, and the empty state.
+- The card a `spawn` leaves in the flow says what the subagent did without
+  being opened: the role and mode it ran as, how many tool calls it took, how
+  many worked, how long it ran and what it cost. It is the line a turn ends on,
+  written once and read back by the window.
 - A spend view, opened from the sidebar foot or from the session's own usage
   line: what was spent over the window, a bar per day with the cache hit rate
   drawn over it, and the same money broken down by folder, session, model,
   agent and by which part of the harness spent it. The chart puts cost and hit
   rate together because a day the bars jump while the line drops is a prompt
-  prefix that stopped matching.
+  prefix that stopped matching. **Clear** deletes the log after asking, and
+  takes all of it rather than the range on screen.
 - A renderer that fails to load writes a banner into the page instead of leaving
   a blank window.
 

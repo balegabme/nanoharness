@@ -39,6 +39,7 @@ export const IPC_CHANNELS = {
   secretsForget: 'secrets:forget',
   secretsCapture: 'secrets:capture',
   usageReport: 'usage:report',
+  usageClear: 'usage:clear',
   openExternal: 'shell:open-external',
 } as const
 
@@ -342,6 +343,12 @@ export interface NanoBridge {
    * today in whole local days; null is everything the log holds.
    */
   usageReport(days: number | null): Promise<UsageReport>
+  /**
+   * Delete the usage log and report on what is left, which is nothing. The
+   * answer comes back as a report rather than as void so the view redraws from
+   * the same channel it drew from before.
+   */
+  usageClear(days: number | null): Promise<UsageReport>
   /** Hand an https link to the OS browser. The window itself never navigates. */
   openExternal(url: string): Promise<void>
   /** Subscribe to live session events. Returns an unsubscribe function. */

@@ -6,7 +6,7 @@ its own, which is why the window can be rebuilt without touching the core.
 
 Files:
 - src/main/window.ts — BrowserWindow, the `app://` scheme, navigation lockdown
-- src/main/preload.ts — the context bridge, with ping, send, workspaces, sessions, rename, transcript paths, role, jobs, one subagent's stored conversation, agents, MCP status, secrets, config, permission answers, the usage report, external links, onEvent
+- src/main/preload.ts — the context bridge, with ping, send, workspaces, sessions, rename, transcript paths, role, jobs, one subagent's stored conversation, agents, MCP status, secrets, config, permission answers, the usage report and clearing it, external links, onEvent
 - src/renderer/index.ts — the shell, which session is open, the agent, model and effort chips, and the diff and spend panes
 - src/renderer/composer.ts — the composer in its two seats, and the height the flow clears
 - src/renderer/jobs.ts — the running subagents and the buffered stream of each one
@@ -247,9 +247,12 @@ Each model in the fetched list carries what the fetch found out about it: its
 price per million tokens, and the effort levels it takes. A model nobody has
 described is marked ⚠ and reads what is missing beside its id, because the mark
 has to say what to do about it, and what to do is the cogwheel at the end of
-the row, which opens the levels and the four prices for that model: in, out,
-and the two halves of the cache, which fall back to the input rate when they are
-left blank. The cogwheel stays lit while its fields are open. Typed
+the row, which opens the levels, the four prices for that model (in, out, and
+the two halves of the cache, which fall back to the input rate when they are
+left blank), and whether it takes images. The cogwheel stays lit while its
+fields are open. Images are a picker of three rather than a tick box: most
+endpoints publish nothing about it, and an unticked box would say those models
+cannot take one. Typed
 answers outrank the endpoint field by field and survive the next fetch, so
 correcting one wrong price does not throw away an effort list that was right.
 **Clear what I typed** goes back to whatever the endpoint said, which for a
@@ -377,6 +380,15 @@ lighting up under the pointer. The marker is stored in the transcript, so a
 session reopened tomorrow opens last week's subagents exactly the way it opens
 today's.
 
+A finished card says what the subagent did on a second line of its own head:
+the role and mode it ran as, how many tool calls it took, how many worked, how
+long it ran and what it cost. That is the shape a turn ends on, and it is the
+same line `tools/spawn.ts` writes for the model at the end of the result, read
+back rather than composed a second time. It sits on the head because the head
+is the only part of a folded card that shows, and the count is what tells a
+reader whether to open it: twelve calls and eighty are different pieces of
+work.
+
 A foreground spawn becomes a way in when the job starts rather than when it
 answers. Its card sits there running while the parent's turn is blocked behind
 it, and until the answer lands that card is the only thing in the window naming
@@ -401,10 +413,11 @@ dock and the subagent view swap places; the topbar grows a back button, which is
 the only way out, because the conversation is one step behind a subagent rather
 than somewhere else to navigate to.
 
-Above the flow sits what the tool card could not hold: the role and mode, the
-state, how long it has been going, the task as the parent phrased it, what the
-subagent has spent, how its tool calls went once it has finished, and a copy
-button for the result, which for a background job is nowhere else in the window.
+Above the flow sits what the card's one line could not hold: the state, how
+long it has been going, the task as the parent phrased it, what the subagent
+has spent, how its tool calls went, and a copy button for the result, which for
+a background job is nowhere else in the window. The role and mode are on both:
+the card is read in the flow, and this is read after leaving it.
 The role and mode are there because those two words decide what the subagent
 could see: a `clone` carries the parent's prompt, tools and history, a
 `distinct` one starts from its task and nothing else.
@@ -449,7 +462,9 @@ closing it, so back returns to the diff or the subagent that was there.
 
 The renderer does no arithmetic on it. The main process sends a finished report
 over `usage:report` and this view draws it, for the reason every number in the
-window has one home: `cost.md` has the report, the chart and the rules.
+window has one home: `cost.md` has the report, the chart and the rules. The
+Clear button beside the range picker is the one thing here that writes: it
+deletes the log after asking, and `cost.md` says what that takes with it.
 
 ## The answer, and the rest of the turn
 

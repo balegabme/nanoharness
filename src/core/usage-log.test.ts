@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { appendUsage, readUsage, USAGE_SCHEMA } from './usage-log.js'
+import { appendUsage, clearUsage, readUsage, USAGE_SCHEMA } from './usage-log.js'
 import type { UsageRecord } from './usage-log.js'
 
 /**
@@ -112,5 +112,31 @@ describe('a line that cannot say who spent it', () => {
     const log = await readUsage(path)
     expect(log.records).toHaveLength(0)
     expect(log.skipped).toBe(1)
+  })
+})
+
+describe('throwing the log away', () => {
+  it('leaves nothing behind to read', async () => {
+    await appendUsage(turn(), path)
+    await appendUsage(turn(), path)
+
+    await clearUsage(path)
+
+    const log = await readUsage(path)
+    expect(log.records).toHaveLength(0)
+    expect(log.skipped).toBe(0)
+  })
+
+  it('takes a log that was never written without complaining', async () => {
+    await expect(clearUsage(join(dir, 'never-written.jsonl'))).resolves.toBeUndefined()
+  })
+
+  it('leaves the file writable again, so the next turn is recorded', async () => {
+    await appendUsage(turn(), path)
+    await clearUsage(path)
+    await appendUsage(turn(), path)
+
+    const log = await readUsage(path)
+    expect(log.records).toHaveLength(1)
   })
 })

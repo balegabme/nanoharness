@@ -1,4 +1,5 @@
 // doc: docs/harness/agents.md
+import { costOf } from './cost.js'
 import { EventBus } from './event-bus.js'
 import { Session } from './session.js'
 import type { Tool } from './session.js'
@@ -69,6 +70,10 @@ export interface SpawnResult {
   usage: TurnUsage
   /** How much tool work went into the summary above. */
   tools: ToolStats
+  /** How long the parent waited for it, start to answer. */
+  ms: number
+  /** Priced at the model the parent is on, or null when nobody priced it. */
+  costUsd: number | null
   /** True when the user's stop ended it rather than the agent finishing. */
   stopped: boolean
 }
@@ -246,12 +251,22 @@ export function createSpawnHost(deps: SpawnDeps): SpawnHost {
     )
 
     live.set(slot.id, child)
+    const startedAt = Date.now()
     try {
       const usage = await child.run(request.task)
       const answer = lastAnswer(child.transcript)
       const stopped = child.interrupted
       await store(request, slot, child, stopped ? 'stopped' : 'done', stopped ? 'Stopped.' : answer, usage)
-      return { id: slot.id, summary: answer, mode: request.mode, usage, tools: child.toolStats, stopped }
+      return {
+        id: slot.id,
+        summary: answer,
+        mode: request.mode,
+        usage,
+        tools: child.toolStats,
+        ms: Date.now() - startedAt,
+        costUsd: deps.facts === undefined ? null : costOf(usage, deps.facts),
+        stopped,
+      }
     } catch (err) {
       await store(request, slot, child, 'failed', fail(err), child.spent)
       throw new SubagentFailure(err, child.spent, child.toolStats)

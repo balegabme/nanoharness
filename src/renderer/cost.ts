@@ -1,4 +1,5 @@
 // doc: docs/harness/cost.md
+import { ask } from './confirm.js'
 import { el, message, must } from './dom.js'
 import { moneyText } from './facts.js'
 import { hitRate, promptTokens } from './metrics.js'
@@ -19,6 +20,7 @@ const body = must<HTMLElement>('cost-stream')
 const windowLabel = must<HTMLElement>('cost-window')
 const rangeSelect = must<HTMLSelectElement>('cost-range')
 const rangeValue = must<HTMLElement>('cost-range-value')
+const clearButton = must<HTMLButtonElement>('cost-clear')
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
 
@@ -44,6 +46,30 @@ export function initCost(nh: NanoBridge): void {
     rangeValue.textContent = windowText(days)
     void refreshCost()
   })
+  clearButton.addEventListener('click', () => void clearLog())
+}
+
+/**
+ * Throw the log away, once the person has said so in as many words. The
+ * question names the whole log rather than the window on screen, because the
+ * whole log is what goes.
+ */
+async function clearLog(): Promise<void> {
+  if (bridge === null) throw new Error('renderer: the spend view was cleared before initCost')
+  const go = await ask({
+    title: 'Clear the usage log?',
+    detail: 'Every turn ever recorded is deleted, not just the days on screen. Spend goes back to nothing and there is no undo. Sessions and transcripts are untouched.',
+    confirmLabel: 'Clear',
+  })
+  if (!go) return
+  const mine = (asked += 1)
+  try {
+    const report = await bridge.usageClear(days)
+    if (mine === asked) draw(report)
+  } catch (err) {
+    if (mine !== asked) return
+    body.replaceChildren(el('p', 'cost-problem', `The usage log could not be cleared: ${message(err)}`))
+  }
 }
 
 /** Read the log and draw it. The view asks for this every time it is opened. */

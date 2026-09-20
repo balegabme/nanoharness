@@ -99,7 +99,9 @@ project is pre-1.0 and the log is a record rather than a database, so a bump
 skips the old lines and counts them instead of migrating them.
 
 Reading it back is `cost.md`: one report, drawn by the window and printed by
-`nh usage`.
+`nh usage`. `clearUsage` deletes the file, which is what the spend view's Clear
+button does. Nothing archives it first and nothing keeps a second copy, so a
+cleared log is gone.
 
 ## IPC
 

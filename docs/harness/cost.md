@@ -100,3 +100,14 @@ instead of dropped, for the same reason a deleted session keeps its row.
 The report is re-read every time the view is opened. The log is appended to by
 every turn in the window, so a view held open would be answering a question
 about ten minutes ago.
+
+## Clearing it
+
+**Clear** in the head of the view deletes the log. It asks first, and the
+question names the whole log rather than the range on screen, because the whole
+log is what goes: the range picker narrows the report and leaves the record
+alone. Nothing keeps a copy and there is no undo.
+
+Sessions and their transcripts survive it. The log sits beside them as a record
+of spend, and someone clearing a month of test turns is not asking for their
+conversations back.

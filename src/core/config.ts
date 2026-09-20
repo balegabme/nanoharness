@@ -75,6 +75,12 @@ export interface ModelFacts {
    * model that wants less says so in the error.
    */
   maxOutput?: number
+  /**
+   * Whether the model takes images alongside text. Absent means unanswered:
+   * the endpoint did not publish it and the user has not typed it, which is
+   * not the same as a no.
+   */
+  vision?: boolean
 }
 
 /** The priced halves of a model, in the order the settings screen shows them. */
@@ -116,6 +122,8 @@ export function resolveFacts(provider: ProviderRecord, model: string): ModelFact
   }
   const maxOutput = typed.maxOutput ?? reported.maxOutput
   if (maxOutput !== undefined) merged.maxOutput = maxOutput
+  const vision = typed.vision ?? reported.vision
+  if (vision !== undefined) merged.vision = vision
   return merged
 }
 
@@ -383,6 +391,9 @@ export function parseFacts(value: unknown): ModelFacts | undefined {
   const published = record.maxOutput
   const ceiling = typeof published === 'number' && Number.isFinite(published) ? Math.floor(published) : 0
   if (ceiling > 0) facts.maxOutput = ceiling
+  // A stored `false` is an answer and is kept. Anything that is not a boolean
+  // is dropped, so a truthy string cannot read as a yes.
+  if (typeof record.vision === 'boolean') facts.vision = record.vision
   return Object.keys(facts).length === 0 ? undefined : facts
 }
 
