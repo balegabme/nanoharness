@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { BASH_TOOL, GUARDED_BASH_TOOL } from './bash.js'
+import { ReadIndex } from '../core/read-index.js'
 import { workspaceGate } from '../core/scope.js'
 import type { AccessGate } from '../core/scope.js'
 import type { ToolResult } from '../core/types.js'
@@ -24,7 +25,7 @@ function openGate(root: string): AccessGate {
 }
 
 async function bash(command: string, cwd: string): Promise<ToolResult> {
-  return BASH_TOOL.run({ command }, { cwd, access: openGate(cwd) })
+  return BASH_TOOL.run({ command }, { cwd, access: openGate(cwd), reads: new ReadIndex() })
 }
 
 describe('a long command', () => {
@@ -65,7 +66,7 @@ describe('a command the gate has not approved', () => {
     const cwd = await mkdtemp(join(tmpdir(), 'nh-bash-'))
     // The default gate has nobody to ask, so it refuses every command rather
     // than let an unscreened shell run.
-    const result = await BASH_TOOL.run({ command: 'echo hello > note.txt' }, { cwd, access: workspaceGate(cwd) })
+    const result = await BASH_TOOL.run({ command: 'echo hello > note.txt' }, { cwd, access: workspaceGate(cwd), reads: new ReadIndex() })
 
     expect(result.ok).toBe(false)
     expect(result.summary).toContain('not run')
@@ -86,7 +87,7 @@ describe('a command the gate has not approved', () => {
     }
     // The planner's shell turns a write away on its own wording, before the
     // gate is asked at all.
-    const result = await GUARDED_BASH_TOOL.run({ command: 'echo hello > note.txt' }, { cwd, access: gate })
+    const result = await GUARDED_BASH_TOOL.run({ command: 'echo hello > note.txt' }, { cwd, access: gate, reads: new ReadIndex() })
 
     expect(result.ok).toBe(false)
     expect(result.summary).toContain('reads but does not write')

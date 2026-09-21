@@ -1340,6 +1340,12 @@ body {
   color: var(--nh-label-primary);
 }
 
+/* Commentary sits with the call it introduces. A half-sentence before a tool
+   card is not a block of its own and is not spaced off like one. */
+.block.assistant:not(.final) {
+  margin-bottom: var(--s2);
+}
+
 /*
  * The answer, as opposed to everything the turn said on its way to one. A turn
  * is mostly tool cards and half-sentences between them, so the answer gets a
@@ -1547,26 +1553,6 @@ details.block pre + pre {
   white-space: nowrap;
   text-overflow: ellipsis;
   color: var(--nh-label-caption);
-}
-
-/* A second row in the head of a spawn card: what the subagent did, on the one
-   part of the card that is visible while it is folded. `order` keeps it under
-   the state mark, which is a pseudo-element and so is always last in source. */
-.block.tool[data-subagent] > summary {
-  flex-wrap: wrap;
-  padding-bottom: 4px;
-}
-
-.tool-note {
-  order: 1;
-  flex-basis: 100%;
-  padding-left: 13px;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  color: var(--nh-label-caption);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
 }
 
 .tool > summary::after {

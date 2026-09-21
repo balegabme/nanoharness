@@ -3,9 +3,12 @@
 Files:
 - src/tools/bash.ts — shell command, cwd-scoped, capped output
 - src/tools/read.ts — offset/limit read with caps, parallel-safe
+- src/tools/search.ts — grep and glob, in process, no shell
+- src/tools/ignore.ts — what a .gitignore excludes from a walk
 - src/tools/write.ts — create/overwrite write
 - src/tools/edit.ts — literal replace in an existing file
 - src/tools/text.ts — whether a file's bytes are text a tool may rewrite
+- src/core/read-index.ts — what the session has read, and at which version
 - src/core/diff.ts — the unified diff a write or an edit hands back
 - src/tools/log-improvement.ts — append an entry to the improvement ledger
 
@@ -76,9 +79,174 @@ runs from the session root.
 Caps: 2000 lines, 2000 chars per line, 256 KB pre-read gate. Past a cap it
 errors explicitly with a continuation hint, never silently truncating.
 
+Every line comes back prefixed with its number, `12: const answer = 42`. The
+number is what an error, a diff and a person all refer to, and without it the
+model counts lines by hand and gets it wrong on long files. The description
+says the prefix is not part of the file, because a model that copies a line out
+of a read and into `old_string` with its number attached gets a match failure
+it cannot explain.
+
+A read of lines the session already has, of a file that has not changed since,
+comes back as a sentence naming the lines rather than the lines themselves. See
+"What the session has already read" below.
+
+An offset past the last line is an error saying how many lines the file has.
+Answering it with nothing reads as an empty file, and answering it from the
+index reads as lines the model already has.
+
 Several `read` calls in one message run together (`executeTools` in
 src/core/session.ts, via the tool's `parallel` flag), since reading changes
 nothing.
+
+## grep and glob
+
+`grep` searches file contents for a JavaScript regular expression and answers
+with `path:line:text`. `glob` finds files by path pattern and answers with a
+sorted list. Both are marked `parallel`, so a message that asks four questions
+about the codebase gets four answers in one round.
+
+Neither starts a process. A search through `bash` costs a shell startup, which
+is measured at roughly 0.9 seconds on Windows even for a command that does
+nothing, and a shell command cannot run beside another one. Searching is also
+the most common thing a session does before it knows what it is looking at, so
+that cost lands at the front of every task.
+
+Both are pure Node. The harness has no runtime dependencies, and bundling a
+search binary per platform would trade a search problem for a build problem.
+The walk is breadth-first over `readdir`, and the caps keep a search of a large
+repository from filling the context window: 20,000 files walked, 2 MB per file,
+200 matches, 500 paths, 400 characters of a matching line. Every cap that bites
+is named in the result.
+
+Three things keep it fast, all measured over a checkout of 19,859 files.
+
+The walk starts where the pattern does. A pattern is rooted at whatever
+directory precedes its first wildcard, and nothing outside that directory can
+match it, so that is where the walk begins. `grep`'s `include` narrows the walk
+as well as the matches, which is why its description asks for one. A search of
+`src/**/*.ts` went from 6,989 ms to 86 ms.
+
+Files are read 64 at a time. In a row, 2000 files took 7.8 seconds; 64 at a
+time, 1.1 seconds. A serial read spends most of the search waiting on the disk.
+
+Searches running at once share a walk. The entry lives only while the walk is
+running, so a search that starts after one finishes walks again and sees what
+is on disk then. Nothing is cached between searches, and no answer can be
+stale.
+
+A search with no `include` and no `path` reads every file the walk reaches, so
+what the walk reaches is the third thing that decides how fast it is.
+
+`.git`, `.hg`, `.svn` and `node_modules` are never walked. Past those it is the
+`.gitignore` files that decide: the one at the root, and every one the walk
+meets on its way down, since a subdirectory often carries its own.
+`src/tools/ignore.ts` reads them the way git does. A pattern with no slash in
+it matches a name at any depth. A leading or inner slash ties it to the
+directory its file sits in. A trailing slash means a directory and not a file
+of the same name, `**` crosses directories, and a `!` line re-includes what an
+earlier line excluded, which is what keeps `.env.*` from hiding a committed
+`.env.example`. The closest file decides, and inside one file the last matching
+line does.
+
+A line holding a character class or a backslash escape is counted rather than
+half-applied, and the count goes in the answer. Reading part of a pattern
+language is how a search misses a directory, or walks one it was told to skip,
+without saying so. Of the 74 rule lines in this project's own `.gitignore`, 73
+are applied.
+
+Both tools take `ignored: true` and walk everything the ignores excluded, for
+when the build output or a `.env` is the thing being looked for. Leaving it off
+by default is what makes a workspace opened at a parent directory usable. Over
+`PycharmProjects`, the directory this project sits in, a walk that honours the
+ignores reads 4,667 files in 0.8s and finishes; one that does not reaches the
+20,000-file cap in 1.2s and is cut off. A grep over the same tree costs 3.2s
+against 10.6s, and answers with three matches in the source rather than six
+spread across the source and its own compiled copy.
+
+Every answer says what it left out. One that found nothing names the
+directories never walked and how many paths the ignores excluded, so "no
+matches" can be told apart from "did not look". One that found something names
+only the exclusions, since the fixed list is noise on an answer that worked.
+
+Symlinks are not followed, in either kind. A link is the one entry that can
+leave the workspace or point back at its own parent, and the walk cannot tell
+those apart from the name.
+
+A pattern that is not a valid regular expression is an error naming the syntax
+problem. An empty result and a broken pattern read identically to a model, and
+only one of them means the code is not there. The walk cap is named for the
+same reason: a search that gave up after 20,000 files says so in the answer,
+and still reports what it found in the part it did walk. Answering "no matches"
+off a truncated walk is the one failure a search cannot be allowed, because it
+reads as proof the code is not there.
+
+`grep`'s `include` is matched against the file's name alone when it has no
+separator in it, so `*.ts` is every TypeScript file and `chat.ts` is that file
+wherever it sits. A model asks for `include: "chat.ts"` far more often than for
+the full path, and against the whole path that pattern matches nothing and
+reads as an answer. `grep`'s `path` takes one file as readily as a directory.
+
+A pattern with a separator in it, and every `glob` pattern, is measured against
+the path below whatever `path` named. That argument says where to look, so a
+pattern under it is written from there: `glob` with `path: "src/tools"` and
+`*.ts` answers with the files sitting in that directory. What comes back is
+still workspace-relative, because `read` and `edit` take that path and not a
+path relative to the search.
+
+The two used to disagree, and `path` was the argument that showed it. A pattern
+was measured against the workspace root however the search had been narrowed,
+so a workspace opened one directory above a project turned `glob("*", path:
+"project")` into an empty answer: every file is `project/...` there, and `*`
+stops at a separator. A real session asked exactly that, read the empty answer,
+and fell back to `ls` through `bash`, paying the shell startup that `glob`
+exists to avoid.
+
+An answer narrowed by `path` says what its paths are counted from. The pattern
+is written from the directory that was named and the answer is written from the
+root, and a reader who takes one for the other finds a directory inside another
+of the same name. The next session to ask that same question read
+`glob("*", path: "…/nanoharness")` answering `nanoharness/README.md`, concluded
+`nanoharness` held a second `nanoharness`, and spent four calls and half a
+minute on paths that were never there. The line is on narrowed searches only,
+since there is nothing to say when the walk started at the root, and nothing to
+say when `path` named a single file.
+
+The glob syntax: `**` crosses directories and also matches nothing, so
+`**/*.ts` finds `index.ts` at the root; `*` and `?` stop at a path separator;
+`{a,b}` is either; everything else is literal, so the dot in `*.ts` is a dot.
+
+## What the session has already read
+
+`src/core/read-index.ts` holds one map, absolute path to the file's
+modification time and size plus the line spans this session has been shown. It
+answers two questions.
+
+The first is whether a read is worth serving. A session that has already been
+shown lines 1 to 200 of an unchanged file, and asks for lines 40 to 80, gets a
+sentence saying the lines are already in the conversation and which ones. The
+bytes are in the transcript, the model is paying to keep them there, and
+sending them a second time buys nothing. The prompt asks for one wide read
+rather than overlapping slices for the same reason, and the index is what
+enforces it. A span already served has to contain the request. One that runs
+past it is served in full.
+
+The second is whether a rewrite is a guess. An edit or a whole-file write is
+written against a view of the file, so `edit` and `write` refuse a target this
+conversation has not read, and refuse one that has changed on disk since it was
+read. Creating a file is always allowed. A file the session wrote itself counts
+as current without a re-read, since the session knows what it put there; its
+spans are dropped, because the new content is on disk and in nobody's context.
+
+Version is modification time and size together. Either alone changes too
+rarely: a rewrite inside the same millisecond keeps the time, and a swap of two
+characters keeps the size.
+
+The index is per session and lives in memory. A session rebuilt from a stored
+transcript starts in a resumed state, which drops the read-before-write rule
+for files it has no record of: those reads are in the transcript the model can
+see and nowhere this index can. The freshness rule still applies to everything
+read after the rebuild, and `edit`'s exact-match requirement on `old_string` is
+what catches a stale view in the meantime.
 
 ## write
 
@@ -86,11 +254,15 @@ Creates parent dirs. For a change to an existing file, `edit` is the cheap path:
 a full rewrite pays for every unchanged line in output tokens, and a targeted
 replace does not.
 
+Overwriting a file this conversation has not read, or one that has moved since
+it was read, is refused.
+
 ## edit
 
-Replaces literal text in an existing UTF-8 file.
-Its description asks for a read first, unless the file was created or last edited
-in this session. `old_string` must appear exactly once unless `replace_all` is true; a missing or
+Replaces literal text in an existing UTF-8 file. The target has to have been
+read in this conversation and has to be unchanged since, unless the session
+created or last wrote it; the read index above owns that rule.
+`old_string` must appear exactly once unless `replace_all` is true; a missing or
 ambiguous match comes back as an error that says which. Matching is done with
 CRLF folded to LF and the file is written back with the line endings it came in
 with, so a model that copies what `read` showed it still matches a CRLF file.
@@ -137,8 +309,9 @@ directory is never written to. Entries land as `- [ ] title — detail` under a
 
 ## Scope
 
-Every path argument goes through an `AccessGate`: `read`, `write` and `edit`
-call `access.check` on the path before they touch it, and `bash` calls
+Every path argument goes through an `AccessGate`: `read`, `grep`, `glob`,
+`write` and `edit` call `access.check` on the path before they touch it, and a
+search walks only from the directory that check returns. `bash` calls
 `access.checkCommand` on the whole command, because a command is not a path and
 nothing reads it as one. What the question costs depends on which gate the
 session got: in the app it is a modal to the user, and everywhere else, in the

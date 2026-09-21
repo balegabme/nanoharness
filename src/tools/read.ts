@@ -1,5 +1,6 @@
 // doc: docs/harness/tools.md
-import { readFile, stat } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
+import { ReadIndex, versionOf } from '../core/read-index.js'
 import { defineTool } from '../core/session.js'
 import type { ArgsParse } from '../core/session.js'
 import type { ToolResult } from '../core/types.js'
@@ -30,7 +31,8 @@ export const READ_TOOL = defineTool<ReadArgs>({
   parallel: true,
   input: {
     name: 'read',
-    description: 'Read a file with offset/limit. Lines are capped at 2000 chars.',
+    description:
+      'Read a file with offset/limit. Each line is prefixed with its number, which is not part of the file: never copy a number into an edit. Lines are capped at 2000 chars. A file already read and unchanged comes back as a pointer to the lines already in this conversation, so read a wide window once rather than overlapping slices.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -43,7 +45,7 @@ export const READ_TOOL = defineTool<ReadArgs>({
     },
   },
   parse: parseArgs,
-  async run({ path: rel, offset: rawOffset, limit: rawLimit }, { access }): Promise<ToolResult> {
+  async run({ path: rel, offset: rawOffset, limit: rawLimit }, { access, reads }): Promise<ToolResult> {
     const offset = rawOffset === undefined ? 0 : Math.max(0, Math.floor(rawOffset))
     const limit = rawLimit === undefined ? MAX_LINES : Math.min(MAX_LINES, Math.max(1, Math.floor(rawLimit)))
 
@@ -53,19 +55,45 @@ export const READ_TOOL = defineTool<ReadArgs>({
     if (!allowed.ok) return { ok: false, summary: allowed.reason, content: allowed.reason, isError: true, prevented: true }
     const abs = allowed.path
 
-    const info = await stat(abs).catch(() => null)
-    if (!info) return { ok: false, summary: `read: ${rel}: no such file`, content: `read: ${rel}: no such file`, isError: true }
-    if (info.size > MAX_BYTES) {
-      return { ok: false, summary: `file is ${info.size} bytes; cap is ${MAX_BYTES}. Read with offset/limit or split the file`, content: `file is ${info.size} bytes; cap is ${MAX_BYTES}`, isError: true }
+    const version = await versionOf(abs)
+    if (version === null) {
+      reads.forget(abs)
+      return { ok: false, summary: `read: ${rel}: no such file`, content: `read: ${rel}: no such file`, isError: true }
     }
+    if (version.size > MAX_BYTES) {
+      return { ok: false, summary: `file is ${version.size} bytes; cap is ${MAX_BYTES}. Read with offset/limit or split the file`, content: `file is ${version.size} bytes; cap is ${MAX_BYTES}`, isError: true }
+    }
+
     const text = await readFile(abs, 'utf8')
     const lines = text.split('\n')
+    // Asking past the end is a mistake worth naming. Answering with no lines
+    // reads as an empty file, and answering from the index reads as lines the
+    // model already has.
+    if (offset >= lines.length) {
+      const why = `read: ${rel}: offset ${offset} is past the end; the file has ${lines.length} lines`
+      return { ok: false, summary: why, content: why, isError: true }
+    }
+    const end = Math.min(lines.length, offset + limit)
+    const span = { start: offset, end }
+
+    // Already in the conversation, and the file has not moved since. Sending
+    // the same bytes a second time buys nothing the model does not have.
+    const plan = reads.plan(abs, span, version)
+    if (plan.kind === 'known') {
+      const said = ReadIndex.knownText(rel, plan.spans)
+      return { ok: true, summary: `${rel} unchanged since it was read`, content: said }
+    }
+
     const slice = lines.slice(offset, offset + limit)
-    const truncated = slice.map(l => (l.length > MAX_CHARS_PER_LINE ? `${l.slice(0, MAX_CHARS_PER_LINE)}... [line truncated]` : l))
+    const numbered = slice.map((line, i) => {
+      const shown = line.length > MAX_CHARS_PER_LINE ? `${line.slice(0, MAX_CHARS_PER_LINE)}... [line truncated]` : line
+      return `${offset + i + 1}: ${shown}`
+    })
+    reads.served(abs, span, version)
     return {
       ok: true,
       summary: `${slice.length} lines shown, ${lines.length} total`,
-      content: truncated.join('\n'),
+      content: numbered.join('\n'),
     }
   },
 })

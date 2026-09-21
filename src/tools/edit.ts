@@ -1,5 +1,6 @@
 // doc: docs/harness/tools.md
 import { readFile, stat, writeFile } from 'node:fs/promises'
+import { versionOf } from '../core/read-index.js'
 import { defineTool } from '../core/session.js'
 import { diffBlock, statText, unifiedDiff } from '../core/diff.js'
 import { decodeText } from './text.js'
@@ -59,7 +60,7 @@ export const EDIT_TOOL = defineTool<EditArgs>({
   input: {
     name: 'edit',
     description:
-      'Replace literal text in an existing UTF-8 file. old_string must appear exactly once unless replace_all is true. Read the file first, unless you created or last edited it in this session.',
+      'Replace literal text in an existing UTF-8 file. old_string must appear exactly once unless replace_all is true. Read the file first, unless you created or last edited it in this session; the line numbers `read` prints are not part of the file, so do not copy them into old_string.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -73,7 +74,7 @@ export const EDIT_TOOL = defineTool<EditArgs>({
     },
   },
   parse: parseArgs,
-  async run({ path: rel, old_string, new_string, replace_all }, { access }): Promise<ToolResult> {
+  async run({ path: rel, old_string, new_string, replace_all }, { access, reads }): Promise<ToolResult> {
     const allowed = await access.check(rel, 'write')
     if (!allowed.ok) return { ...failed(allowed.reason), prevented: true }
     const abs = allowed.path
@@ -84,6 +85,13 @@ export const EDIT_TOOL = defineTool<EditArgs>({
       return failed(`edit: ${rel}: ${info.message}`)
     }
     if (!info.isFile()) return failed(`edit: ${rel}: not a regular file`)
+
+    // An edit is written against a view of the file. If nobody in this
+    // conversation has that view, or the file moved on since they had it, the
+    // edit is a guess and the guess is what overwrites somebody's work.
+    const before = await versionOf(abs)
+    const may = reads.mayWrite(abs, before, `edit: ${rel}:`)
+    if (!may.ok) return failed(may.reason)
 
     let raw: string
     try {
@@ -111,6 +119,7 @@ export const EDIT_TOOL = defineTool<EditArgs>({
     } catch (err) {
       return failed(`could not write ${rel}: ${err instanceof Error ? err.message : String(err)}`)
     }
+    reads.wrote(abs, await versionOf(abs))
     // What changed, rather than how many times something matched. The window
     // opens it as a diff and the model reads the same lines.
     const diff = unifiedDiff(rel, content, edited)

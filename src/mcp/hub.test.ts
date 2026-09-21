@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { McpHub, mcpBlock } from './hub.js'
+import { ReadIndex } from '../core/read-index.js'
 import { workspaceGate } from '../core/scope.js'
 import type { McpServer } from './config.js'
 
@@ -149,14 +150,14 @@ describe('an MCP server over stdio', () => {
 
   it('calls a tool and returns its text', async () => {
     const echo = hub.tools()[0]
-    const result = await echo?.run({ phrase: 'hello' }, { cwd: dir, access: workspaceGate(dir) })
+    const result = await echo?.run({ phrase: 'hello' }, { cwd: dir, access: workspaceGate(dir), reads: new ReadIndex() })
     expect(result?.ok).toBe(true)
     expect(result?.content).toBe('you said hello')
   })
 
   it('hands a tool-domain failure back for the model to read', async () => {
     const explode = hub.tools()[1]
-    const result = await explode?.run({}, { cwd: dir, access: workspaceGate(dir) })
+    const result = await explode?.run({}, { cwd: dir, access: workspaceGate(dir), reads: new ReadIndex() })
     expect(result?.ok).toBe(false)
     expect(result?.isError).toBe(true)
     // Verbatim: it is the model's to act on, not the harness's to reword.

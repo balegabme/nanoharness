@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { AGENTS, agentPrompt } from './agents.js'
 import { EventBus } from './event-bus.js'
+import { ReadIndex } from './read-index.js'
 import { JobRegistry } from './jobs.js'
 import type { JobState } from './jobs.js'
 import { Session } from './session.js'
@@ -564,7 +565,7 @@ describe('the planner\'s shell', () => {
   it('runs a command that reads and refuses the same command with a redirect', async () => {
     const cwd = await workspace()
     try {
-      const ctx = { cwd, access: openGate(cwd) }
+      const ctx = { cwd, access: openGate(cwd), reads: new ReadIndex() }
 
       const read = await GUARDED_BASH_TOOL.run({ command: 'echo hello' }, ctx)
       expect(read.ok).toBe(true)

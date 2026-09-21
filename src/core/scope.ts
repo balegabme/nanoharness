@@ -13,9 +13,8 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
  * This module resolves the paths a tool is handed. It does not read paths out
  * of a shell command: a command line is not a path list, and a parser for one
  * reads a script body, a sed address or an HTML close tag as a path. The shell
- * runs from the session root and is not screened. That is
- * the same trade deepseek-harness makes, and `docs/harness/sessions.md` says
- * what it costs.
+ * runs from the session root and is not screened.
+ * `docs/harness/sessions.md` says what that costs.
  */
 
 export type AccessCheck =

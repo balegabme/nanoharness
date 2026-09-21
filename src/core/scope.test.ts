@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { ReadIndex } from './read-index.js'
 import { nativePath, workspaceGate } from './scope.js'
 import { READ_TOOL } from '../tools/read.js'
 
@@ -52,7 +53,7 @@ describe.runIf(onWindows)('read, given what Git Bash printed', () => {
     // `/c/Users/…/nh-scope-x/note.txt`: the drive letter lowercased and the
     // colon gone, exactly as the shell writes it.
     const asShell = `/${root[0]?.toLowerCase() ?? 'c'}${root.slice(2).replace(/\\/g, '/')}/note.txt`
-    const result = await READ_TOOL.run({ path: asShell }, { cwd: root, access })
+    const result = await READ_TOOL.run({ path: asShell }, { cwd: root, access, reads: new ReadIndex() })
 
     expect(result.ok).toBe(true)
     expect(result.content).toContain('the file is here')
@@ -62,7 +63,7 @@ describe.runIf(onWindows)('read, given what Git Bash printed', () => {
   it('still refuses that spelling when it points outside the workspace', async () => {
     const root = await mkdtemp(join(tmpdir(), 'nh-scope-'))
     const access = workspaceGate(root)
-    const result = await READ_TOOL.run({ path: '/c/Windows/System32/drivers/etc/hosts' }, { cwd: root, access })
+    const result = await READ_TOOL.run({ path: '/c/Windows/System32/drivers/etc/hosts' }, { cwd: root, access, reads: new ReadIndex() })
 
     expect(result.ok).toBe(false)
     expect(result.summary).toContain('scoped to')

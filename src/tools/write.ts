@@ -1,6 +1,7 @@
 // doc: docs/harness/tools.md
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
+import { versionOf } from '../core/read-index.js'
 import { defineTool } from '../core/session.js'
 import { diffBlock, statText, unifiedDiff } from '../core/diff.js'
 import { decodeText } from './text.js'
@@ -33,7 +34,7 @@ async function previous(abs: string): Promise<string | null> {
 export const WRITE_TOOL = defineTool<WriteArgs>({
   input: {
     name: 'write',
-    description: 'Create or overwrite a file with the given content.',
+    description: 'Create or overwrite a file with the given content. Overwriting a file this conversation has not read is refused: read it first, or use edit.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -45,10 +46,15 @@ export const WRITE_TOOL = defineTool<WriteArgs>({
     },
   },
   parse: parseArgs,
-  async run({ path: rel, content }, { access }) {
+  async run({ path: rel, content }, { access, reads }) {
     const allowed = await access.check(rel, 'write')
     if (!allowed.ok) return { ok: false, summary: allowed.reason, content: allowed.reason, isError: true, prevented: true }
     const abs = allowed.path
+    // Creating a file is always allowed. Replacing the whole of one nobody
+    // read, or one that has changed since they did, throws away content this
+    // conversation never saw.
+    const may = reads.mayWrite(abs, await versionOf(abs), `write: ${rel}:`)
+    if (!may.ok) return { ok: false, summary: may.reason, content: may.reason, isError: true }
     // Read before writing, so an overwrite can say what it replaced. Only a
     // file that is not there diffs against nothing; one that is there and
     // cannot be read is not a new file, and reporting it as one would tell the
@@ -56,6 +62,7 @@ export const WRITE_TOOL = defineTool<WriteArgs>({
     const before = await previous(abs)
     await mkdir(dirname(abs), { recursive: true })
     await writeFile(abs, content, 'utf8')
+    reads.wrote(abs, await versionOf(abs))
     const bytes = Buffer.byteLength(content, 'utf8')
     if (before === null) {
       const done = `wrote ${rel} (${bytes} bytes, replacing content that could not be read as text)`

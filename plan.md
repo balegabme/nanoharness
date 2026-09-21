@@ -8,8 +8,8 @@ Minimal, opinionated coding harness whose twin obsessions are **token efficiency
 **Status:** planning complete. The build order is §17; the research behind each
 section is cited from the section that uses it.
 
-**Intent (why this exists):** distilled from years of daily use of Claude Code, opencode,
-pi, oh-my-pi, deepseek harness and others — each had strengths the others lacked. This is
+**Intent (why this exists):** distilled from years of daily use of other coding
+harnesses — each had strengths the others lacked. This is
 the personal synthesis, purpose-built for coding: minimal codebase, maximal token
 efficiency, self-knowledge via the doc map, and a self-improvement loop.
 
@@ -36,7 +36,7 @@ RAG/indexing infra. "Minimal" means minimal *codebase and token spend*, not runt
 | License | Apache-2.0 (patent grant, contribution-friendly; MIT acceptable if preferred) |
 | Distribution | GitHub repo + npm package (core + `nh` CLI); tagged releases also publish desktop installers (electron-builder: NSIS + portable exe, dmg, AppImage) |
 | UI | Desktop app (**Electron**): harness core in the main process (pure TS — no sidecar, no second language); renderer = local web view over typed IPC. **No HTTP listener in v1** |
-| Design language | Own cozy-professional system — **dark-only** (no light theme), warm grays, accent, mono-first, keyboard-first (§13). The Claude Code report is an ergonomics reference only, not a visual spec to copy |
+| Design language | Own cozy-professional system — **dark-only** (no light theme), warm grays, accent, mono-first, keyboard-first (§13). The interaction report under `docs/research/` is an ergonomics reference only, not a visual spec to copy |
 | Agents | 3 roles: **builder** (write), **planner** (no write), **harness-editor** (doc-fed). No rigid orchestration: any agent may summon the others as subagents; user can switch the session's active agent mid-session |
 | Docs mechanic | docs/harness/*.md = feature documentation; every source file header links to its doc; docs link back to files. Navigation layer, kept in sync |
 | Flaw loop | Agents append friction (tool errors, things not working, too-many-tool-calls) to an improvement md via a dedicated tool; surfaced in final answer; on "fix" → harness-editor subagent runs in background |
@@ -328,8 +328,17 @@ Practical trap: never assume `reasoning_effort` or `tool_choice` are portable.
 **Provider retry policy:** exponential backoff + jitter on 429/5xx (honor `Retry-After`),
 bounded retries per turn, then a user-visible error — never silent degradation.
 
-**Settings surface:** providers list (+test), default model + effort, per-agent
-model/effort, MCP servers, skills dir, snippets dirs, hooks on/off, image auto-downscale.
+**Subscription plans (plan: `docs/plans/subscription-usage.md`):** a separate module from
+provider spend. Spend is dollars, per turn, from the usage log; a plan is a percentage of
+an allowance, account-wide, read from the vendor. Windows differ per vendor (5-hour /
+daily / weekly / monthly), so each gets its own adapter under `src/subscription/` behind
+one normalised `PlanSnapshot`, and vendor addresses are confined to those files so the
+provider layer stays vendor-free. Ships with opencode and Command Code; z.ai next. The two
+numbers are shown side by side and never summed.
+
+**Settings surface:** providers list (+test), subscription plans (+key), default model +
+effort, per-agent model/effort, MCP servers, skills dir, snippets dirs, hooks on/off,
+image auto-downscale.
 
 ---
 
@@ -354,11 +363,11 @@ Every prompt assembly stage emits a `prompt_injection` event → collapsible car
 
 ## 13. UI (desktop app) & design system
 
-**Reference, not spec:** `docs/research/Claude Code Visual & Interaction Design Spec for Web
-Port.md` (~65% confidence) is consulted for *interaction ergonomics only* — keyboard map,
+**Reference, not spec:** the interaction design report under `docs/research/`
+(~65% confidence) is consulted for *interaction ergonomics only* — keyboard map,
 queueing semantics, permission-dialog pattern, component behavior. The visual identity is
 ours: an original cozy-professional token set defined in `docs/harness/ui.md`. No
-color-for-color, type-for-type, or asset reproduction of Claude Code; no mirroring of its
+color-for-color, type-for-type, or asset reproduction of what it describes; no mirroring of its
 token names.
 
 **Shell: Electron.** Harness core runs in the main process (pure TS — direct Node `fs` /

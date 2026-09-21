@@ -4,8 +4,7 @@
  * Whether a file's bytes are text a tool may rewrite, and the text when they
  * are. A lossy decode would turn a byte it cannot read into U+FFFD, write that
  * replacement back and call it an edit, so invalid UTF-8 is refused here the
- * same way a NUL byte is. This is the reference behaviour in `deepseek-harness`
- * (`readForEdit`).
+ * same way a NUL byte is.
  *
  * Both tools that rewrite a file ask this, and the answer has to be the same
  * for both: `edit` refuses the file, and `write` overwrites it but says it has

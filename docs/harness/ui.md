@@ -380,14 +380,18 @@ lighting up under the pointer. The marker is stored in the transcript, so a
 session reopened tomorrow opens last week's subagents exactly the way it opens
 today's.
 
-A finished card says what the subagent did on a second line of its own head:
-the role and mode it ran as, how many tool calls it took, how many worked, how
-long it ran and what it cost. That is the shape a turn ends on, and it is the
-same line `tools/spawn.ts` writes for the model at the end of the result, read
-back rather than composed a second time. It sits on the head because the head
-is the only part of a folded card that shows, and the count is what tells a
-reader whether to open it: twelve calls and eighty are different pieces of
-work.
+A finished card says what the subagent did on a line under it: the role and
+mode it ran as, how many tool calls it took, how many worked, how long it ran
+and what it cost. It is the same line `tools/spawn.ts` writes for the model at
+the end of the result, read back rather than composed a second time.
+
+The line is drawn where a turn's own total is drawn, under the thing it is
+about, in the same dim `block summary` the answer ends on. Inside the card's
+head it was a second row competing with the tool name for one line, and a
+subagent's total is the same kind of fact as a turn's, so it reads in the same
+place and the same weight. It stays visible while the card is folded, which is
+what tells a reader whether to open it: twelve calls and eighty are different
+pieces of work.
 
 A foreground spawn becomes a way in when the job starts rather than when it
 answers. Its card sits there running while the parent's turn is blocked behind
@@ -475,6 +479,15 @@ commentary above it. The mark goes on when the turn *finishes* and not while it
 streams, because a block that turns out to be followed by another tool call was
 never the answer; on a replayed transcript the same rule reads as "text with no
 tool calls". A stopped turn has no answer and gets no mark.
+
+Those half-sentences are drawn without the whitespace the model wrote around
+them. A block body is `pre-wrap`, so text that ends in a blank line draws a
+blank line, and a model that writes "Let me read both." and two newlines before
+calling a tool was putting more empty space between two cards than the sentence
+itself took up. Text that was only whitespace leaves no block at all, where it
+used to leave a labelled empty one. What survives sits close to the call it
+introduces, since commentary belongs with its tool card rather than spaced off
+as a block of its own.
 
 ## Right-click
 

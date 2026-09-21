@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { McpHub } from './hub.js'
+import { ReadIndex } from '../core/read-index.js'
 import { workspaceGate } from '../core/scope.js'
 import type { AddressInfo } from 'node:net'
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
@@ -149,7 +150,7 @@ describe('a server over Streamable HTTP', () => {
 
   it('calls a tool', async () => {
     const lookup = hub.tools()[0]
-    const result = await lookup?.run({ term: 'kettle' }, { cwd: dir, access: workspaceGate(dir) })
+    const result = await lookup?.run({ term: 'kettle' }, { cwd: dir, access: workspaceGate(dir), reads: new ReadIndex() })
     expect(result?.ok).toBe(true)
     expect(result?.content).toBe('found kettle')
   })

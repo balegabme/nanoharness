@@ -15,8 +15,8 @@ the git log; none of the three is repeated here.
 ### Added
 
 **Core**
-- Session loop with an event bus, typed IPC, and the `bash`, `read`, `write` and
-  `edit` tools.
+- Session loop with an event bus, typed IPC, and the `bash`, `read`, `grep`,
+  `glob`, `write` and `edit` tools.
 - Independent tool calls in one assistant message run together where the tool
   declares itself read-only, and in the model's order either way.
 - OpenAI-compatible and Anthropic-compatible streaming providers, as wire
@@ -52,6 +52,60 @@ the git log; none of the three is repeated here.
   a repeated call is refused and the turn ends with a note; a run of failures
   appends a nudge to the result and carries on.
 - `src/core/roots.ts` separates the workspace root from the harness root.
+- `grep` and `glob` search the workspace without a shell. Searching used to
+  mean a `bash` command, which costs a process, runs alone, and on Windows
+  takes most of a second before it has looked at anything. These run in the
+  harness, and several of them in one message run at the same time. Both skip
+  `.git`, `node_modules` and whatever a `.gitignore` excludes, never follow a
+  symlink, and name every cap and skip they applied, so an empty answer says
+  whether it looked. A pattern that will not compile is an error
+  rather than no matches. A pattern is rooted at whatever directory precedes
+  its first wildcard and the walk starts there; files are read 64 at a time;
+  and searches running at once share a walk while it is running. Measured over
+  a checkout of 19,859 files, one search went from 6,989 ms to 86 ms.
+  `grep`'s `include` matches the file name when it has no separator in it, so
+  `*.ts` and `chat.ts` both find what they name, and its `path` takes one file
+  as readily as a directory. A walk that stops at the 20,000-file cap says so
+  and reports what it found on the way, where it used to answer no matches
+  having read nothing.
+- The walk honours every `.gitignore` it meets, not only the one at the root,
+  and reads the pattern syntax rather than the plain names in it: wildcards,
+  anchors, directory-only rules, and `!` lines that re-include what an earlier
+  line excluded. Of the 74 rule lines in this project's own `.gitignore`, 73
+  are applied, and `.env.*` no longer hides the committed
+  `.env.example`. This is what a workspace opened at a parent directory rests
+  on: over the directory this project sits in, a walk now reads 4,667 files in
+  0.8s and finishes, where it used to reach the 20,000-file cap and be cut off.
+  Both tools take `ignored: true` to search the excluded files anyway, for when
+  the build output or a `.env` is what is wanted, and an answer that left
+  something out says how much.
+- A pattern is measured against the directory `path` named, where it used to be
+  measured against the workspace root however the search had been narrowed.
+  `glob("*", path: "project")` from a workspace one directory above that
+  project answered with nothing, since every file there is `project/...` and a
+  single star stops at a separator; `grep`'s `include` lost a pattern with a
+  separator in it the same way. Paths still come back workspace-relative, which
+  is what `read` and `edit` take, and an answer narrowed by `path` now says so:
+  a search of `nanoharness` answering `nanoharness/README.md` had been read as
+  one directory holding another of the same name.
+- A half-sentence between two tool cards is drawn without the whitespace the
+  model wrote around it, and sits with the call it introduces. A block body is
+  `pre-wrap`, so commentary ending in a blank line drew a blank line, and the
+  gap between two cards came out wider than the sentence in it; text that was
+  only whitespace drew a labelled empty block.
+- `read` numbers every line it shows, and says the numbers are not part of the
+  file. An offset past the last line is an error saying how long the file is,
+  where it used to come back as no lines at all.
+- The session tracks what it has read. Asking again for lines of a file that
+  has not changed returns a pointer to the lines already in the conversation
+  instead of a second copy of them; the transcript was being paid for twice,
+  once per overlapping slice. A wider read already in hand covers a narrower
+  one; a read that runs past what was served is served.
+- `edit` and `write` refuse a file this conversation has not read, and one that
+  has changed on disk since it was read. Both are a rewrite of content nobody
+  in the conversation has seen. Creating a file is unaffected, a session may
+  keep editing what it wrote itself, and a session resumed from a stored
+  transcript is not held to the rule for files it read before the resume.
 
 **Permissions**
 - Auto-approve mode, for the run nobody is watching: a task that goes for an
@@ -188,7 +242,8 @@ the git log; none of the three is repeated here.
 - The card a `spawn` leaves in the flow says what the subagent did without
   being opened: the role and mode it ran as, how many tool calls it took, how
   many worked, how long it ran and what it cost. It is the line a turn ends on,
-  written once and read back by the window.
+  written once and read back by the window, and it is drawn under the card in
+  that same line, rather than as a second row inside the card's head.
 - A spend view, opened from the sidebar foot or from the session's own usage
   line: what was spent over the window, a bar per day with the cache hit rate
   drawn over it, and the same money broken down by folder, session, model,

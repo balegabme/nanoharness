@@ -9,7 +9,7 @@
   "scripts": {
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint .",
+    "lint": "eslint src scripts eslint.config.js",
     "doc-check": "pnpm build && node out/cli/index.js doc-check",
     "build": "tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
     "start": "pnpm build && electron ."

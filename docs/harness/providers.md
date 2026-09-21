@@ -80,7 +80,7 @@ derived from a date or a package version.
 
 The key goes out as both `x-api-key` and `Authorization: Bearer`. Anthropic's
 own API reads the first; several Anthropic-compatible gateways read the second
-(it is the same token Claude Code passes as `ANTHROPIC_AUTH_TOKEN`). Sending
+(the same token they document as `ANTHROPIC_AUTH_TOKEN`). Sending
 both means the endpoint's convention does not have to be guessed at.
 
 Five differences matter, and each is handled at the boundary rather than

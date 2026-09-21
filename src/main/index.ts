@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { createProvider } from '../providers/factory.js'
 import { BASH_TOOL, GUARDED_BASH_TOOL, warmShell } from '../tools/bash.js'
 import { READ_TOOL } from '../tools/read.js'
+import { GLOB_TOOL, GREP_TOOL } from '../tools/search.js'
 import { WRITE_TOOL } from '../tools/write.js'
 import { EDIT_TOOL } from '../tools/edit.js'
 import { LOG_IMPROVEMENT_TOOL } from '../tools/log-improvement.js'
@@ -317,6 +318,8 @@ function jobsFor(sender: WebContents): JobRegistry {
 const TOOLS: Record<string, Tool> = {
   bash: BASH_TOOL,
   read: READ_TOOL,
+  grep: GREP_TOOL,
+  glob: GLOB_TOOL,
   write: WRITE_TOOL,
   edit: EDIT_TOOL,
   log_improvement: LOG_IMPROVEMENT_TOOL,

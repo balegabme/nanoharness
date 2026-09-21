@@ -190,6 +190,17 @@ export class ChatView {
   }
 
   /**
+   * A line directly under a block rather than at the end of the flow, for the
+   * case where the two belong together and something else has been appended
+   * since. The round owns it the way it owns the block, so clearing the round
+   * takes both.
+   */
+  private appendAfter(node: HTMLElement, after: HTMLElement): void {
+    after.insertAdjacentElement('afterend', node)
+    this.roundNodes.push(node)
+  }
+
+  /**
    * The one moving thing in the view while a turn runs, and nothing at all when
    * one is not: three dots and the elapsed time, at the end of the flow where
    * the next answer will appear.
@@ -455,9 +466,8 @@ Every turn added up, subagents included.${share}${harness}${note}`
    * in a block that a rollback cannot take back.
    */
   private startRound(): void {
+    this.sealAssistant()
     this.roundNodes = []
-    this.assistantBody = null
-    this.assistantBlock = null
     this.thinkingBody = null
     this.thinkingCard = null
   }
@@ -487,8 +497,7 @@ Every turn added up, subagents included.${share}${harness}${note}`
 
   /** A new turn starts fresh: the previous turn's blocks are done growing. */
   startTurn(): void {
-    this.assistantBody = null
-    this.assistantBlock = null
+    this.sealAssistant()
     this.thinkingBody = null
     this.thinkingCard = null
     this.toolCards.clear()
@@ -512,6 +521,31 @@ Every turn added up, subagents included.${share}${harness}${note}`
    * the last block. Marked at the end of the turn rather than while it streams,
    * because a block followed by another tool call was never the answer.
    */
+  /**
+   * The end of a piece of assistant text, and the block it leaves behind.
+   *
+   * Deltas arrive with whatever whitespace the model wrote around them, and
+   * `.body` is `pre-wrap`, so a trailing blank line is a blank line on screen:
+   * text that ends `.
+
+` between two tool calls draws a gap the width of the
+   * commentary itself. Text that was only whitespace leaves no block at all.
+   */
+  private sealAssistant(): HTMLElement | null {
+    const body = this.assistantBody
+    const block = this.assistantBlock
+    this.assistantBody = null
+    this.assistantBlock = null
+    if (body === null) return block
+    const text = (body.textContent ?? '').trim()
+    if (text !== '') {
+      body.textContent = text
+      return block
+    }
+    block?.remove()
+    return null
+  }
+
   private markFinal(wrapper: HTMLElement | null): void {
     if (wrapper === null) return
     wrapper.classList.add('final')
@@ -533,9 +567,9 @@ Every turn added up, subagents included.${share}${harness}${note}`
       const body = withoutMarker(text)
       const spent = subagentCost(body)
       card.append(el('pre', undefined, spent === null ? body : body.replace(SUBAGENT_COST, '').trim()))
-      // The head is the only part of a folded card that shows, and the count
-      // is what tells a reader whether to open it.
-      if (spent !== null) summary?.append(el('span', 'tool-note', spent))
+      // What the subagent came to goes under its card, in the flow, the same
+      // line a turn's own total is drawn in under the answer.
+      if (spent !== null) this.appendAfter(el('div', 'block summary', spent), card)
     } else card.append(el('pre', undefined, diff === null ? text : withoutDiff(text)))
     // A foreground spawn was already linked when its job started; `linkCard`
     // leaves that one alone.
@@ -582,7 +616,7 @@ Every turn added up, subagents included.${share}${harness}${note}`
       if (message.thinking !== undefined && message.thinking !== '') this.thinkingBlock(message.thinking)
       if (message.text.trim() !== '') {
         const pair = this.blockPair('assistant', 'assistant')
-        pair.body.textContent = message.text
+        pair.body.textContent = message.text.trim()
         // An assistant message with text and no tool calls is where a turn
         // stopped, which is the same rule the live path uses: the loop runs
         // until the model asks for nothing more.
@@ -627,8 +661,7 @@ Every turn added up, subagents included.${share}${harness}${note}`
       case 'tool_call':
         // Text followed by a tool call was commentary, not the answer.
         this.toolCards.set(event.call.id, this.toolCard(event.call.name, event.call.args))
-        this.assistantBody = null
-        this.assistantBlock = null
+        this.sealAssistant()
         break
       case 'tool_result': {
         const card = this.toolCards.get(event.callId)
@@ -657,8 +690,7 @@ Every turn added up, subagents included.${share}${harness}${note}`
         break
       case 'session.finished':
         if (this.thinkingCard !== null) this.thinkingCard.open = false
-        this.markFinal(this.assistantBlock)
-        this.assistantBlock = null
+        this.markFinal(this.sealAssistant())
         break
       case 'session.note':
         // Why a turn ended the way it did, in the flow rather than in a log.

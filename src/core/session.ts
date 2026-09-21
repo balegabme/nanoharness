@@ -7,6 +7,7 @@ import { costOf, moneyText } from './cost.js'
 import { workspaceGate } from './scope.js'
 import type { AccessGate } from './scope.js'
 import { emptyToolStats, emptyUsage } from './types.js'
+import { ReadIndex } from './read-index.js'
 import { SecretVault } from './secrets.js'
 import type { ChatMessage, PreventedCall, SessionNote, ThinkingBlock, ToolCall, ToolInput, ToolResult, ToolStats, TurnUsage } from './types.js'
 import type { SpawnHost } from './spawn.js'
@@ -20,6 +21,12 @@ import type { JobRegistry } from './jobs.js'
 export interface ToolContext {
   cwd: string
   access: AccessGate
+  /**
+   * What this session has already looked at. `read` asks it whether a span is
+   * already in the conversation; `edit` and `write` ask it whether the file
+   * they are about to rewrite was ever read, and whether it has moved since.
+   */
+  reads: ReadIndex
   /** Present when this session may summon subagents. A subagent gets no host. */
   spawn?: SpawnHost
   /** Present when this session *is* a background job, so it can report progress. */
@@ -230,6 +237,7 @@ export class Session {
   readonly access: AccessGate
   private readonly secrets: SecretVault
   private readonly messages: ChatMessage[] = []
+  private readonly reads: ReadIndex
   private readonly journal: SessionNote[] = []
   private turn = 0
   /** The last tool call and how many times in a row it has been asked for. */
@@ -304,6 +312,9 @@ export class Session {
   ) {
     this.bus = bus ?? new EventBus()
     this.access = options.access ?? workspaceGate(options.cwd)
+    // A session rebuilt from stored messages inherits the reads it cannot see:
+    // they are in the transcript the model reads and in no structure here.
+    this.reads = new ReadIndex((options.history?.length ?? 0) > 0)
     this.secrets = options.secrets ?? new SecretVault()
     this.messages.push({ role: 'system', content: options.systemPrompt })
     // A resumed session keeps its running total: those turns were paid for, and
@@ -966,6 +977,7 @@ export class Session {
       return await tool.run(args, {
         cwd: this.options.cwd,
         access: this.access,
+        reads: this.reads,
         ...(this.options.spawn === undefined ? {} : { spawn: this.options.spawn }),
         ...(this.options.job === undefined ? {} : { job: this.options.job }),
       })
