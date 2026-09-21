@@ -267,6 +267,12 @@ export interface JudgeOptions {
   rules?: ApprovalRules
   effort?: Effort
   /**
+   * The judge's own conversation id, for endpoints that asked for one. It is
+   * not the session's: the judge asks its own question off its own prompt, and
+   * two histories filed under one id are two histories fighting over one cache.
+   */
+  conversationId?: string
+  /**
    * How long one rung gets before the ladder moves on. The turn is stopped
    * and nothing is drawn while it waits.
    */
@@ -364,6 +370,7 @@ export class Judge {
         messages,
         // No tools. The judge answers a question; it does not act.
         tools: [],
+        ...(this.options.conversationId === undefined ? {} : { conversationId: this.options.conversationId }),
         effort: facts.efforts === undefined ? wanted : clampEffort(facts.efforts, wanted),
         ...(facts.maxOutput === undefined ? {} : { maxTokens: facts.maxOutput }),
         signal: deadline.signal,

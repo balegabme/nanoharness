@@ -2476,6 +2476,19 @@ button.chip:hover:enabled,
   overflow-wrap: anywhere;
 }
 
+/* A run of fields the form shows or hides together. The pane lays its own
+   children out, so a group that steps in between has to lay out the same. */
+.setup-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+/* The first label in a group already has the pane's gap above it. */
+.setup-group > label:first-child {
+  margin-top: 0;
+}
+
 .setup-actions {
   display: flex;
   align-items: center;
@@ -2531,6 +2544,19 @@ button.chip:hover:enabled,
   cursor: pointer;
 }
 
+/* Over the list rather than beside it: a list long enough to need finding
+   through is a list nobody wants to scroll to reach the box for. */
+.model-filter {
+  width: 100%;
+  margin-bottom: var(--s2);
+}
+
+/* The platform's own clear button, which a search field gets and a text one
+   does not. */
+.model-filter::-webkit-search-cancel-button {
+  cursor: pointer;
+}
+
 .model-row.all {
   margin-bottom: var(--s2);
   padding-bottom: var(--s2);
@@ -2545,6 +2571,21 @@ button.chip:hover:enabled,
 
 .model-id {
   flex: none;
+}
+
+/* How much of the list is ticked, at the far end of the row that ticks all of
+   it. The list scrolls, so the count is the only place the answer is whole. */
+.model-count {
+  margin-left: auto;
+  color: var(--nh-label-caption);
+  font-size: 11.5px;
+}
+
+/* Nothing matched what was typed. In the box the list would be in, so the
+   answer is where the rows were. */
+.model-empty {
+  margin: var(--s2) 0 0;
+  font-size: 12.5px;
 }
 
 /* What the fetch found out about the model, to the right of its id. Dim, because

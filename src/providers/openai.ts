@@ -5,11 +5,14 @@ import type { ChatChunk, ChatMessage, JsonSchema, ToolInput, TurnUsage } from '.
 import { emptyUsage } from '../core/types.js'
 import { endpointURL } from '../core/config.js'
 import { readOffers } from './model-facts.js'
+import { wireHeaders } from './headers.js'
 import type { ModelOffer } from '../core/config.js'
 
 interface OpenAIOptions {
   apiKey: string
   baseURL: string
+  /** Where this endpoint wants the conversation id. See `wireHeaders`. */
+  sessionHeader?: string
 }
 
 interface WireDelta {
@@ -90,6 +93,7 @@ export function createOpenAIProvider(opts: OpenAIOptions): ChatProvider {
         headers: {
           'content-type': 'application/json',
           authorization: `Bearer ${opts.apiKey}`,
+          ...wireHeaders(opts.sessionHeader, input.conversationId),
         },
         body: JSON.stringify(body),
         ...(input.signal === undefined ? {} : { signal: input.signal }),
@@ -302,7 +306,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
  */
 export async function listModels(opts: OpenAIOptions, timeoutMs = 15_000): Promise<ModelOffer[]> {
   const res = await fetch(endpointURL(opts.baseURL, 'v1', 'models'), {
-    headers: { authorization: `Bearer ${opts.apiKey}` },
+    headers: { authorization: `Bearer ${opts.apiKey}`, ...wireHeaders() },
     signal: AbortSignal.timeout(timeoutMs),
   })
   if (!res.ok) {

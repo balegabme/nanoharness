@@ -1,5 +1,5 @@
 // doc: docs/harness/ui.md
-import type { Effort, FactGap, ModelFacts, PriceKey } from '../core/config.js'
+import type { Effort, FactGap, ModelFacts, PriceKey, PriceTier, ProviderKind } from '../core/config.js'
 import type { TurnUsage } from '../core/types.js'
 import type { ProviderView } from '../ipc/contract.js'
 
@@ -10,8 +10,8 @@ type Described = Pick<ProviderView, 'facts' | 'overrides'>
  * What the window knows about a model: which effort levels it takes and what it
  * charges, plus the wording for both.
  *
- * `EFFORTS`, `PRICES`, `resolveFacts`, `factGaps`, `clampEffort`, `costOf` and
- * `moneyText` are copies. src/core/config.ts and src/core/cost.ts hold the definitions, and the
+ * `EFFORTS`, `PRICES`, `PROVIDER_KINDS`, `resolveFacts`, `factGaps`,
+ * `clampEffort`, `costOf` and `moneyText` are copies. src/core/config.ts and src/core/cost.ts hold the definitions, and the
  * main process uses those, but eslint.config.js forbids the renderer a runtime
  * import from core because the renderer is a separate bundle. Change one and
  * change the other; src/providers/model-facts.test.ts fails when they drift.
@@ -19,6 +19,12 @@ type Described = Pick<ProviderView, 'facts' | 'overrides'>
 export const EFFORTS: readonly Effort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 
 export const PRICES: readonly PriceKey[] = ['input', 'output', 'cacheRead', 'cacheWrite']
+
+export const PROVIDER_KINDS: readonly ProviderKind[] = ['openai', 'anthropic', 'responses']
+
+export function isProviderKind(value: unknown): value is ProviderKind {
+  return typeof value === 'string' && (PROVIDER_KINDS as readonly string[]).includes(value)
+}
 
 /** What each priced half is called on the row where it is typed. */
 export const PRICE_LABEL: Record<PriceKey, string> = {
@@ -38,10 +44,17 @@ export function resolveFacts(provider: Described | undefined, model: string): Mo
     const value = typed[key] ?? reported[key]
     if (value !== undefined) merged[key] = value
   }
+  // A price typed by hand is the price, not a base rate for something else to
+  // scale. The form offers no way to edit a tier, so keeping the endpoint's
+  // would quietly double a number the user had just corrected.
+  const tiers = typed.tiers ?? (typed.input === undefined && typed.output === undefined ? reported.tiers : undefined)
+  if (tiers !== undefined && tiers.length > 0) merged.tiers = tiers.map(tier => ({ ...tier }))
   const maxOutput = typed.maxOutput ?? reported.maxOutput
   if (maxOutput !== undefined) merged.maxOutput = maxOutput
   const vision = typed.vision ?? reported.vision
   if (vision !== undefined) merged.vision = vision
+  const wire = typed.wire ?? reported.wire
+  if (wire !== undefined) merged.wire = wire
   return merged
 }
 
@@ -113,12 +126,26 @@ function money(usd: number): string {
   return usd.toFixed(places).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '')
 }
 
+/** The highest tier this prompt reaches, or undefined when it reaches none. */
+function tierFor(facts: ModelFacts, prompt: number): PriceTier | undefined {
+  let best: PriceTier | undefined
+  for (const tier of facts.tiers ?? []) {
+    if (prompt > tier.over && (best === undefined || tier.over > best.over)) best = tier
+  }
+  return best
+}
+
 /** What a run of tokens came to on this model, or null when it has no prices. */
 export function costOf(usage: TurnUsage, facts: ModelFacts): number | null {
   if (facts.input === undefined || facts.output === undefined) return null
-  const read = facts.cacheRead ?? facts.input
-  const write = facts.cacheWrite ?? facts.input
-  const total = usage.input * facts.input + usage.output * facts.output + usage.cacheRead * read + usage.cacheWrite * write
+  // Everything the model was asked to read counts towards the tier, cached or
+  // not: the endpoint sizes the whole request, and a cache hit is still context.
+  const tier = tierFor(facts, usage.input + usage.cacheRead + usage.cacheWrite)
+  const input = tier?.input ?? facts.input
+  const output = tier?.output ?? facts.output
+  const read = tier?.cacheRead ?? facts.cacheRead ?? input
+  const write = tier?.cacheWrite ?? facts.cacheWrite ?? input
+  const total = usage.input * input + usage.output * output + usage.cacheRead * read + usage.cacheWrite * write
   return total / 1_000_000
 }
 

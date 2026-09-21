@@ -19,6 +19,7 @@ Files:
 - src/renderer/confirm.ts — the app's own yes/no and one-line-of-text sheets, in place of the browser's `confirm()` and `prompt()`
 - src/renderer/menu.ts — the right-click menu, one at a time, placed near the pointer, closed by the next thing the user does
 - src/renderer/notify.ts — the blip and desktop notification when a turn ends or asks for approval
+- src/renderer/match.ts — whether a model id is what somebody typing into the filter box meant to find
 - src/renderer/dom.ts — the small DOM helpers the rest share
 
 `src/renderer/index.html` and `src/renderer/renderer.css` ship alongside and are
@@ -219,15 +220,28 @@ in that state rather than stranding the user on an app that cannot run.
 
 The providers pane asks for a name, an API kind, a base URL and a key, because
 none of them has a default (see `providers.md`). The kind is named for the wire
-format rather than the vendor, as "OpenAI-compatible (/chat/completions)" and
-"Anthropic-compatible (/messages)", and the base-URL field carries a hint that
-changes with it, saying which part of the address to paste and giving examples
+format rather than the vendor, as "OpenAI-compatible (/chat/completions)",
+"Anthropic-compatible (/messages)" and "OpenAI Responses (/responses)", and the
+base-URL field carries a hint that changes with it, saying which part of the address to paste and giving examples
 for that side. **Test connection** and **Fetch models** both call
 `GET {base}/models` through `config:probe`; the first reports reachability, the
 second lists what the server offers as a set of checkboxes. Ticking is the
 point: only ticked models can become the active model, so a provider's full
 catalogue never leaks into the picker. A server without a model list says so,
 and nothing is ticked until one is fetched.
+
+A new provider starts at a **Provider** picker, holding the endpoints the
+harness already knows the address and habits of. Choosing one writes the name,
+the wire and the base URL and folds all three away, so the form asks only for
+the key and then for which models to allow. **Test connection** goes with them:
+reachability is the question a typed address raises, and a fetch answers the
+key as well as the host. Going back to setting it up by hand brings the fields
+out again, holding what the entry put there.
+
+The picker is offered only while adding, because picking would otherwise write
+over the record on screen. What it saves is an ordinary provider record, renamed,
+repointed or deleted like any other. `providers.md` has where the list lives and
+why the window is sent it rather than keeping its own copy.
 
 Once one provider is saved the pane grows a list of them across the top. A card
 switches the form to that provider; **Add another provider** blanks it for a new
@@ -260,6 +274,23 @@ model it did not describe is the way back to "nobody has said". A price the
 endpoint did give cannot be un-said from here; what can be done to it is to type
 a different one. Leaving a model unmarked-up costs
 nothing: it keeps all seven levels and shows no price.
+
+An endpoint can offer thirty, in an order it chose for itself, so the list is
+drawn alphabetically and gets a **Find a model** box once it is past ten. Ids
+are written with whatever separators the vendor felt like, so the box reads
+punctuation as a space on both sides and tries the run-together spelling too:
+`gpt5`, `gpt 5` and `gpt-5` all find `gpt-5.6-luna`. Escape empties the box
+before it closes the sheet, since a full box is the nearer thing to leave.
+
+The tick at the top answers for the rows under it, which with a filter on is
+what the filter left. Ticking every Qwen is then two gestures rather than
+thirty, and the models the box is hiding are not something the user was just
+asked about. The count beside it stays whole, `12 of 36 ticked`, because the
+list scrolls and a filtered view cannot say how much of the catalogue is on.
+
+Whichever button is the next step is the filled one. A provider with no model it
+may run is refused, so **Fetch models** leads until a list is on screen and
+**Save** takes over once there is something worth keeping.
 
 Fetching the models of a provider that is already saved writes the answer to
 disk on the spot, so the prices and effort levels are stored without a second

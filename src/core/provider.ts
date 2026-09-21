@@ -17,6 +17,14 @@ export interface ChatInput {
    * inside this one; OpenAI-compatible endpoints ignore it.
    */
   maxTokens?: number
+  /**
+   * Which conversation this request belongs to, for endpoints that asked to be
+   * told. The value has to be stable across a conversation's turns and distinct
+   * between conversations, which is what a session id already is. Endpoints use
+   * it to pin a conversation to one upstream and to keep its cache warm; those
+   * that never asked are sent nothing.
+   */
+  conversationId?: string
   /** Aborted when the person hits Stop. The provider passes it to `fetch`. */
   signal?: AbortSignal
 }

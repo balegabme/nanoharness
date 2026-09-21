@@ -35,6 +35,11 @@ zero: the tokens are counted, the dollars are not, and every total carries
 the headline and `nh usage` prints it beside the total, because a figure that
 is short and does not say so is worse than no figure.
 
+What a subscription's allowance lost is not in the log either. An allowance is
+a share of a window rather than an amount of money, only the provider knows how
+much of it is gone, and no arithmetic over tokens and prices can work it out
+from here. Every figure in this report is dollars charged.
+
 The one thing an unpriced turn still contributes is `harnessCostUsd`. The
 approval model is priced at its own rates whatever the session's model is
 (`approval.md`), so that dollar is known and is counted.

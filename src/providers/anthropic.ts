@@ -5,11 +5,14 @@ import type { ChatChunk, ChatMessage, JsonSchema, ThinkingBlock, ToolCall, ToolI
 import { emptyUsage } from '../core/types.js'
 import { endpointURL } from '../core/config.js'
 import { readOffers } from './model-facts.js'
+import { wireHeaders } from './headers.js'
 import type { Effort, ModelOffer } from '../core/config.js'
 
 interface AnthropicOptions {
   apiKey: string
   baseURL: string
+  /** Where this endpoint wants the conversation id. See `wireHeaders`. */
+  sessionHeader?: string
 }
 
 /**
@@ -163,6 +166,7 @@ export function createAnthropicProvider(opts: AnthropicOptions): ChatProvider {
           'content-type': 'application/json',
           'anthropic-version': VERSION,
           ...authHeaders(opts.apiKey),
+          ...wireHeaders(opts.sessionHeader, input.conversationId),
         },
         body: JSON.stringify(body),
         ...(input.signal === undefined ? {} : { signal: input.signal }),
@@ -360,7 +364,7 @@ function applyUsage(usage: TurnUsage, wire: WireUsage | undefined): void {
  */
 export async function listModels(opts: AnthropicOptions, timeoutMs = 15_000): Promise<ModelOffer[]> {
   const res = await fetch(endpointURL(opts.baseURL, 'v1', 'models'), {
-    headers: { 'anthropic-version': VERSION, ...authHeaders(opts.apiKey) },
+    headers: { 'anthropic-version': VERSION, ...authHeaders(opts.apiKey), ...wireHeaders() },
     signal: AbortSignal.timeout(timeoutMs),
   })
   if (!res.ok) {

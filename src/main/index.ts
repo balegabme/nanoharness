@@ -409,6 +409,9 @@ async function judgeFor(sessionId: string): Promise<Judge> {
   const judge = new Judge({
     endpoints: approvalEndpoints,
     rules: mergeRules(stored.approval?.rules),
+    // Derived from the session's rather than equal to it: the judge shares the
+    // session's lifetime and nothing else, least of all its message history.
+    conversationId: `${sessionId}-approval`,
     ...(stored.approval?.effort === undefined ? {} : { effort: stored.approval.effort }),
   })
   judges.set(sessionId, judge)
@@ -474,7 +477,14 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
   if (root === null) throw new Error('that session is gone; start a new one from the sidebar')
 
   const config = await loadProviderConfig()
-  const provider = createProvider({ kind: config.provider.kind, baseURL: config.provider.baseURL, apiKey: config.apiKey })
+  const facts = resolveFacts(config.provider, config.model)
+  const provider = createProvider({
+    kind: config.provider.kind,
+    baseURL: config.provider.baseURL,
+    apiKey: config.apiKey,
+    ...(facts.wire === undefined ? {} : { wire: facts.wire }),
+    ...(config.provider.sessionHeader === undefined ? {} : { sessionHeader: config.provider.sessionHeader }),
+  })
   const bus = new EventBus()
   for (const type of EVENT_TYPES) {
     bus.on(type, event => {

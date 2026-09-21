@@ -14,9 +14,11 @@ import {
   resolveConfig,
   resolveFacts,
 } from '../core/config.js'
+import { parseHeaderName } from '../core/config.js'
 import { approvalProblem } from '../core/approval.js'
 import { causeCode } from '../core/provider.js'
 import { createProvider, listModelsFor } from '../providers/factory.js'
+import { KNOWN_PROVIDERS } from '../providers/profiles.js'
 import { userDataDir } from '../core/usage-log.js'
 import type { ApprovalConfig, JudgeEndpoint, PermissionMode } from '../core/approval.js'
 import type { ActiveSetRequest, ConfigProbeRequest, ConfigProbeResult, ConfigStatus, ProviderSaveRequest } from '../ipc/contract.js'
@@ -132,6 +134,13 @@ export async function saveProvider(request: ProviderSaveRequest): Promise<boolea
   const cleanTyped = cleanFacts(overrides)
   if (clean !== undefined) record.facts = clean
   if (cleanTyped !== undefined) record.overrides = cleanTyped
+  // Omitted means keep, which is what every save from the window means: no
+  // screen offers this field, so a value put here by hand has to survive one.
+  // An empty string is the other answer and clears it. Either way the name is
+  // read the way it is read off disk, so one the file would have refused cannot
+  // arrive over IPC instead.
+  const sessionHeader = request.sessionHeader === undefined ? previous?.sessionHeader : parseHeaderName(request.sessionHeader)
+  if (sessionHeader !== undefined) record.sessionHeader = sessionHeader
 
   const index = stored.providers.findIndex(p => p.id === id)
   if (index === -1) stored.providers.push(record)
@@ -295,6 +304,7 @@ export async function configStatus(): Promise<ConfigStatus> {
     configured: false,
     providers: stored.providers.map(p => ({ ...p, hasKey: secrets[p.id] !== undefined })),
     keyStorage: safeStorage.isEncryptionAvailable() ? 'os' : 'unavailable',
+    knownProviders: KNOWN_PROVIDERS,
   }
   if (stored.active !== undefined) status.active = stored.active
   if (stored.approval !== undefined) status.approval = stored.approval
@@ -397,11 +407,18 @@ export async function approvalEndpoints(): Promise<JudgeEndpoint[]> {
     // A rung with no key is skipped here and reported by the ladder when
     // every rung is gone.
     if (apiKey === undefined) continue
+    const { wire } = resolveFacts(record, candidate.model)
     endpoints.push({
       providerId: record.id,
       model: candidate.model,
       record,
-      provider: createProvider({ kind: record.kind, baseURL: normalizeBaseURL(record.baseURL), apiKey }),
+      provider: createProvider({
+        kind: record.kind,
+        baseURL: normalizeBaseURL(record.baseURL),
+        apiKey,
+        ...(wire === undefined ? {} : { wire }),
+        ...(record.sessionHeader === undefined ? {} : { sessionHeader: record.sessionHeader }),
+      }),
     })
   }
   return endpoints

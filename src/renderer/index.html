@@ -286,18 +286,29 @@
           </div>
         </div>
 
-        <label for="setup-name">Name</label>
-        <input id="setup-name" type="text" spellcheck="false" placeholder="what you want to call it" />
+        <div class="setup-group" id="setup-start">
+          <label for="setup-known">Provider</label>
+          <select id="setup-known">
+            <option value="">Set the address up myself</option>
+          </select>
+          <p class="hint field-hint" id="setup-known-note"></p>
+        </div>
 
-        <label for="setup-kind">API</label>
-        <select id="setup-kind">
-          <option value="openai">OpenAI-compatible (/chat/completions)</option>
-          <option value="anthropic">Anthropic-compatible (/messages)</option>
-        </select>
+        <div class="setup-group" id="setup-fields">
+          <label for="setup-name">Name</label>
+          <input id="setup-name" type="text" spellcheck="false" placeholder="what you want to call it" />
 
-        <label for="setup-base">Base URL</label>
-        <input id="setup-base" type="url" spellcheck="false" placeholder="https://your-provider.example" />
-        <p class="hint field-hint" id="setup-base-hint"></p>
+          <label for="setup-kind">API</label>
+          <select id="setup-kind">
+            <option value="openai">OpenAI-compatible (/chat/completions)</option>
+            <option value="anthropic">Anthropic-compatible (/messages)</option>
+            <option value="responses">OpenAI Responses (/responses)</option>
+          </select>
+
+          <label for="setup-base">Base URL</label>
+          <input id="setup-base" type="url" spellcheck="false" placeholder="https://your-provider.example" />
+          <p class="hint field-hint" id="setup-base-hint"></p>
+        </div>
 
         <label for="setup-key">API key</label>
         <input id="setup-key" type="password" spellcheck="false" placeholder="stored encrypted, never written in plain text" />
@@ -310,11 +321,14 @@
 
         <fieldset class="models" id="setup-models" hidden>
           <legend>Models the harness may use</legend>
+          <input id="setup-filter" class="model-filter" type="search" spellcheck="false" placeholder="Find a model" aria-label="Find a model" hidden />
           <label class="model-row all">
             <input type="checkbox" id="setup-all" />
             <span id="setup-all-label">Select all</span>
+            <span class="model-count" id="setup-all-count"></span>
           </label>
           <div class="model-list" id="setup-model-list"></div>
+          <p class="hint model-empty" id="setup-models-empty" hidden></p>
         </fieldset>
 
         <div class="setup-actions">

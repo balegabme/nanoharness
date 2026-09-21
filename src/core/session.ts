@@ -776,6 +776,7 @@ export class Session {
       model: this.options.model,
       messages: this.messages,
       tools: this.tools.map(t => t.input),
+      conversationId: this.options.sessionId,
       ...(this.options.effort === undefined ? {} : { effort: this.options.effort }),
       ...(this.options.facts?.maxOutput === undefined ? {} : { maxTokens: this.options.facts.maxOutput }),
       ...(this.controller === null ? {} : { signal: this.controller.signal }),

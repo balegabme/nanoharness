@@ -1,5 +1,5 @@
 // doc: docs/harness/providers.md
-import type { ModelFacts } from './config.js'
+import type { ModelFacts, PriceTier } from './config.js'
 import type { TurnUsage } from './types.js'
 
 /**
@@ -13,11 +13,25 @@ import type { TurnUsage } from './types.js'
  * own rate where the model publishes one and at the input rate where it does
  * not, which is what a provider quoting a single input price is saying.
  */
+/** The highest tier this prompt reaches, or undefined when it reaches none. */
+function tierFor(facts: ModelFacts, prompt: number): PriceTier | undefined {
+  let best: PriceTier | undefined
+  for (const tier of facts.tiers ?? []) {
+    if (prompt > tier.over && (best === undefined || tier.over > best.over)) best = tier
+  }
+  return best
+}
+
 export function costOf(usage: TurnUsage, facts: ModelFacts): number | null {
   if (facts.input === undefined || facts.output === undefined) return null
-  const read = facts.cacheRead ?? facts.input
-  const write = facts.cacheWrite ?? facts.input
-  const total = usage.input * facts.input + usage.output * facts.output + usage.cacheRead * read + usage.cacheWrite * write
+  // Everything the model was asked to read counts towards the tier, cached or
+  // not: the endpoint sizes the whole request, and a cache hit is still context.
+  const tier = tierFor(facts, usage.input + usage.cacheRead + usage.cacheWrite)
+  const input = tier?.input ?? facts.input
+  const output = tier?.output ?? facts.output
+  const read = tier?.cacheRead ?? facts.cacheRead ?? input
+  const write = tier?.cacheWrite ?? facts.cacheWrite ?? input
+  const total = usage.input * input + usage.output * output + usage.cacheRead * read + usage.cacheWrite * write
   return total / 1_000_000
 }
 

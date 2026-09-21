@@ -3,8 +3,14 @@ import { randomUUID } from 'node:crypto'
 import { isPermissionMode } from './approval.js'
 import type { ApprovalCandidate, ApprovalConfig, ApprovalRules, PermissionMode } from './approval.js'
 
-/** The two wire formats NanoHarness speaks. */
-export type ProviderKind = 'openai' | 'anthropic'
+/** The wire formats NanoHarness speaks. */
+export type ProviderKind = 'openai' | 'anthropic' | 'responses'
+
+export const PROVIDER_KINDS: readonly ProviderKind[] = ['openai', 'anthropic', 'responses']
+
+export function isProviderKind(value: unknown): value is ProviderKind {
+  return typeof value === 'string' && (PROVIDER_KINDS as readonly string[]).includes(value)
+}
 
 /**
  * How hard the model should think. One neutral scale across vendors: OpenAI
@@ -58,6 +64,24 @@ export function clampEffort(offered: readonly Effort[], wanted: Effort): Effort 
 }
 
 /**
+ * The rates a model charges once a prompt passes `over` tokens, replacing the
+ * flat ones on `ModelFacts` above that size.
+ *
+ * Crossing the line is not a surcharge on the tokens past it. The whole request
+ * is charged at the higher rate, which is how the endpoints publishing these
+ * bill, so `costOf` picks one price list per request rather than splitting it.
+ * A rate this list leaves out keeps the flat one.
+ */
+export interface PriceTier {
+  /** Prompt tokens above which these rates apply. */
+  over: number
+  input?: number
+  output?: number
+  cacheRead?: number
+  cacheWrite?: number
+}
+
+/**
  * What is known about one model: which effort levels it takes, and what it
  * charges. Every field is optional because most endpoints answer `/v1/models`
  * with an id, an owner and a timestamp and nothing else. Prices are US dollars
@@ -69,6 +93,20 @@ export interface ModelFacts {
   output?: number
   cacheRead?: number
   cacheWrite?: number
+  /**
+   * Higher rates for a long prompt, cheapest tier first. Most models have
+   * none and are charged at one rate whatever the size. Pricing a tiered
+   * model flat under-reports a long session by as much as three times, and
+   * does so exactly once it has run long enough for anyone to look.
+   */
+  tiers?: PriceTier[]
+  /**
+   * The wire this model has to be asked on, where that is not the one its
+   * provider record names. A gateway fronts many upstreams and does not
+   * translate between every pair of formats, so one model in a catalogue can be
+   * reachable on one wire alone.
+   */
+  wire?: ProviderKind
   /**
    * The largest `max_tokens` the model accepts, where the endpoint publishes
    * it per model. Where nobody says, the request is built at full size and a
@@ -120,10 +158,17 @@ export function resolveFacts(provider: ProviderRecord, model: string): ModelFact
     const value = typed[key] ?? reported[key]
     if (value !== undefined) merged[key] = value
   }
+  // A price typed by hand is the price, not a base rate for something else to
+  // scale. The form offers no way to edit a tier, so keeping the endpoint's
+  // would quietly double a number the user had just corrected.
+  const tiers = typed.tiers ?? (typed.input === undefined && typed.output === undefined ? reported.tiers : undefined)
+  if (tiers !== undefined && tiers.length > 0) merged.tiers = tiers.map(tier => ({ ...tier }))
   const maxOutput = typed.maxOutput ?? reported.maxOutput
   if (maxOutput !== undefined) merged.maxOutput = maxOutput
   const vision = typed.vision ?? reported.vision
   if (vision !== undefined) merged.vision = vision
+  const wire = typed.wire ?? reported.wire
+  if (wire !== undefined) merged.wire = wire
   return merged
 }
 
@@ -148,6 +193,12 @@ export interface ProviderRecord {
   facts?: Record<string, ModelFacts>
   /** What the user typed for a model. Outranks `facts`, and survives a fetch. */
   overrides?: Record<string, ModelFacts>
+  /**
+   * The header this endpoint wants the session id under, where it wants one.
+   * Endpoints that route or cache per conversation each named it differently
+   * and most name nothing, so it is unset until someone says otherwise.
+   */
+  sessionHeader?: string
 }
 
 /** Which provider and model a new session starts with. */
@@ -347,14 +398,29 @@ function parseProvider(value: unknown): ProviderRecord | null {
   const id = text(record.id)
   const baseURL = text(record.baseURL)
   if (id === undefined || baseURL === undefined) return null
-  const kind: ProviderKind = record.kind === 'anthropic' ? 'anthropic' : 'openai'
+  const kind: ProviderKind = isProviderKind(record.kind) ? record.kind : 'openai'
   const models = Array.isArray(record.models) ? record.models.filter((m): m is string => typeof m === 'string') : []
   const provider: ProviderRecord = { id, name: text(record.name) ?? hostOf(baseURL), kind, baseURL, models }
   const facts = parseFactsMap(record.facts)
   const overrides = parseFactsMap(record.overrides)
   if (facts !== undefined) provider.facts = facts
   if (overrides !== undefined) provider.overrides = overrides
+  const sessionHeader = parseHeaderName(record.sessionHeader)
+  if (sessionHeader !== undefined) provider.sessionHeader = sessionHeader
   return provider
+}
+
+/**
+ * A header name off disk or out of the window, or nothing. Anything `fetch`
+ * would throw on is dropped rather than carried to the request: a name is the
+ * token RFC 9110 allows, and a record holding something else would fail every
+ * turn with an error about the wrong thing.
+ */
+const HEADER_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
+
+export function parseHeaderName(value: unknown): string | undefined {
+  const name = text(value)?.trim()
+  return name !== undefined && HEADER_NAME.test(name) ? name : undefined
 }
 
 /** Read a `{ modelId: facts }` map back, dropping anything malformed. */
@@ -388,6 +454,9 @@ export function parseFacts(value: unknown): ModelFacts | undefined {
     // a number and then print as one.
     if (typeof price === 'number' && Number.isFinite(price) && price >= 0) facts[key] = price
   }
+  const tiers = parseTiers(record.tiers)
+  if (tiers !== undefined) facts.tiers = tiers
+  if (isProviderKind(record.wire)) facts.wire = record.wire
   const published = record.maxOutput
   const ceiling = typeof published === 'number' && Number.isFinite(published) ? Math.floor(published) : 0
   if (ceiling > 0) facts.maxOutput = ceiling
@@ -395,6 +464,29 @@ export function parseFacts(value: unknown): ModelFacts | undefined {
   // is dropped, so a truthy string cannot read as a yes.
   if (typeof record.vision === 'boolean') facts.vision = record.vision
   return Object.keys(facts).length === 0 ? undefined : facts
+}
+
+/**
+ * The higher rates a long prompt is charged at, cheapest first. A tier with no
+ * threshold to cross, or no rate to charge, is not a tier and is dropped: it
+ * would otherwise read as a free tier over every prompt.
+ */
+function parseTiers(value: unknown): PriceTier[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const tiers: PriceTier[] = []
+  for (const raw of value) {
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) continue
+    const record = raw as Record<string, unknown>
+    const over = record.over
+    if (typeof over !== 'number' || !Number.isFinite(over) || over <= 0) continue
+    const tier: PriceTier = { over: Math.floor(over) }
+    for (const key of PRICES) {
+      const price = record[key]
+      if (typeof price === 'number' && Number.isFinite(price) && price >= 0) tier[key] = price
+    }
+    if (Object.keys(tier).length > 1) tiers.push(tier)
+  }
+  return tiers.length === 0 ? undefined : tiers.sort((a, b) => a.over - b.over)
 }
 
 /**

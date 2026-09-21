@@ -1,19 +1,24 @@
 # Providers
 
 A provider turns a ChatInput (messages + tools) into a stream of ChatChunk.
-Two wire formats ship: OpenAI-compatible and Anthropic-compatible. Neither is a
-vendor. "OpenAI-compatible" means a server that answers `/chat/completions` the
-way OpenAI documents it; "Anthropic-compatible" means one that answers
-`/messages` the way Anthropic documents it. Which company runs it is not the
-harness's business, and no vendor address is compiled in anywhere.
+Three wire formats ship: OpenAI-compatible, Anthropic-compatible and
+Responses. None of them is a vendor. "OpenAI-compatible" means a server that
+answers `/chat/completions` the way OpenAI documents it; "Anthropic-compatible"
+means one that answers `/messages` the way Anthropic documents it; "Responses"
+means one that answers `/responses`. Which company runs it is not the harness's
+business, and no vendor address is compiled in anywhere.
 
 Files:
 - src/providers/openai.ts — OpenAI chat-completions streaming (SSE)
 - src/providers/anthropic.ts — Anthropic messages streaming (named SSE events)
+- src/providers/responses.ts — Responses streaming (named SSE events, items rather than messages)
 - src/providers/factory.ts — the one place a provider kind becomes a client
 - src/core/provider.ts — interface
 - src/core/config.ts — the provider registry: records, effort, resolution, validation
 - src/main/config-store.ts — settings on disk, keys encrypted by the OS
+- src/providers/headers.ts — the user agent, and the conversation id where an endpoint asked for one
+- src/providers/profiles.ts — the endpoints the harness has met before, and the one file allowed to name them
+- src/providers/catalogue.ts — what the public model catalogue says about the models at an address
 - src/providers/model-facts.ts — what a `/models` answer says about each model, where it says anything
 - src/core/cost.ts — what a run of tokens came to, at one model's prices
 
@@ -113,24 +118,72 @@ leaking into the session loop:
   assistant message, and replayed on the wire, rather than streamed to the
   screen and dropped.
 
+## Responses provider
+
+`POST {baseURL}/responses`, with `stream: true` and `store: false`. Left
+storing, the endpoint keeps the turn and hands back an id to carry on from,
+which would make it the owner of a transcript the harness already has on disk.
+
+Three things make it its own file rather than a branch inside `openai.ts`. The
+request carries `input` rather than `messages`. A tool definition is flat,
+`{type, name, description, parameters}`, where the other wire nests the last
+three under `function`. And the stream is a sequence of named events rather than
+deltas hanging off a choice, so there is no shape in common to branch on.
+
+`input` is a flat list rather than a list of messages. A plain turn is a role
+with its content (`input_text` going up, `output_text` coming back), and a tool
+round is two loose items beside it: a `function_call` carrying the arguments the
+model asked with, and a `function_call_output` carrying what the tool returned,
+paired by `call_id`. One assistant turn can therefore become several entries,
+and an assistant turn that only called tools becomes no message item at all,
+since an empty one would be a turn the model never took.
+
+Four of the events matter. `response.output_text.delta` is the answer.
+`response.reasoning_summary_text.delta` is the thinking, and what arrives is the
+summary the model wrote of its own reasoning rather than the reasoning itself.
+`response.output_item.done` closes an item, and the finished `function_call`
+carries its arguments in full, so the fragments streamed ahead of it are read
+past rather than reassembled. `response.completed` carries the usage.
+
+Thinking does not go back on the next request. This wire hands out a summary and
+no signature to verify it against, so as on the OpenAI wire the block is kept
+for the window and the stored transcript alone. A tool round replayed without
+it was accepted by every endpoint this has been run against.
+
+`response.incomplete` is read for usage exactly as `response.completed` is: a
+turn cut short still spent what it spent, and the log it goes to is append-only.
+A `response.failed` or a bare `error` event becomes an `error` chunk rather than
+ending the stream quietly, so a turn that failed halfway is not recorded as a
+turn that finished. It carries status 500, because a stream that has already
+answered 200 and then gives up is the provider's fault as far as asking again
+goes, and this wire publishes no table of codes to read a finer answer from.
+
+Usage is the same arithmetic the OpenAI wire does under different names.
+`input_tokens` holds the cached tokens inside it, so the cached half is
+subtracted out; `output_tokens` already holds the reasoning tokens, so
+`reasoning` is a breakdown of `output` and is never added on top. This wire
+names no cache write and bills one at the ordinary input rate, so `cacheWrite`
+is zero.
+
 ## Effort
 
 One neutral scale, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`,
-because the two wires express the same idea in different units. The mapping is
+because the three wires express the same idea in different units. The mapping is
 not invented; each side uses the field its own API documents:
 
-| effort | OpenAI-compatible | Anthropic-compatible |
-|---|---|---|
-| `none` | `reasoning_effort` omitted | no `thinking` field |
-| `minimal` | `reasoning_effort: "minimal"` | `thinking.budget_tokens: 1024` |
-| `low` | `reasoning_effort: "low"` | `thinking.budget_tokens: 4096` |
-| `medium` | `reasoning_effort: "medium"` | `thinking.budget_tokens: 16384` |
-| `high` | `reasoning_effort: "high"` | `thinking.budget_tokens: 32768` |
-| `xhigh` | `reasoning_effort: "xhigh"` | `thinking.budget_tokens: 49152` |
-| `max` | `reasoning_effort: "max"` | `thinking.budget_tokens: 65536` |
+| effort | OpenAI-compatible | Responses | Anthropic-compatible |
+|---|---|---|---|
+| `none` | `reasoning_effort` omitted | `reasoning` omitted | no `thinking` field |
+| `minimal` | `reasoning_effort: "minimal"` | `reasoning.effort: "minimal"` | `thinking.budget_tokens: 1024` |
+| `low` | `reasoning_effort: "low"` | `reasoning.effort: "low"` | `thinking.budget_tokens: 4096` |
+| `medium` | `reasoning_effort: "medium"` | `reasoning.effort: "medium"` | `thinking.budget_tokens: 16384` |
+| `high` | `reasoning_effort: "high"` | `reasoning.effort: "high"` | `thinking.budget_tokens: 32768` |
+| `xhigh` | `reasoning_effort: "xhigh"` | `reasoning.effort: "xhigh"` | `thinking.budget_tokens: 49152` |
+| `max` | `reasoning_effort: "max"` | `reasoning.effort: "max"` | `thinking.budget_tokens: 65536` |
 
-`reasoning_effort` is passed through as the same word the API takes; `none`
-leaves the field out. No model takes all six words: families differ, and a value
+Both OpenAI-shaped wires pass the level through as the same word the API takes;
+`none` leaves the field out, which is what each of them reads as the model's own
+default. No model takes all six words: families differ, and a value
 a model does not know comes back as a 400 or is dropped without a word. Which ones a model does take is a fact about
 that model, so it is read from the endpoint and kept per model rather than
 guessed from the id. See [Model facts](#model-facts).
@@ -197,15 +250,10 @@ stays undescribed instead of being recorded as text only.
 
 Most endpoints are in none of those rows. Asked directly, many answer with the
 bare shape, an id, an object type, a timestamp and an owner, with nothing about
-price or thinking. Nothing else is consulted when that happens. The harness
-talks to the endpoints the user configured and to nothing else (plan §16), so a
-third-party price list is not fetched behind their back, and a figure from one
-would in any case be the published rate rather than what this key is billed:
-the same model id at a subscription address and a pay-per-token address of one
-vendor is two different prices.
+price or thinking. The catalogue below fills that in.
 
-A model no shape describes ends up with no facts, which is the common case and
-not an error. The settings screen marks it, the composer keeps offering every
+A model neither the endpoint nor the catalogue describes ends up with no facts,
+which is not an error. The settings screen marks it, the composer keeps offering every
 level, and the user can type the answer in: `overrides` on the provider record
 holds what they typed, wins over the endpoint field by field, and survives the
 next fetch. `resolveFacts` does that merge, so one wrong price corrected by hand
@@ -252,6 +300,21 @@ into the summary line stored with the transcript. The running total in the
 corner of the window is priced by whatever model is selected now, so a session
 that changed models mid-way reads as an estimate; its tooltip says so.
 
+### Prices that climb with the prompt
+
+Some models charge a higher rate once a prompt passes a length. `tiers` holds
+those rates, each with the prompt size it starts at, and the whole request is
+billed at whichever tier the prompt reaches rather than only the tokens above
+the line, which is how the endpoints doing this actually bill. Cached tokens
+count towards the length: the endpoint sizes the request it was sent, and a
+cache hit is still context the model reads. A tier that names only some rates
+keeps the base ones for the rest.
+
+Tiers arrive from the table above, and the settings form has no field for one.
+A price typed by hand therefore drops them, because keeping a tier would quietly
+double a figure the user had just corrected. A correction that says nothing
+about price leaves them where they are.
+
 ## Configuration
 
 Nothing about a vendor is compiled in. There is no default base URL, no default
@@ -274,6 +337,102 @@ user wants, mixing kinds freely: a local server, a gateway and a vendor account
 side by side. The **active selection** is
 `{providerId, model, effort}`: which of them a turn actually runs, switchable
 from the header without opening settings.
+
+### Who is asking, and about which conversation
+
+Every request the harness makes carries `user-agent: nanoharness/<version>`.
+Node sends the name of its HTTP library otherwise, and endpoints route,
+rate-limit and refuse on that field, so a request that says what it is gets
+treated as what it is. The model-list fetches send it too.
+
+Some endpoints also want to know which conversation a request belongs to, so
+they can pin it to one upstream or keep its prompt cache warm. There is no
+standard header for this. Each endpoint that wants it chose a spelling, and most
+want nothing, so the name is a per-provider setting rather than something the
+harness assumes.
+
+Known addresses are answered by `src/providers/profiles.ts`. An unlisted host is
+sent the user agent and nothing more.
+
+No screen offers the header name, on purpose. It is not something a user can be
+expected to know, and a new public endpoint that wants one is better fixed by a
+line in `profiles.ts`, where it works for everybody, than by one person finding
+a text box. A private gateway that needs session affinity is the exception, and
+`sessionHeader` on the record is editable in the settings file for it. A save
+from the window leaves whatever is there.
+
+### The model catalogue
+
+`src/providers/catalogue.ts` reads `https://models.dev/api.json`, a public
+directory describing the models of several hundred endpoints, keyed by the same
+base URL the user pastes into settings. Prices, effort levels, output ceilings,
+whether a model reads images and which wire it answers on all come from there.
+
+It is read when the user presses **Fetch models** and at no other time, and
+nothing is kept between presses, so a model added this morning is described this
+morning. The alternative was a table of prices typed out of a vendor's web page:
+correct on the day it was written, and by the following week missing two of the
+three models at one endpoint that answer on a wire of their own. Every turn on
+either of those two failed with a 503.
+
+A catalogue that cannot be reached fails the fetch. The model list is not filled
+in from a stale copy or waved through undescribed, because a price nobody can
+source is how a wrong number reaches the spend view.
+
+The request carries no key, no model id and no address. It is one public file,
+the same file for every user, and the configured endpoint is matched against it
+here rather than asked about. What models.dev learns is that somebody running
+this harness pressed the button.
+
+A figure from a catalogue is the vendor's published rate rather than what this
+particular key is billed, and the same model id at a subscription address and a
+pay-per-token address is two different prices. So the endpoint stays the
+authority on itself: `describe()` fills only the fields the `/models` answer left
+empty and overwrites none it filled, and a correction typed in settings outranks
+both. A model the catalogue has never heard of is offered undescribed and marked
+rather than not at all, and a model only the catalogue knows about is not
+conjured into the list.
+
+The wire is read the same way and stored with the model's prices. A gateway
+fronts many upstreams and does not translate between every pair of formats, so
+one model in a catalogue can be reachable on one wire alone. The catalogue names
+the SDK each model is reached with and `WIRES` maps those names onto the three
+this harness speaks; a name nobody has mapped leaves the record's wire standing.
+`createProvider` then takes that wire alongside the record, which keeps such an
+endpoint a single record in settings rather than two the user would have to know
+to pick between. A model's own wire outranks the record's, the other way round
+from the session header: a header the user typed is a preference, and a wire the
+endpoint refuses is a 400.
+
+### Endpoints the harness has met before
+
+`src/providers/profiles.ts` is the one file in this layer allowed to name an
+address. Nothing in it changes how a request is built or how an answer is read,
+so a kind is still a wire format and the rule at the top of this page holds. It
+holds what a person would otherwise have to type correctly from memory: a
+label, the wire, the base URL, and the session header where one is wanted.
+
+Settings builds its **Provider** picker from that list. Choosing an entry fills
+the fields and stops there, leaving the key and the model list to the user, and
+what gets saved is an ordinary record: editable, deletable, and repointable at a
+staging address like any other. Nothing about it is a separate kind of provider.
+`ui.md` has what the sheet does with an entry once it is picked.
+
+What each of its models costs is not in this file. That is the catalogue's
+answer, read live, and the section below has it.
+
+The window cannot import this layer, because `app://` serves `out/renderer`
+alone. The list travels on `ConfigStatus` instead of being written down twice,
+which is the difference between this and `src/renderer/facts.ts`.
+
+The value is the session's own id, which is already stable across its turns and
+distinct between sessions. The approval judge sends `<session id>-approval`
+instead: it shares the session's lifetime and nothing else, and two message
+histories under one id are two histories fighting over one cache.
+
+A name that `fetch` would reject is dropped on the way in, from the window and
+from disk alike. Carrying one would fail every turn with an error about the
+header rather than about the endpoint that wanted it.
 
 ### Base URLs
 
@@ -322,7 +481,7 @@ model or effort rather than the one the window started with.
 
 ## Listing models
 
-`listModels` calls `GET {baseURL}/models`, the same path on both wires, each
+`listModels` calls `GET {baseURL}/models`, the same path on every wire, each
 with its own auth headers and the same version rule as every other endpoint. It
 returns sorted, de-duplicated ids, each with whatever the answer said about
 it. The settings screen uses it for both its buttons: reaching the endpoint at

@@ -290,6 +290,79 @@ function usage(part: Partial<TurnUsage>): TurnUsage {
   return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, ...part }
 }
 
+/**
+ * Long context at a higher rate. Grok 4.6's real list: $2 in and $6 out up to a
+ * 200K prompt, twice that above it, and the endpoint charges the whole request
+ * at whichever rate the prompt reaches.
+ */
+
+const TIERED: ModelFacts = {
+  input: 2,
+  output: 6,
+  cacheRead: 0.5,
+  tiers: [{ over: 200_000, input: 4, output: 12, cacheRead: 1 }],
+}
+
+describe('a model that charges more for a long prompt', () => {
+  it('bills the whole request at the base rate below the line', () => {
+    // 100K in at $2, 1K out at $6.
+    expect(costOf(usage({ input: 100_000, output: 1_000 }), TIERED)).toBeCloseTo(0.206, 10)
+  })
+
+  it('bills the whole request at the tier once the prompt passes it', () => {
+    // Not the tokens past 200K: every one of the 250K is charged at $4.
+    expect(costOf(usage({ input: 250_000, output: 1_000 }), TIERED)).toBeCloseTo(1.012, 10)
+  })
+
+  it('counts cached tokens towards the line, because the model still reads them', () => {
+    const cached = usage({ input: 1_000, cacheRead: 250_000 })
+    expect(costOf(cached, TIERED)).toBeCloseTo(0.254, 10)
+    // The same tokens uncached would have reached the tier too.
+    expect(costOf(usage({ input: 251_000 }), TIERED)).toBeCloseTo(1.004, 10)
+  })
+
+  it('keeps a base rate the tier says nothing about', () => {
+    const partial: ModelFacts = { input: 2, output: 6, cacheRead: 0.5, tiers: [{ over: 100, output: 12 }] }
+    // Output doubles, input and the cached read stay where they were.
+    expect(costOf(usage({ input: 1_000, output: 1_000 }), partial)).toBeCloseTo(0.014, 10)
+  })
+
+  it('takes the highest tier the prompt reaches, whatever order they arrive in', () => {
+    const steps: ModelFacts = {
+      input: 1,
+      output: 1,
+      tiers: [{ over: 500_000, input: 8 }, { over: 100_000, input: 2 }],
+    }
+    expect(costOf(usage({ input: 50_000 }), steps)).toBeCloseTo(0.05, 10)
+    expect(costOf(usage({ input: 200_000 }), steps)).toBeCloseTo(0.4, 10)
+    expect(costOf(usage({ input: 600_000 }), steps)).toBeCloseTo(4.8, 10)
+  })
+
+  it('is priced the same in the window as in the main process', () => {
+    for (const run of [usage({ input: 199_999 }), usage({ input: 200_001, output: 5 }), usage({ cacheRead: 400_000 })]) {
+      expect(windowCost(run, TIERED)).toEqual(costOf(run, TIERED))
+    }
+  })
+
+  it('drops the tiers when the user has typed a price of their own', () => {
+    const record: ProviderRecord = {
+      id: 'p',
+      name: 'p',
+      kind: 'openai',
+      baseURL: 'https://example.test/v1',
+      models: ['m'],
+      facts: { m: TIERED },
+      overrides: { m: { input: 1, output: 1 } },
+    }
+    // The form offers no way to edit a tier, so keeping one would quietly
+    // double a number the user had just corrected.
+    expect(resolveFacts(record, 'm').tiers).toBeUndefined()
+    expect(windowResolve(record, 'm').tiers).toBeUndefined()
+    // A correction that says nothing about price leaves them alone.
+    expect(resolveFacts({ ...record, overrides: { m: { vision: true } } }, 'm').tiers).toEqual(TIERED.tiers)
+  })
+})
+
 describe('what a turn cost', () => {
   it('charges each kind of token at its own rate', () => {
     const spent = costOf(usage({ input: 10_000, output: 2_000, cacheRead: 40_000, cacheWrite: 8_000 }), PRICED)

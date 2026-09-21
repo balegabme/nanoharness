@@ -1,9 +1,11 @@
 // doc: docs/harness/ui.md
 import { ask } from './confirm.js'
 import { el, GLYPH, icon, message, must, relativeTime } from './dom.js'
-import { EFFORTS, factGaps, gapText, PRICE_LABEL, PRICES, priceText, resolveFacts, WARN } from './facts.js'
+import { EFFORTS, factGaps, gapText, isProviderKind, PRICE_LABEL, PRICES, priceText, resolveFacts, WARN } from './facts.js'
+import { matches } from './match.js'
 import type { ApprovalCandidate, ApprovalConfig } from '../core/approval.js'
 import type { ConfigStatus, NanoBridge, ProviderSaveRequest, ProviderView, SecretView } from '../ipc/contract.js'
+import type { KnownProvider } from '../providers/profiles.js'
 import type { Effort, ModelFacts, PriceKey, ProviderKind } from '../core/config.js'
 
 /**
@@ -36,6 +38,10 @@ const aboutVersion = must<HTMLElement>('about-version')
 const providers = must<HTMLElement>('providers')
 const providerList = must<HTMLElement>('provider-list')
 const providerAdd = must<HTMLButtonElement>('provider-add')
+const setupStart = must<HTMLElement>('setup-start')
+const setupKnown = must<HTMLSelectElement>('setup-known')
+const setupKnownNote = must<HTMLElement>('setup-known-note')
+const setupFields = must<HTMLElement>('setup-fields')
 const setupName = must<HTMLInputElement>('setup-name')
 const setupKind = must<HTMLSelectElement>('setup-kind')
 const setupBase = must<HTMLInputElement>('setup-base')
@@ -51,6 +57,10 @@ const setupProbeNote = must<HTMLElement>('setup-probe-note')
 const setupModels = must<HTMLElement>('setup-models')
 const setupModelList = must<HTMLElement>('setup-model-list')
 const setupAll = must<HTMLInputElement>('setup-all')
+const setupAllLabel = must<HTMLElement>('setup-all-label')
+const setupAllCount = must<HTMLElement>('setup-all-count')
+const setupFilter = must<HTMLInputElement>('setup-filter')
+const setupModelsEmpty = must<HTMLElement>('setup-models-empty')
 const aboutLink = must<HTMLAnchorElement>('about-x')
 
 let bridge: NanoBridge | null = null
@@ -63,6 +73,16 @@ let editing: string | null = null
 // checkboxes rather than a free-text field once a fetch has succeeded.
 let available: string[] = []
 let allowed = new Set<string>()
+/** What is typed in the box over the model list, narrowing what it draws. */
+let filter = ''
+/** How many models an endpoint has to offer before the box is worth drawing. */
+const FILTER_FROM = 10
+
+/** Empty the box, and put back the list it was narrowing. */
+function clearFilter(): void {
+  filter = ''
+  setupFilter.value = ''
+}
 // What the last fetch learned about each model, and what the user typed over
 // it. Most endpoints say nothing about prices or effort levels, which is why
 // the second map exists at all.
@@ -286,7 +306,7 @@ function activeModel(): string {
 }
 
 function currentKind(): ProviderKind {
-  return setupKind.value === 'anthropic' ? 'anthropic' : 'openai'
+  return isProviderKind(setupKind.value) ? setupKind.value : 'openai'
 }
 
 /**
@@ -305,6 +325,9 @@ const BASE_HINT: Record<ProviderKind, string> = {
   openai:
     'Everything before /chat/completions, with or without the version segment. ' +
     'A gateway path counts as part of it: https://host/v1, https://host/api/paas/v4, http://localhost:11434/v1.',
+  responses:
+    'Everything before /responses, with or without the version segment. ' +
+    'A gateway path counts as part of it: https://host/v1, https://host/api/openai.',
 }
 
 function renderBaseHint(): void {
@@ -313,17 +336,82 @@ function renderBaseHint(): void {
   setupBase.placeholder = kind === 'anthropic' ? 'https://api.example.com/provider' : 'https://api.example.com/v1'
 }
 
+/**
+ * The picker's options, past the blank one the markup ships with. An entry is a
+ * starting point and nothing more: it writes the fields and the record that
+ * gets saved is an ordinary one, editable and deletable like any other.
+ */
+function renderKnown(known: readonly KnownProvider[]): void {
+  while (setupKnown.options.length > 1) setupKnown.remove(1)
+  for (const entry of known) setupKnown.add(new Option(entry.label, entry.id))
+}
+
+/**
+ * Show what the picker did not already answer. An entry decides the name, the
+ * wire and the address, so all three fold away and the form asks for the two
+ * things left: the key, and which models to allow. Going back to setting it up
+ * by hand brings them out again, holding whatever the entry put there.
+ */
+function renderPicked(): void {
+  const entry = lastStatus?.knownProviders.find(known => known.id === setupKnown.value)
+  setupKnownNote.textContent = entry?.note ?? ''
+  setupFields.hidden = entry !== undefined
+  // Reachability is the question a typed address raises. An entry's address is
+  // right by construction, and fetching answers the key as well as the host,
+  // so the picked path is one button rather than two of equal weight.
+  setupTest.hidden = entry !== undefined
+}
+
+/**
+ * The rows to draw: what the endpoint offered, in an order a person can scan,
+ * narrowed to whatever the filter asks for. Sorting happens here rather than on
+ * the way in, because the order the list is stored in is the endpoint's to
+ * decide and this one is only about reading it. Digits sort as numbers, so
+ * `gpt-5.2` comes before `gpt-5.10`.
+ */
+function shownModels(): string[] {
+  return available.filter(id => matches(filter, id)).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+}
+
+/** What the tick at the top of the list would do, given what is under it. */
+function allText(shown: number, offered: number): string {
+  if (shown === offered || shown === 0) return 'Select all'
+  return shown === 1 ? 'Select the one shown' : `Select these ${shown}`
+}
+
 function renderModels(): void {
   setupModels.hidden = available.length === 0
+  // Worth its own line once the list is longer than a glance holds. Below that
+  // the box is a control asking to be used on six rows already on screen.
+  setupFilter.hidden = available.length < FILTER_FROM
+  const shown = shownModels()
   setupModelList.replaceChildren()
 
-  for (const id of available) {
+  for (const id of shown) {
     setupModelList.append(modelRow(id))
     if (opened.has(id)) setupModelList.append(modelEditor(id))
   }
 
-  setupAll.checked = available.length > 0 && allowed.size === available.length
-  setupAll.indeterminate = allowed.size > 0 && allowed.size < available.length
+  setupModelsEmpty.hidden = shown.length > 0 || available.length === 0
+  setupModelsEmpty.textContent = `Nothing offered here is called anything like “${filter.trim()}”.`
+
+  // The tick at the top answers for the rows under it. With a filter on, the
+  // models it is hiding are not what the user was just asked about.
+  const ticked = shown.filter(id => allowed.has(id)).length
+  setupAll.checked = shown.length > 0 && ticked === shown.length
+  setupAll.indeterminate = ticked > 0 && ticked < shown.length
+  setupAll.disabled = shown.length === 0
+  setupAllLabel.textContent = allText(shown.length, available.length)
+  setupAllCount.textContent = `${allowed.size} of ${available.length} ticked`
+
+  // The next step carries the weight. A provider with no model it may run is
+  // refused, so until something has been fetched there is nothing to save and
+  // asking the endpoint is the only move on the screen worth making.
+  const nothingYet = available.length === 0
+  setupFetch.classList.toggle('primary', nothingYet)
+  setupFetch.classList.toggle('outline', !nothingYet)
+  setupSave.classList.toggle('primary', !nothingYet)
+  setupSave.classList.toggle('outline', nothingYet)
 }
 
 /** What is known about one model right now, endpoint answer plus corrections. */
@@ -554,6 +642,12 @@ let savedKind: ProviderKind = 'openai'
 
 /** Fill the form from a saved provider, or blank it for a new one. */
 function loadForm(provider: ProviderView | null): void {
+  // The picker fills the fields and then stops describing them: what is on
+  // screen after an edit is the form's, not the entry's. A saved provider is
+  // not offered it at all, since picking would write over the record on screen.
+  setupKnown.value = ''
+  setupStart.hidden = provider !== null || (lastStatus?.knownProviders.length ?? 0) === 0
+  renderPicked()
   savedBase = provider?.baseURL ?? ''
   savedKind = provider?.kind ?? 'openai'
   // Whatever is loaded next describes the endpoint in the fields.
@@ -579,17 +673,20 @@ function loadForm(provider: ProviderView | null): void {
     available = shown.ids
   }
   setupProbeNote.textContent = shown?.note ?? ''
+  // The box narrowed a list that is not on screen any more.
+  clearFilter()
   renderBaseHint()
   renderModels()
 }
 
 export function applyConfig(status: ConfigStatus): void {
   lastStatus = status
+  renderKnown(status.knownProviders)
 
   setupTitle.textContent = status.configured ? 'Providers' : 'Set up a provider'
   setupHint.textContent = status.configured
     ? 'Pick a provider to edit, or add another. Test the endpoint, fetch what it offers, and tick the models this harness may run. Leave the key blank to keep the stored one.'
-    : 'NanoHarness ships with no endpoint and no model built in. Point it at any OpenAI-compatible or Anthropic API. The key is encrypted by your OS and stored outside this repo; the rest lands in a plain settings file.'
+    : 'NanoHarness ships with no endpoint and no model built in. Pick one below and paste a key, or set up any OpenAI-compatible or Anthropic API yourself. The key is encrypted by your OS and stored outside this repo; the rest lands in a plain settings file.'
 
   // Keep editing whatever row the user was on; otherwise follow the active
   // provider, and fall back to a blank form when nothing is saved yet.
@@ -660,6 +757,7 @@ async function probe(intent: 'test' | 'fetch'): Promise<void> {
         : ` ${WARN} ${blind} of them went undescribed by the endpoint; set those by hand, or leave every level on offer.`
     const note = `${count} offered. Tick the ones this harness may use.${said}`
     setupProbeNote.textContent = note
+    clearFilter()
     renderModels()
     // A fetch of a saved endpoint stores what it learned right away, so the
     // prices and effort levels are in place without a second click. It stores
@@ -848,17 +946,49 @@ export function initSettings(handlers: SettingsHandlers): void {
     renderBaseHint()
     onEndpointEdit()
   })
+  setupKnown.addEventListener('change', () => {
+    const entry = lastStatus?.knownProviders.find(known => known.id === setupKnown.value)
+    renderPicked()
+    if (entry === undefined) return
+    // Everything the endpoint decides, filled in; everything after it is the
+    // user's, which is the key and which models to allow.
+    setupName.value = entry.label
+    setupKind.value = entry.kind
+    setupBase.value = entry.baseURL
+    setupNote.textContent = ''
+    renderBaseHint()
+    onEndpointEdit()
+    setupKey.focus()
+  })
   setupTest.addEventListener('click', () => void probe('test'))
   setupFetch.addEventListener('click', () => void probe('fetch'))
   setupAll.addEventListener('change', () => {
-    allowed = setupAll.checked ? new Set(available) : new Set()
+    for (const id of shownModels()) {
+      if (setupAll.checked) allowed.add(id)
+      else allowed.delete(id)
+    }
+    renderModels()
+  })
+  setupFilter.addEventListener('input', () => {
+    filter = setupFilter.value
+    renderModels()
+  })
+  setupFilter.addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || setupFilter.value === '') return
+    // Escape closes the sheet. A box with something in it is the nearer thing
+    // to leave, and the second press still closes.
+    event.preventDefault()
+    clearFilter()
     renderModels()
   })
   setupKey.addEventListener('keydown', event => {
-    if (event.key === 'Enter') {
-      event.preventDefault()
-      void saveSetup()
-    }
+    if (event.key !== 'Enter') return
+    event.preventDefault()
+    // Whatever the form is waiting for. A key typed against an endpoint nobody
+    // has asked yet goes out and asks it, because saving here would store a
+    // provider with no model it is allowed to run.
+    if (available.length === 0) void probe('fetch')
+    else void saveSetup()
   })
   renderBaseHint()
   showPane('providers')

@@ -1,6 +1,7 @@
 // doc: docs/harness/overview.md
 import type { AgentRole } from '../core/agents.js'
 import type { ApprovalConfig, PermissionMode } from '../core/approval.js'
+import type { KnownProvider } from '../providers/profiles.js'
 import type { ActiveSelection, Effort, ModelFacts, ModelOffer, ProviderKind, ProviderRecord } from '../core/config.js'
 import type { JobState, JobView } from '../core/jobs.js'
 import type { AccessIntent } from '../core/scope.js'
@@ -230,6 +231,12 @@ export interface ConfigStatus {
   active?: ActiveSelection
   /** Whether the OS can encrypt a stored key at all. */
   keyStorage: 'os' | 'unavailable'
+  /**
+   * Endpoints the harness already knows the address and habits of, for the
+   * picker that fills the form in. The window cannot import the provider layer,
+   * so the list travels rather than being kept in two places.
+   */
+  knownProviders: readonly KnownProvider[]
   /** Why it is not configured yet. Absent once it is. */
   problem?: string
   /** The approval model ladder auto mode runs on. Carries no key. */
@@ -254,6 +261,13 @@ export interface ProviderSaveRequest {
    * which is the only way back to "nobody has said".
    */
   overrides?: Record<string, ModelFacts | null>
+  /**
+   * The header this endpoint wants the session id under. No screen offers it:
+   * known endpoints are answered by `src/providers/profiles.ts` and anything
+   * else is edited into the settings file by hand. Omit to keep what is stored,
+   * which is what every save does; an empty string clears it.
+   */
+  sessionHeader?: string
   /** Omit to keep the key already stored for this provider. */
   apiKey?: string
   /**
