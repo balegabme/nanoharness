@@ -6,9 +6,10 @@ Format based on Keep a Changelog; versioning follows SemVer.
 Nothing has been released yet, so this file says what 0.0.1 will contain, and
 not how it got there. An entry says what changed and, where a reader would
 otherwise be surprised, what it was doing wrong before. The reasoning behind a
-design is in `docs/`, the full account of a defect is in
-`docs/harness/improvements.md`, and the step-by-step development history is in
-the git log; none of the three is repeated here.
+design is in `docs/`, the full account of a defect is in the improvement
+ledger (`docs/harness/improvements.md` while it is open,
+`docs/improvements-archive.md` once it is fixed), and the step-by-step
+development history is in the git log; none of the three is repeated here.
 
 ## [Unreleased]
 
