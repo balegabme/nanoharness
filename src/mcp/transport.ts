@@ -21,7 +21,7 @@ export interface Transport {
   /**
    * The version the handshake settled on. HTTP has to repeat it on every
    * request after `initialize`; stdio has no use for it, which is why this is
-   * optional rather than a method every transport must answer.
+   * optional and not a method every transport must answer.
    */
   setProtocolVersion?(version: string): void
 }
@@ -42,13 +42,13 @@ export function stdioCommand(command: string, args: readonly string[]): { comman
 }
 
 /**
- * Ask this platform to end the child, and resolve once the request has actually
- * been made, rather than once it has been started.
+ * Ask this platform to end the child, and resolve once the request has been
+ * made, not once it has been started.
  *
  * On POSIX that is a system call and `hard` picks the signal. On Windows it is
  * another process, one that walks the tree first, measured at three seconds on
  * an idle machine; that is the cost of asking and says nothing about how
- * stubborn the child is, so it is awaited here rather than charged to the grace
+ * stubborn the child is, so it is awaited here and never charged to the grace
  * period below. `hard` changes nothing there: a `taskkill` without `/F` posts a
  * window message, and a stdio server has no window to receive it.
  *
@@ -194,9 +194,8 @@ export class StdioTransport implements Transport {
    * launcher is the process this owns and the server is its grandchild, so
    * `taskkill /T` takes the tree.
    *
-   * A process that will not die at all is given up on after the second attempt
-   * rather than waited for forever, since this is on the path an app quit
-   * takes.
+   * A process that will not die at all is given up on after the second
+   * attempt, since this is on the path an app quit takes.
    */
   async close(): Promise<void> {
     this.closed = true

@@ -6,12 +6,10 @@ import { join } from 'node:path'
  * Skills, Claude-style and no larger: a folder with a `SKILL.md` whose
  * frontmatter says what it is for (plan §8).
  *
- * The whole design is one decision — what gets injected. A skill is a document,
- * often a long one, and putting the documents in the system prompt would mean
- * paying for every skill on every request of every turn whether or not the task
- * has anything to do with them. So the prompt carries the *list*: one line per
- * skill, name and description and path. The agent reads the one it needs with
- * the tool it already has.
+ * The prompt carries the list and not the documents: one line per skill, name
+ * and description and path. A skill is often a long document, and the prompt
+ * is paid for on every request of every turn. The agent reads the one it needs
+ * with the tool it already has.
  */
 
 export interface SkillSummary {
@@ -25,9 +23,8 @@ export interface SkillSummary {
 export const SKILLS_DIR = join('.nanoharness', 'skills')
 
 /**
- * Frontmatter, only as much of YAML as the format actually uses: `key: value`
- * lines between two `---` fences. A skill file is written by hand, and a parser
- * that accepts anchors and block scalars would be more code than the feature.
+ * Frontmatter, only as much of YAML as the format uses: `key: value` lines
+ * between two `---` fences.
  */
 export function parseFrontmatter(text: string): Record<string, string> {
   const lines = text.split(/\r?\n/)
@@ -49,12 +46,10 @@ export function parseFrontmatter(text: string): Record<string, string> {
 
 /**
  * Every skill in the workspace, sorted by name so the injected block is the
- * same bytes on every request — a list that reordered itself between turns
- * would invalidate the prompt cache for no reason at all.
+ * same bytes on every request and the prompt cache survives the turn.
  *
  * A folder without a readable `SKILL.md`, or without a name and a description
- * in it, is skipped rather than guessed at: a skill the agent cannot tell apart
- * from another one is worse than a skill it never hears about.
+ * in it, is skipped.
  */
 export async function loadSkills(root: string): Promise<SkillSummary[]> {
   const dir = join(root, SKILLS_DIR)
@@ -78,8 +73,7 @@ export async function loadSkills(root: string): Promise<SkillSummary[]> {
 
 /**
  * The lines that go in the system prompt. Empty when there are no skills, so a
- * workspace without any pays nothing — not even a heading explaining that it
- * has none.
+ * workspace without any pays nothing at all.
  */
 export function skillsBlock(skills: readonly SkillSummary[]): string[] {
   if (skills.length === 0) return []
@@ -87,6 +81,6 @@ export function skillsBlock(skills: readonly SkillSummary[]): string[] {
     '',
     'Skills available in this workspace. Each is a document with instructions for one kind of task.',
     'These lines are all you have been given; read the file when a task matches one, and not before.',
-    ...skills.map(skill => `- ${skill.name} — ${skill.description} (${skill.path})`),
+    ...skills.map(skill => `- ${skill.name}: ${skill.description} (${skill.path})`),
   ]
 }

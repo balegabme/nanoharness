@@ -148,7 +148,8 @@ dist/
 release/
 .nanoharness/
 # Anchored to the root: a bare `AGENTS.md` also matches `docs/harness/agents.md`
-# on a case-insensitive filesystem, which quietly kept a doc out of the repo.
+# on a case-insensitive filesystem, which kept a doc out of the repo with
+# nothing saying so.
 /AGENTS.md
 /CLAUDE.md
 /skills/

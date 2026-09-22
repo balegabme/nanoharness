@@ -95,7 +95,7 @@ const REPEAT_ABORT = 6
 const FAILURE_NUDGE = 5
 
 const CLOSING_NOTE_ODDS = 1 / 10_000
-const CLOSING_NOTE = 'I love you <3 — balega, creator of nanoharness'
+const CLOSING_NOTE = 'I love you <3 - balega, creator of nanoharness'
 
 /** How many times one round is asked for before the turn gives up. */
 const ROUND_ATTEMPTS = 5
@@ -157,7 +157,7 @@ export function elapsedText(ms: number): string {
   return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
 }
 
-/** The files a turn changed, with a long list cut short rather than stored whole. */
+/** The files a turn changed, with a long list cut short. */
 function fileList(files: readonly string[]): string {
   if (files.length === 0) return ''
   const head = files.slice(0, FILES_LISTED).join(', ')
@@ -190,7 +190,7 @@ export interface SessionOptions {
   effort?: Effort
   /**
    * What it charges and the most output it will produce. Absent when nobody has
-   * described this model, which leaves the cost off the line rather than guessed.
+   * described this model, so the cost is left off the line and never guessed.
    */
   facts?: ModelFacts
   /** Defaults to a hard block outside `cwd`; the app passes one that can ask. */
@@ -219,7 +219,7 @@ export interface SessionOptions {
 /**
  * One turn as the usage log keeps it: what it spent, which parts of the
  * harness spent it, what that came to, and how long the model generated for.
- * The shares are inside `usage` rather than additions to it.
+ * The shares are inside `usage` and never added to it.
  */
 export interface TurnSpend {
   usage: TurnUsage
@@ -259,7 +259,7 @@ export class Session {
    */
   private subagentUsage: TurnUsage = emptyUsage()
   /**
-   * The part of `totalUsage` the harness spent on its own behalf rather than on
+   * The part of `totalUsage` the harness spent on its own behalf and not on
    * the conversation: today the approval model, later a summariser or a titler.
    */
   private harnessUsage: TurnUsage = emptyUsage()
@@ -622,8 +622,8 @@ export class Session {
     try {
       return await this.runRounds(sessionId)
     } catch (err) {
-      // A tool that threw rather than returned can be quoting the arguments it
-      // was given, which by then held the real value.
+      // A tool that threw can be quoting the arguments it was given, which by
+      // then held the real value.
       const message = this.secrets.redact(err instanceof Error ? err.message : String(err))
       this.record('error', message)
       this.bus.emit({ type: 'session.error', sessionId, turn: this.turn, message, at: Date.now() })
@@ -635,7 +635,7 @@ export class Session {
       // Priced from the model that actually ran it, which is why this is here
       // and not in the window: the window knows only what is selected now.
       // A turn whose usage nobody reported is not a turn that cost nothing, so
-      // the cost is left off the line rather than printed as $0.
+      // the cost is left off the line and never printed as $0.
       const counted = this.turnUsage.input + this.turnUsage.output + this.turnUsage.cacheRead + this.turnUsage.cacheWrite
       const spent = counted > 0 ? this.turnCost() : null
       this.summarize(turnSummary(this.turnTally, [...this.turnFiles], Date.now() - this.turnStartedAt, spent))
@@ -686,8 +686,8 @@ export class Session {
       }
 
       if (toolCalls.length === 0) {
-        // No answer, no error and nothing on screen is the one ending the
-        // user cannot act on. Say so.
+        // No answer, no error and nothing on screen is the one ending the user
+        // cannot act on, so the turn says so.
         if (text.trim() === '') this.note('The turn ended without an answer. Send that again, or ask for what is missing.')
         else if (Math.random() < CLOSING_NOTE_ODDS) this.note(CLOSING_NOTE)
         this.bus.emit({ type: 'session.finished', sessionId, turn: this.turn, at: Date.now() })
@@ -735,7 +735,7 @@ export class Session {
       this.bus.emit({ type: 'round.started', sessionId, turn: this.turn, at: Date.now() })
       try {
         const round = await this.attemptRound(spent)
-        // A fresh total rather than a running one: `round.usage` is the object
+        // A fresh total and not a running one: `round.usage` is the object
         // the provider handed over, and the caller reads it again.
         const usage = emptyUsage()
         addInto(usage, round.usage)
@@ -752,8 +752,8 @@ export class Session {
         this.bus.emit({ type: 'round.retry', sessionId, turn: this.turn, attempt: attempt + 1, of: ROUND_ATTEMPTS, text, at: Date.now() })
         await sleep(backoffFor(err, attempt, BACKOFF_MS), this.controller?.signal)
         // Stop pressed during the wait. An empty round is what an aborted
-        // stream hands back, so the loop winds down the way it knows rather
-        // than ending the turn as an error.
+        // stream hands back, so the loop winds down the way it knows and the
+        // turn does not end as an error.
         if (this.stopped) return { text: '', toolCalls: [], usage: carried, thinking: [], streamMs: 0 }
       }
     }
@@ -768,8 +768,8 @@ export class Session {
     const toolCalls: ToolCall[] = []
     const thinking: ThinkingBlock[] = []
     let usage = emptyUsage()
-    // Timed from the first chunk rather than from the request, so the number is
-    // generation speed and not generation speed plus however long it queued.
+    // Timed from the first chunk, not from the request, so the number is
+    // generation speed without however long the request queued.
     let firstChunkAt = 0
 
     const chunks = this.provider.stream({
@@ -983,9 +983,9 @@ export class Session {
         ...(this.options.job === undefined ? {} : { job: this.options.job }),
       })
     } catch (err) {
-      // A tool that threw rather than returned is still a tool failure, and the
-      // loop needs a result either way. Without this the calls beside it have no
-      // answer, and the next request carries tool calls nothing replied to.
+      // A tool that threw is still a tool failure, and the loop needs a result
+      // either way. Without this the calls beside it have no answer, and the
+      // next request carries tool calls nothing replied to.
       const message = `${tool.input.name} failed: ${err instanceof Error ? err.message : String(err)}`
       return { ok: false, summary: message, content: message, isError: true }
     }

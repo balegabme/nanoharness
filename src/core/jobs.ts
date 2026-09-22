@@ -8,18 +8,16 @@ import type { SpawnMode } from './spawn.js'
 
 /**
  * The subagents that are running right now: what each was asked, and its last
- * line. Background and foreground spawns both get an entry: a foreground spawn
- * blocks the parent's turn, and the window has to be able to say what it is
- * waiting for.
+ * line. Background and foreground spawns both get an entry, since a foreground
+ * spawn blocks the parent's turn and the window has to say what it is waiting
+ * for.
  *
  * A job's id is also the subagent's session id, which is how its stream events
  * find the window (`src/core/spawn.ts`).
  *
- * An entry is dropped the moment its subagent finishes. By then the child's
- * whole conversation has been written to disk, so the record is the transcript
- * and this is only ever a list of what is in flight. That is also why nothing
- * here is persisted: a job that was running when the app closed died with the
- * process and cannot be resumed.
+ * An entry is dropped the moment its subagent finishes; by then the child's
+ * whole conversation is on disk. Nothing here is persisted, so a job that was
+ * running when the app closed died with the process and cannot be resumed.
  */
 
 export type JobState = 'running' | 'done' | 'failed' | 'stopped'
@@ -40,9 +38,8 @@ export interface JobView {
   usage: TurnUsage
   /**
    * Its own tool calls: how many, how many worked. Absent until the job ends,
-   * and still absent when it ended without the count reaching here, such as a
-   * job abandoned at app close. A zero count is a claim that it did nothing,
-   * which for a job that ran for a minute is the wrong thing to say.
+   * and still absent when the count never reached here, such as a job
+   * abandoned at app close. A zero count would claim it did nothing.
    */
   tools?: ToolStats
   startedAt: number
@@ -102,16 +99,14 @@ export class JobRegistry {
     job.endedAt = Date.now()
     this.bus.emit({ type: 'job.finished', job: { ...job }, at: job.endedAt })
     // The event carries everything the entry held, and the transcript on disk
-    // holds the rest. Keeping it here as well would be a list that only grows.
+    // holds the rest.
     this.jobs.delete(id)
   }
 
   /**
    * Everything still running, ended as `stopped` because the process that was
    * running it is going away. The job's answer will never arrive, and the
-   * conversation has to carry that: the returned views are what the caller
-   * needs to say so in the transcript, so the last word is not a promise
-   * nothing will keep.
+   * returned views are what the caller needs to say so in the transcript.
    */
   abandon(note: string): JobView[] {
     const running = [...this.jobs.values()].filter(job => job.state === 'running')

@@ -86,7 +86,7 @@ describe('which file wins', () => {
 })
 
 describe('a line this parser will not read', () => {
-  it('counts a character class rather than half-applying it', () => {
+  it('counts a character class instead of half-applying it', () => {
     const parsed = parseIgnore(['*.[oa]', 'out/', ''].join('\n'))
 
     expect(parsed.dropped).toBe(1)

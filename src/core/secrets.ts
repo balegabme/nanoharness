@@ -8,12 +8,12 @@
  * replaced by `{{secret:name}}` before anything is drawn, stored or sent. The
  * placeholder is what goes in the transcript on disk, what the window shows,
  * and what the provider receives. The real bytes are put back in exactly one
- * place — the arguments of a tool call, at the moment it runs — and taken back
+ * place, the arguments of a tool call at the moment it runs, and taken back
  * out of whatever that tool returns.
  *
  * So the key crosses no network the user did not ask for. It is not in the
- * provider's request log, not in `sessions/*.json`, and not on screen. What the
- * model can do with it is the only thing it needs to: pass it along.
+ * provider's request log, not in `sessions/*.json`, and not on screen. The
+ * model can do one thing with it: pass it along.
  *
  * The value is never written to disk by this module. It lives for the life of
  * the process (`src/main/secret-store.ts` decides whether it outlives that).
@@ -28,9 +28,9 @@ const REFERENCE = /\{\{secret:([A-Za-z0-9_]+)\}\}/g
 
 /**
  * Shapes that are a key and nothing else. Each one is a vendor's own prefix,
- * so a match is a key rather than a guess — which is why the list is worth
- * keeping even though `PREFIXED` below catches most of the same strings: a hit
- * here knows whose key it is, and names it in settings accordingly.
+ * so a match is a key and not a guess. The list is worth keeping even though
+ * `PREFIXED` below catches most of the same strings: a hit here knows whose
+ * key it is, and names it in settings accordingly.
  */
 const PATTERNS: readonly { hint: string; re: RegExp }[] = [
   { hint: 'anthropic_key', re: /sk-ant-[A-Za-z0-9_-]{24,}/g },
@@ -63,7 +63,7 @@ const PATTERNS: readonly { hint: string; re: RegExp }[] = [
  */
 const PREFIXED = /(?<![A-Za-z0-9_-])[A-Za-z][A-Za-z0-9]{1,11}_([A-Za-z0-9]{40,})(?![A-Za-z0-9_-])/g
 
-/** Upper, lower and a digit: an issued token rather than a long word. */
+/** Upper, lower and a digit, which a long word does not have. */
 function keylike(value: string): boolean {
   return /[a-z]/.test(value) && /[A-Z]/.test(value) && /[0-9]/.test(value)
 }
@@ -76,7 +76,7 @@ function keylike(value: string): boolean {
  */
 const LABELLED = /\b(?:api[_ -]?key|apikey|access[_ -]?token|auth[_ -]?token|bearer|secret|password|passwd|token|key)\b\s*(?:is\s+|[:=]\s*)["'`]?([A-Za-z0-9_\-+=]{20,})["'`]?/gi
 
-/** A labelled candidate has to look like a key rather than like a sentence. */
+/** A labelled candidate has to look like a key and not like a sentence. */
 function plausible(value: string): boolean {
   return /[0-9]/.test(value) && /[A-Za-z]/.test(value)
 }
@@ -133,9 +133,9 @@ export interface StoredSecret {
 }
 
 /**
- * The vault. It is deliberately small and synchronous: every path that touches
- * a secret — drawing a message, running a tool, storing a transcript — is on a
- * hot path where an await would be one more place to forget.
+ * The vault. It is small and synchronous on purpose: every path that touches a
+ * secret (drawing a message, running a tool, storing a transcript) is a hot
+ * path where an await would be one more place to forget.
  */
 export class SecretVault {
   private readonly byName = new Map<string, StoredSecret>()
@@ -223,8 +223,8 @@ export class SecretVault {
 
   /**
    * Values back to placeholders. Everything coming *out* of a tool goes through
-   * here, because a shell that echoes its own arguments — or a config file read
-   * back — would otherwise put the key straight into the conversation.
+   * here, because a shell that echoes its own arguments, or a config file read
+   * back, would otherwise put the key straight into the conversation.
    */
   redact(text: string): string {
     if (text === '') return text
@@ -247,10 +247,10 @@ export class SecretVault {
  * existed when it was constructed; a key captured since then is one the model
  * will meet as `{{secret:name}}` with nothing to tell it the value is real.
  *
- * It compares names rather than counts on purpose. Capture is idempotent, and
- * the window captures a message before the main process sees it, so a count
- * taken on the way in has already grown — measured that way the new key never
- * looks new, and the session that needs rebuilding never gets rebuilt.
+ * It compares names and not counts. Capture is idempotent, and the window
+ * captures a message before the main process sees it, so a count taken on the
+ * way in has already grown: measured that way the new key never looks new, and
+ * the session that needs rebuilding never gets rebuilt.
  */
 export function hasUnknownSecret(built: readonly string[], current: readonly string[]): boolean {
   return current.some(name => !built.includes(name))
@@ -260,8 +260,7 @@ export function hasUnknownSecret(built: readonly string[], current: readonly str
  * What the agent is told, and it needs telling. A model handed
  * `{{secret:tavily_key}}` with no explanation does one of two things: it stops
  * and asks the user for the real key, or it writes `YOUR_KEY_HERE` and calls
- * the job done. Both are the same bug, that it does not know the placeholder
- * is live, and this block fixes it.
+ * the job done. Both come of not knowing the placeholder is live.
  */
 export function secretsBlock(names: readonly string[]): string[] {
   if (names.length === 0) return []

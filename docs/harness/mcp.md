@@ -5,12 +5,12 @@ workspace configures, and their tools sit in the same list as `read` and `bash`.
 The model cannot tell which is which, and does not need to. Plan §7.
 
 Files:
-- src/mcp/protocol.ts — JSON-RPC envelopes, protocol versions, the error kinds
-- src/mcp/transport.ts — stdio and Streamable HTTP
-- src/mcp/client.ts — the handshake, the catalog, and calls
-- src/mcp/schema.ts — MCP JSON Schema narrowed to what a provider takes
-- src/mcp/config.ts — the two `mcp.json` files, and what an entry may hold
-- src/mcp/hub.ts — every server a session talks to, as harness tools
+- src/mcp/protocol.ts: JSON-RPC envelopes, protocol versions, the error kinds
+- src/mcp/transport.ts: stdio and Streamable HTTP
+- src/mcp/client.ts: the handshake, the catalog, and calls
+- src/mcp/schema.ts: MCP JSON Schema narrowed to what a provider takes
+- src/mcp/config.ts: the two `mcp.json` files, and what an entry may hold
+- src/mcp/hub.ts: every server a session talks to, as harness tools
 
 ## What is implemented
 
@@ -25,7 +25,7 @@ it cannot speak. Then `notifications/initialized`, and the session is open.
 
 `tools/list` is followed to the end of its cursor once, when the hub connects,
 and the result is what the session's tool definitions are built from. It is not
-re-listed mid-session, and that is a decision rather than an omission: the
+re-listed mid-session: the
 definitions sit in the cached prefix of every request, so a catalog that grew a
 tool halfway through a conversation would move bytes the provider has already
 cached and cost the whole prefix, to add a tool the model was not going to be
@@ -34,8 +34,6 @@ cached copy, so the next thing to ask for the catalog gets the new one; in
 practice that is the next session, built the next time the hub is.
 
 ## Two kinds of failure, and why they are never merged
-
-This is the whole reason the layer exists.
 
 A protocol error, meaning a `-32700` through `-32603`, a malformed envelope or
 an unknown method, is a bug in this client or that server. The model never sees
@@ -92,7 +90,7 @@ A spawn error arrives a tick late, so a command that does not exist looks alive
 for a moment. The transport waits that moment out before reporting success,
 which turns "connected, then every call times out" into the error it is.
 
-A `close` waits for the child to exit rather than sending a signal and moving
+A `close` waits for the child to exit, and never just posts a signal and moves
 on, so "the hub is closed" means the process has ended and the directory it was
 started in can be deleted. Both attempts are waited on, not just the first,
 because a `close` that had to escalate must not report a stopped server while
@@ -112,8 +110,8 @@ alone would leave the server running with its parent gone. `taskkill /T` is what
 handles that. There is no polite-then-hard pair on Windows, either: a `taskkill`
 without `/F` posts a window message and a stdio server has no window, so both
 attempts send the same thing and the second is there only to catch a first that
-raced the process still starting up. A process that survives both is given up on
-rather than waited for forever, because this is on the path an app quit takes.
+raced the process still starting up. A process that survives both is given up
+on, since this is on the path an app quit takes.
 
 Streamable HTTP posts to one endpoint with
 `Accept: application/json, text/event-stream` and reads whichever the server
@@ -124,8 +122,8 @@ handshake settled on, because a server that receives no version header is
 entitled to assume an older protocol and answer in a shape this client stopped
 expecting.
 
-A 404 on a session the server has forgotten closes the transport rather than
-being retried into the void. It is deliberately not re-initialized underneath a
+A 404 on a session the server has forgotten closes the transport and is not
+retried. It is deliberately not re-initialized underneath a
 running conversation: the tool definitions are already in the cached prefix,
 and a reconnect that came back with a different catalog would contradict them.
 
@@ -137,14 +135,15 @@ because URLs end up in logs, proxies and error reports.
 An MCP server publishes whole JSON Schema. The harness passes providers a
 subset. `$ref`, `oneOf`, `format`, `const` and a dozen other keywords are legal
 in an `inputSchema`, mean nothing in a tool definition, and some are rejected
-outright by OpenAI's strict mode. So a schema is narrowed rather than forwarded:
-shape, names, types, descriptions and enums survive, because they are what a
+outright by OpenAI's strict mode. So a schema is narrowed and never forwarded
+whole: shape, names, types, descriptions and enums survive, because they are
+what a
 model needs to fill the arguments in. A union type becomes its first non-null
 member, since an argument that may also be null is still, to the model typing
 it, a string, and `integer` becomes `number`, which is the only thing the
 provider layer knows.
 
-A node with no usable `type` becomes a string rather than disappearing. `anyOf`,
+A node with no usable `type` becomes a string and never disappears. `anyOf`,
 `oneOf` and `$ref` are ordinary in a published `inputSchema` and none of them
 carry a type, so dropping such a node would take a *required* argument out of
 the tool definition: the model could never supply it and every call would come
@@ -155,15 +154,15 @@ the model can read and correct; a missing argument is not.
 
 `mcp__<server>__<tool>`. The prefix keeps a server's `search` from colliding
 with a built-in tool and keeps two servers' `search` apart. It is derived from
-the configured server name rather than generated, so the tool definitions, which
+the configured server name and never generated, so the tool definitions, which
 sit in front of every message, are the same bytes on every request and the
 provider's cache keeps answering them.
 
 Both providers refuse a name longer than 64 characters, and that refusal is not
 one bad tool: the name sits in the definitions block, so every request of the
 session would be a 400. A long server name plus a long tool name is therefore
-trimmed and given a short digest of the full name: inside the cap, still unique,
-and derived rather than counted, so it is the same bytes every time.
+trimmed and given a short digest of the full name: inside the cap, still
+unique, and derived and not counted, so it is the same bytes every time.
 
 ## Configuration
 
@@ -186,9 +185,9 @@ key is the same server in every project, and configuring it once is what a home
 directory is for; a server that reaches this project's issue tracker belongs to
 this project and nowhere else.
 
-A name in the project file replaces the global entry outright rather than
-merging field by field, since a half-overridden command line is a server nobody
-configured, and `"enabled": false` is how a project switches a global server off
+A name in the project file replaces the global entry outright and never merges
+field by field, since a half-overridden command line is a server nobody
+configured. `"enabled": false` is how a project switches a global server off
 without editing the file every other workspace reads.
 
 Secret-free by schema (plan §16) as far as the schema reaches: a *bearer* token
@@ -196,7 +195,7 @@ is named, never written. There is no field one could land in. stdio servers get
 named variables passed through from the harness's environment; HTTP servers get
 a bearer token read from the variable `tokenEnv` names.
 
-`url` is the exception, and it is not a small one. A server that authenticates
+`url` is the exception. A server that authenticates
 through its own query string, and Tavily is one, has nowhere else to put the
 key, so the URL is stored as given and the file holds a live credential. A
 `{{secret:name}}` written into that URL is substituted by the harness as the
@@ -207,14 +206,14 @@ because tool output is redacted on the way in, which reads exactly like a file
 that stored the placeholder, and is not. A config with a `url` is therefore not
 automatically safe to paste into an issue.
 
-Nothing is configured by default. Not even a search server: a harness that
+Nothing is configured by default, not even a search server: a harness that
 arrives with servers the user did not ask for is spawning subprocesses on their
 machine on its own authority, and the tool definitions it adds are paid for on
 every request of every turn. `examples/mcp.json` is a working file to copy.
 
 Neither file has to be hand-written. `nh mcp add`, `list`, `remove` and `check`
 write and read them through the same `parseServer` and the same client a session
-uses, so an entry the harness would ignore is refused at the command rather than
+uses, so an entry the harness would ignore is refused at the command instead of
 sitting in the file looking configured, and `check` proves a server connects by
 connecting to it. `cli.md` has the flags.
 
@@ -234,8 +233,7 @@ against the actual server is schema it will relay.
 
 The sentence about tokens is scoped for the same reason. A bearer token is named
 and not written, which is what `tokenEnv` is for; a URL that carries its own key
-is stored as given, key and all, and the prompt says so rather than promising
-otherwise.
+is stored as given, key and all, and the prompt says so.
 
 What comes after it depends on who is reading. An agent that can spawn is given
 no command at all; the handoff rule is added to its session prompt, and this
@@ -245,8 +243,8 @@ own folder may not be the workspace the user meant. A prompt that holds both a
 command and a rule to delegate is settled by whichever half the model reads
 last, and a builder given both ran the command itself, so only one half is sent.
 
-The commands are written out with their flags rather than named, because a
-command an agent is never told about might as well not exist. `cli.md` has the
+The commands are written out with their flags, since a command an agent is
+never told about might as well not exist. `cli.md` has the
 turn that made that concrete.
 
 That block is there because of two failures, both observed. A model asked what
@@ -266,7 +264,7 @@ would cost the whole prefix. See the lifetime section below.
 One hub per session, connected before the first request, because the tool
 definitions have to be in front of the first turn and a tool discovered later
 would move bytes the provider has already cached. Servers are connected one
-after another rather than all at once: an `npx -y` on a cold cache downloads a
+after another and never all at once: an `npx -y` on a cold cache downloads a
 package, and four of those competing for one laptop's bandwidth finish no
 sooner than four in a row.
 
@@ -274,8 +272,8 @@ A server that will not start is not an error. It contributes no tools, its
 reason is kept in the hub's status and logged, and the session runs without it:
 a broken search server must not be the reason a coding session cannot open. An
 `mcp.json` that will not parse is reported the same way, under the file's own
-name, because starting silently with no MCP tools after a stray comma looks
-exactly like a harness that never supported them.
+name, because starting with no MCP tools after a stray comma looks exactly like
+a harness that never supported them.
 
 A server that fails *after* it started, with a catalog that errors or a
 handshake that times out, is closed on the way out of that failure, because a

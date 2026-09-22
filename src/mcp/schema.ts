@@ -8,7 +8,7 @@ import type { JsonSchema } from '../core/types.js'
  * a dozen other keywords are legal in an `inputSchema` and mean nothing to a
  * tool definition, and some of them are rejected outright by strict mode.
  *
- * So an MCP schema is narrowed rather than forwarded. What survives is what a
+ * So an MCP schema is narrowed and never forwarded whole. What survives is what a
  * model needs in order to fill the arguments in: the shape, the names, the
  * types, the descriptions and the enums. What is dropped was never going to
  * change what the model typed.
@@ -37,7 +37,7 @@ function typeOf(node: Record<string, unknown>): SchemaType {
   // The fallback is not cosmetic. `anyOf`, `oneOf` and `$ref` are ordinary in a
   // published `inputSchema` and none of them carry a `type`, so dropping a node
   // that has none would take a *required* argument out of the tool definition
-  // — the model could never supply it, and every call would come back -32602
+  // the model could never supply it, and every call would come back -32602
   // with nothing in the log to say why. A string the server rejects is a
   // failure the model can read and correct; a missing argument is not.
   if (isJsonObject(node.properties)) return 'object'
@@ -56,7 +56,7 @@ function enumOf(node: Record<string, unknown>): JsonSchema['enum'] | undefined {
 
 /**
  * Narrow one node. Null only for something that is not a schema at all, or for
- * nesting deep enough that a model would not read it anyway — never for a node
+ * nesting deep enough that a model would not read it anyway. Never for a node
  * this code merely failed to understand.
  */
 export function narrowSchema(value: unknown, depth = 0): JsonSchema | null {
@@ -105,16 +105,16 @@ const NAME_CAP = 64
  * `mcp__<server>__<tool>`, with anything a provider might reject taken out of
  * the two names. The prefix is what keeps a server's `search` from colliding
  * with a built-in `read`, and keeps two servers' `search` apart; it is derived
- * from the configured name rather than generated, so the tool definitions —
- * which sit in front of every message — are the same bytes on every request and
- * the provider's cache keeps answering them.
+ * from the configured name and never generated, so the tool definitions, which
+ * sit in front of every message, are the same bytes on every request and the
+ * provider's cache keeps answering them.
  *
  * A long server name plus a long tool name can exceed what either provider
  * accepts, and that failure is not one bad tool: the name sits in the
  * definitions block, so every request of the session is a 400. The tail is
  * therefore trimmed and given a short digest of what was trimmed, which keeps
- * the result inside the cap, unique, and — because it is derived, not counted —
- * the same bytes on every request.
+ * the result inside the cap, unique, and, because it is derived and not
+ * counted, the same bytes on every request.
  */
 export function toolName(server: string, tool: string): string {
   const full = `mcp__${slug(server)}__${slug(tool)}`

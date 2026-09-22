@@ -22,9 +22,9 @@ export interface Endpoint {
 }
 
 /**
- * The one place a provider kind turns into a client. Everything above this line
- * — sessions, settings, the model picker — deals in records and never in wire
- * formats, so adding a third kind touches this file and nothing else.
+ * The one place a provider kind turns into a client. Everything above this
+ * line (sessions, settings, the model picker) deals in records and never in
+ * wire formats, so adding a third kind touches this file and nothing else.
  */
 export function createProvider(endpoint: Endpoint): ChatProvider {
   const { baseURL, apiKey } = endpoint

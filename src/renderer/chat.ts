@@ -12,7 +12,7 @@ import type { ModelFacts } from '../core/config.js'
  * is requested and grows its result when it returns, and the answer types
  * itself out underneath.
  *
- * A class rather than a module of globals because there are two of them: the
+ * A class and not a module of globals because there are two of them: the
  * conversation, and the subagent the user has opened. A subagent does what the
  * main agent does, so it is drawn by the same code.
  */
@@ -85,7 +85,7 @@ function toolDiff(text: string): DiffOpen | null {
   return { path: /^--- a\/(.*)$/m.exec(body)?.[1] ?? 'file', text: body }
 }
 
-/** The result with the diff taken out: the card opens it instead of listing it. */
+/** The result with the diff taken out: the card opens it in a view of its own. */
 function withoutDiff(text: string): string {
   return text.replace(DIFF_FENCE, '').trimEnd()
 }
@@ -182,7 +182,7 @@ export class ChatView {
     const stream = this.host.stream
     const pinned = stream.scrollHeight - stream.scrollTop - stream.clientHeight < 80
     // The turn indicator stays the last thing in the flow, so a block that
-    // arrives mid-turn goes above it rather than orphaning it up the page.
+    // arrives mid-turn goes above it and never orphans it up the page.
     stream.insertBefore(node, this.activity ?? this.host.tail)
     this.roundNodes.push(node)
     if (this.host.mark !== undefined) this.host.mark.hidden = true
@@ -190,7 +190,7 @@ export class ChatView {
   }
 
   /**
-   * A line directly under a block rather than at the end of the flow, for the
+   * A line directly under a block and not at the end of the flow, for the
    * case where the two belong together and something else has been appended
    * since. The round owns it the way it owns the block, so clearing the round
    * takes both.
@@ -376,7 +376,7 @@ Every turn added up, subagents included.${share}${harness}${note}`
     this.append(card)
   }
 
-  /** A line about the run itself rather than about the conversation. */
+  /** A line about the run itself, not about the conversation. */
   noteBlock(text: string): void {
     const id = subagentId(text)
     const pair = this.blockPair('note', 'note')
@@ -404,8 +404,8 @@ Every turn added up, subagents included.${share}${harness}${note}`
 
   /**
    * Make a `spawn` card open its subagent. The card is the subagent as far as
-   * the reader is concerned, so the whole head of it is the way in rather than
-   * folding open on the arguments.
+   * the reader is concerned, so the whole head of it is the way in and nothing
+   * folds open on the arguments.
    */
   private linkCard(card: HTMLDetailsElement, id: string): void {
     if (card.dataset.subagent === id) return
@@ -518,7 +518,7 @@ Every turn added up, subagents included.${share}${harness}${note}`
   /**
    * The answer, told apart from the running commentary above it: a turn is
    * mostly tool cards and half-sentences, and the thing the user asked for is
-   * the last block. Marked at the end of the turn rather than while it streams,
+   * the last block. Marked at the end of the turn and not while it streams,
    * because a block followed by another tool call was never the answer.
    */
   /**
@@ -561,7 +561,7 @@ Every turn added up, subagents included.${share}${harness}${note}`
     // The card keeps the line that says what changed and hands the diff to
     // the view that can show it properly. Only the two tools that write one
     // are asked: a `read` of a patch file ends in a diff fence too, and that
-    // card is showing a file rather than a change it made.
+    // card is showing a file and not a change it made.
     const diff = ok && WRITES.has(card.querySelector('.tool-name')?.textContent ?? '') ? toolDiff(text) : null
     if (id !== null) {
       const body = withoutMarker(text)
@@ -693,7 +693,7 @@ Every turn added up, subagents included.${share}${harness}${note}`
         this.markFinal(this.sealAssistant())
         break
       case 'session.note':
-        // Why a turn ended the way it did, in the flow rather than in a log.
+        // Why a turn ended the way it did, in the flow and not in a log.
         this.noteBlock(event.text)
         break
       case 'session.summary':

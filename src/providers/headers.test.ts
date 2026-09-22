@@ -10,9 +10,9 @@ import type { ChatChunk } from '../core/types.js'
 /**
  * Who the harness says it is, and which conversation a request belongs to.
  *
- * Both answers travel as headers, and an endpoint that wanted them and did not
- * get them refuses the whole turn rather than degrading, so what goes on the
- * wire is pinned here for both formats.
+ * Both answers travel as headers, and an endpoint that wanted them and did
+ * not get them refuses the whole turn, so what goes on the wire is pinned here
+ * for both formats.
  */
 
 /** A stream that opens and closes, which both wires read as a round with nothing in it. */
@@ -29,7 +29,7 @@ function empty(): Response {
 async function sentHeaders(run: () => AsyncGenerator<ChatChunk>): Promise<Headers> {
   const fetchMock = vi.fn(async () => empty())
   vi.stubGlobal('fetch', fetchMock)
-  // Drained rather than started: the request goes out on the first pull.
+  // Drained and not merely started: the request goes out on the first pull.
   for await (const chunk of run()) void chunk
   const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined
   return new Headers(init?.headers)
@@ -68,7 +68,7 @@ describe('parseHeaderName', () => {
 
   it('drops anything fetch would throw on', () => {
     // A record holding one of these would fail every turn, with an error about
-    // the header rather than about the endpoint that wanted it.
+    // the header, not about the endpoint that wanted it.
     for (const bad of ['x session', 'x:session', 'x\nsession', '', '   ', 42, null, undefined]) {
       expect(parseHeaderName(bad)).toBeUndefined()
     }

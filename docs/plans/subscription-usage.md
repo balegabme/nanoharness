@@ -1,11 +1,11 @@
-# Plan — subscription usage
+# Plan: subscription usage
 
 A subscription is an allowance, and the question it answers is how much of the
 allowance is gone. `cost.md` answers a different one. The usage log counts money
 at the prices a model carried while it ran; a plan counts consumption against
 caps the vendor sets, resets on its own clock, and reports as a percentage. The
-two figures move together and never meet, so this is a module of its own rather
-than another column on the spend view.
+two figures move together and never meet, so this is a module of its own and
+not another column on the spend view.
 
 Status: not built. When it is, this page becomes `docs/harness/subscription.md`
 with a `Files:` section and a line in the doc map. It lives here until then
@@ -22,15 +22,15 @@ session's local spend by it and drew the answer as a second pill.
 Every input to that was the harness's own: token counts it had added up and
 prices somebody had typed into a table, against a ratio read off a web page on
 one particular day. None of it came from the account being measured, and the
-unit was wrong on top of that, since an allowance is a share of a window rather
-than a number of dollars. It read as a balance and was arithmetic.
+unit was wrong on top of that, since an allowance is a share of a window and
+not a number of dollars. The pill read as a balance when it was arithmetic.
 
 So the reading comes from the provider or it does not appear. Each vendor
 answers at its own address, in its own shape, over whichever method it wants,
 and names its own windows; what this module owns is one normalised shape to draw
 and one adapter per vendor to reach it. Nothing about a plan is computed from
 prices here, and a vendor the harness cannot reach leaves the meter absent
-rather than estimated.
+instead of estimated.
 
 ## Why it is separate from the provider layer
 
@@ -54,11 +54,11 @@ Filing that under a session would misdescribe what was measured.
 ## What each vendor actually answers
 
 Both were read from live accounts. The findings are the design constraints, so
-they are written down rather than assumed.
+they are written down instead of assumed.
 
-**opencode (Go plan)** — `GET https://opencode.ai/zen/go/v1/usage`, bearer key,
-and a browser `User-Agent` because the host refuses anything else. One route;
-`whoami`, `billing` and any summary are 404.
+The opencode Go plan answers at `GET https://opencode.ai/zen/go/v1/usage`, with
+a bearer key and a browser `User-Agent` because the host refuses anything else.
+That is the only route; `whoami`, `billing` and any summary are 404.
 
 ```json
 {"usage":{"rolling":{"status":"ok","percent":0,"resetsAt":"…"},
@@ -76,9 +76,9 @@ window expires, and while `percent` is 0 it holds a placeholder of now plus the
 window length, which slides forward on every poll. And the rolling window is a
 five-hour bucket opened by first use, fixed until it lapses.
 
-**Command Code (GOAT plan)** — four routes on `https://api.commandcode.ai`,
-bearer key, plus `x-command-code-version` and `x-cli-environment` headers that
-the vendor's own client sends.
+The Command Code GOAT plan has four routes on `https://api.commandcode.ai`,
+taking a bearer key plus `x-command-code-version` and `x-cli-environment`
+headers that the vendor's own client sends.
 
 | Route | What it is for |
 | --- | --- |
@@ -118,7 +118,7 @@ PlanSnapshot
 PlanWindow
   id           five-hour | weekly | monthly, or whatever the vendor names
   label        the vendor's own word for it
-  percentUsed  0–100
+  percentUsed  0-100
   precision    exact | integer
   used, cap    money, only where the vendor gives both
   resetsAt     epoch ms, or null
@@ -148,7 +148,7 @@ plan fine while the vendor turns down its next request.
 Windows come back as a list. opencode reports five-hour, weekly and monthly;
 Command Code reports five-hour and weekly with credit as a balance instead;
 whatever lands next will differ again. Three named fields force empty slots and
-quietly invite the view to draw them.
+invite the view to draw them.
 
 ## The adapters
 
@@ -157,7 +157,7 @@ the single place a vendor id becomes a client, the way `providers/factory.ts`
 does for wire formats.
 
 An adapter fetches, parses, and returns a `PlanSnapshot` or throws. It does not
-retry, cache or schedule — that belongs to the poller, and an adapter retrying
+retry, cache or schedule. That belongs to the poller, and an adapter retrying
 privately would be a second policy nobody could see.
 
 `opencode.ts` fills three windows with `precision: 'integer'`, no `used`, no
@@ -191,8 +191,7 @@ The poller runs on events instead:
 For a percent-only vendor there is one refinement worth the code. The harness
 already knows what it estimates it has spent since the last successful fetch, so
 it also knows whether a tick is arithmetically possible yet. Below roughly half
-a percent of a window a fetch cannot return anything new, and is skipped. Every
-request that survives that test carries information.
+a percent of a window a fetch cannot return anything new, and is skipped.
 
 Those ticks are worth keeping. Each one relates the harness's own estimate to
 real window consumption, and a running fit over several of them recovers the
@@ -221,7 +220,7 @@ ordinary thing to want to watch.
 ## The view
 
 The meter belongs in the sidebar foot, beside **Spend**, because it is an
-account fact rather than a session fact and the topbar is for the session. One
+account fact and not a session fact, and the topbar is for the session. One
 row: the binding window, meaning the one closest to its cap, as a thin bar with
 its percentage and its name. Clicking it opens a panel listing every window with
 its bar, `used` of `cap` where the vendor gives them, and a countdown where the
@@ -239,7 +238,6 @@ This pass builds the module, the two adapters, the poller, and the view.
 
 z.ai is next and nothing here needs changing for it: another file under
 `src/subscription/`, another entry in the factory, whatever windows it reports.
-That was the point of the list.
 
 A `nh` twin comes free later, since the arithmetic is in core and the terminal
 already has `nh usage` to sit beside.
@@ -250,7 +248,7 @@ Two questions the live probes could not close, both cheap to answer with a key
 and a short script, and both able to change the schedule above.
 
 What opencode's rate limit on that endpoint actually is. Worth finding on
-purpose rather than in front of a user.
+purpose instead of in front of a user.
 
 How long Command Code takes to count a finished request. Per-turn diffing there
 rests on the counters being current by the time the turn ends, so the lag is

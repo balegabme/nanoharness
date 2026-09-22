@@ -12,7 +12,7 @@ import type { ToolResult } from '../core/types.js'
  * What a write hands back, which the model is billed for and the window draws.
  * The count in the first line has to match the diff under it: a file created
  * from nothing is every line added and nothing removed, and an overwrite is
- * measured against what it replaced rather than against an empty file.
+ * measured against what it replaced.
  */
 
 /**

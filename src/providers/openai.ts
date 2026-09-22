@@ -85,8 +85,8 @@ export function createOpenAIProvider(opts: OpenAIOptions): ChatProvider {
         stream_options: { include_usage: true },
       }
       // Which values a family accepts varies, and an unknown one is either a
-      // 400 or a silent drop, so "none" leaves the field out rather than
-      // asserting a level the model may not have (plan §11).
+      // 400 or a silent drop, so "none" leaves the field out and asserts no
+      // level the model may not have (plan §11).
       if (input.effort !== undefined && input.effort !== 'none') body.reasoning_effort = input.effort
       const res = await fetch(endpointURL(opts.baseURL, 'v1', 'chat/completions'), {
         method: 'POST',
@@ -210,7 +210,7 @@ function parseWire(line: string): WireChunk | null {
     } catch (err) {
       if (!(err instanceof UsageError)) throw err
       // The line may carry content as well, and that content is the model's
-      // output. The unreadable usage rides beside the delta instead of taking
+      // output. The unreadable usage rides beside the delta and does not take
       // the line down.
       usageProblem = err.message
     }

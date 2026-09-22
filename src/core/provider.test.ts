@@ -3,7 +3,7 @@ import { BAD_SSE, ProviderError, RETRY_AFTER_CAP_MS, StreamBrokenError, backoffF
 
 /**
  * Whether to send a request a second time. The thing worth pinning is that the
- * answer comes from a rule rather than from a list of numbers somebody has to
+ * answer comes from a rule and not from a list of numbers somebody has to
  * remember to extend.
  */
 
@@ -29,7 +29,7 @@ describe('whether a request is worth making again', () => {
     }
   })
 
-  it('retries the three 4xx that mean “not now” rather than “not this”', () => {
+  it('retries the three 4xx that mean “not now” where the rest mean “not this”', () => {
     for (const status of [408, 425, 429]) {
       expect(isRetryable(new ProviderError(`provider ${status}`, status))).toBe(true)
     }
@@ -79,7 +79,7 @@ describe('how long to wait first', () => {
     expect(wait).toBeLessThanOrEqual(1500)
   })
 
-  it('holds at the last gap rather than falling off the end of the schedule', () => {
+  it('holds at the last gap and never falls off the end of the schedule', () => {
     expect(backoffFor(new Error('x'), 9, [500, 1500])).toBeGreaterThanOrEqual(1125)
   })
 

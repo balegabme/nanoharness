@@ -14,7 +14,7 @@ the convention doubles as a token-efficiency measure.
    with a `#anchor`. It sits in the first five lines, after a shebang if there
    is one.
 2. The doc it points at lists that file under a `Files:` heading, as
-   `- path — one-line summary`. The list ends at the first blank line.
+   `- path: one-line summary`. The list ends at the first blank line.
 3. `nh doc-check` fails on a source file with no header, a header pointing at a
    missing doc, a file the doc does not list back, a doc listing a file that no
    longer exists, and a doc with no `Files:` section at all.
@@ -31,20 +31,20 @@ pnpm doc-check
 
 ## Index
 
-- `overview.md` — architecture, session loop, usage accounting, IPC
-- `providers.md` — provider layer, wire format, auth, provider settings
-- `tools.md` — tool specs, the arg-validation boundary, caps
-- `cli.md` — the `nh` command: `doc-check`, `usage`, `mcp`
-- `cost.md` — the usage report, and the spend view drawn from it
-- `ui.md` — the desktop window, the context bridge, the renderer
-- `sessions.md` — folders, sessions, transcripts, and the scope rule
-- `agents.md` — the three roles, spawn modes, and background jobs
-- `mcp.md` — the MCP client, its transports, and the two config files
-- `skills.md` — the skill format and the list injected into the prompt
-- `secrets.md` — pasted keys, placeholders, and the substitution boundary
-- `approval.md` — auto mode: the rules, the ladder, and what a verdict costs
-- `improvements.md` — the flaw and improvement ledger (living doc)
-- `doc-map.md` — this page
+- `overview.md`: architecture, session loop, usage accounting, IPC
+- `providers.md`: provider layer, wire format, auth, provider settings
+- `tools.md`: tool specs, the arg-validation boundary, caps
+- `cli.md`: the `nh` command and its `doc-check`, `usage` and `mcp` subcommands
+- `cost.md`: the usage report, and the spend view drawn from it
+- `ui.md`: the desktop window, the context bridge, the renderer
+- `sessions.md`: folders, sessions, transcripts, and the scope rule
+- `agents.md`: the three roles, spawn modes, and background jobs
+- `mcp.md`: the MCP client, its transports, and the two config files
+- `skills.md`: the skill format and the list injected into the prompt
+- `secrets.md`: pasted keys, placeholders, and the substitution boundary
+- `approval.md`: auto mode, its rules, its ladder, and what a verdict costs
+- `improvements.md`: the flaw and improvement ledger (living doc)
+- `doc-map.md`: this page
 
 Pages arrive with the features they document. Still to come: snippets, hooks
 and env-detection.

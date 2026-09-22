@@ -3,10 +3,10 @@ import { el } from './dom.js'
 
 /**
  * The right-click menu. One is open at a time, it is a real element in the
- * window rather than an OS menu, and it closes on the next thing the user does:
- * a click anywhere, Esc, a scroll, a resize.
+ * window and not an OS menu, and it closes on the next thing the user does: a
+ * click anywhere, Esc, a scroll, a resize.
  *
- * It is here rather than in `sidebar.ts` because the sidebar is not the only
+ * It is here and not in `sidebar.ts` because the sidebar is not the only
  * place a row will want one, and a second copy of "position a box near the
  * pointer without letting it fall off the screen" is exactly the sort of thing
  * that ends up subtly different in each copy.

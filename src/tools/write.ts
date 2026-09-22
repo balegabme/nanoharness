@@ -17,9 +17,8 @@ function parseArgs(args: Record<string, unknown>): ArgsParse<WriteArgs> {
 
 /**
  * What the file held, '' when there was no file, and null when there was one
- * and its content is not something a diff can be made of: a permission error, a
- * lock, a binary, anything that does not decode as UTF-8. The three cases read
- * differently in the result.
+ * whose content no diff can be made of: a permission error, a lock, a binary,
+ * anything that does not decode as UTF-8.
  */
 async function previous(abs: string): Promise<string | null> {
   const raw = await readFile(abs).catch((err: unknown) =>
@@ -50,15 +49,13 @@ export const WRITE_TOOL = defineTool<WriteArgs>({
     const allowed = await access.check(rel, 'write')
     if (!allowed.ok) return { ok: false, summary: allowed.reason, content: allowed.reason, isError: true, prevented: true }
     const abs = allowed.path
-    // Creating a file is always allowed. Replacing the whole of one nobody
-    // read, or one that has changed since they did, throws away content this
-    // conversation never saw.
+    // Creating a file is always allowed. Replacing one nobody read, or one
+    // that has changed since, is refused.
     const may = reads.mayWrite(abs, await versionOf(abs), `write: ${rel}:`)
     if (!may.ok) return { ok: false, summary: may.reason, content: may.reason, isError: true }
     // Read before writing, so an overwrite can say what it replaced. Only a
-    // file that is not there diffs against nothing; one that is there and
-    // cannot be read is not a new file, and reporting it as one would tell the
-    // model it had created four hundred lines it actually destroyed.
+    // missing file diffs against nothing; one that exists and cannot be read
+    // is reported as that, never as a new file.
     const before = await previous(abs)
     await mkdir(dirname(abs), { recursive: true })
     await writeFile(abs, content, 'utf8')

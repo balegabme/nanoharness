@@ -20,7 +20,7 @@ import { READ_TOOL } from '../tools/read.js'
 const onWindows = process.platform === 'win32'
 
 describe('a shell command with nobody to ask', () => {
-  it('is refused by the default gate rather than run unscreened', async () => {
+  it('is refused by the default gate and never run unscreened', async () => {
     const gate = workspaceGate('C:\\blockchain\\nanoharness')
     const result = await gate.checkCommand('ls')
 
@@ -45,7 +45,7 @@ describe('a path in the spelling the shell printed', () => {
 })
 
 describe.runIf(onWindows)('read, given what Git Bash printed', () => {
-  it('opens the file rather than saying there is none', async () => {
+  it('opens the file and never claims there is none', async () => {
     const root = await mkdtemp(join(tmpdir(), 'nh-scope-'))
     await writeFile(join(root, 'note.txt'), 'the file is here\n', 'utf8')
     const access = workspaceGate(root)

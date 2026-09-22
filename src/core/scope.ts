@@ -4,16 +4,16 @@ import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 /**
- * A session is invoked in a folder and may only touch that folder. The rule is
- * enforced here rather than in each tool, because "is this path inside the
- * root?" is one question with several wrong answers: `..` walks out, an
- * absolute path ignores the root entirely, and a symlink inside the root can
- * point anywhere on disk. All three are resolved before the comparison.
+ * A session is invoked in a folder and may only touch that folder. The rule
+ * lives here and not in each tool, since "is this path inside the root?" has
+ * several wrong answers: `..` walks out, an absolute path ignores the root
+ * entirely, and a symlink inside the root can point anywhere on disk. All
+ * three are resolved before the comparison.
  *
  * This module resolves the paths a tool is handed. It does not read paths out
- * of a shell command: a command line is not a path list, and a parser for one
- * reads a script body, a sed address or an HTML close tag as a path. The shell
- * runs from the session root and is not screened.
+ * of a shell command: a parser for one reads a script body, a sed address or
+ * an HTML close tag as a path. The shell runs from the session root and is not
+ * screened.
  * `docs/harness/sessions.md` says what that costs.
  */
 
@@ -21,7 +21,7 @@ export type AccessCheck =
   | { ok: true; path: string }
   | { ok: false; path: string; reason: string }
 
-/** The answer to the shell question, which names a command rather than a path. */
+/** The answer to the shell question, which is asked about a whole command. */
 export type CommandCheck = { ok: true } | { ok: false; reason: string }
 
 /** What a tool asks before it touches a path or runs a command. */
@@ -30,17 +30,17 @@ export interface AccessGate {
   readonly root: string
   check(target: string, intent: AccessIntent): Promise<AccessCheck>
   /**
-   * May this command run? A command line is a program, not a path list, and
-   * nothing here reads it. The gate that can ask a person shows them the
-   * command; the one that cannot answers for itself.
+   * May this command run? Nothing here reads the command. The gate that can
+   * ask a person shows them the command; the one that cannot answers for
+   * itself.
    */
   checkCommand(command: string): Promise<CommandCheck>
 }
 
 /**
  * `read` and `write` are the two things a path argument can ask for. `run` is
- * the shell: it is handed a whole command rather than a path, so it is checked
- * by `checkCommand` and never by `check`.
+ * the shell: it is handed a whole command, so it goes to `checkCommand` and
+ * never to `check`.
  */
 export type AccessIntent = 'read' | 'write' | 'run'
 
@@ -64,7 +64,7 @@ export async function realResolve(path: string): Promise<string> {
     const real = await realpath(cursor).catch(() => null)
     if (real !== null) return tail.length === 0 ? real : join(real, ...tail.reverse())
     const parent = dirname(cursor)
-    // The filesystem root does not exist? Nothing more to resolve.
+    // At the filesystem root there is nothing left to resolve.
     if (parent === cursor) return abs
     tail.push(cursor.slice(parent.length + (parent.endsWith(sep) ? 0 : 1)))
     cursor = parent
@@ -119,14 +119,12 @@ export function outsideMessage(root: string, path: string, intent: AccessIntent)
 
 /**
  * The default gate: outside the root is a hard refusal with no way to ask. The
- * app supplies a gate that can prompt instead (`src/main/permission.ts`); this
- * one is what any other caller gets, because a session that silently reaches
- * the whole disk is the worse default.
+ * app supplies a gate that can prompt instead (`src/main/permission.ts`), and
+ * this one is what every other caller gets.
  *
- * Commands are refused outright here. Nothing screens a command to guess which
- * ones stay inside, and there is nobody to ask, so the only honest default is
- * no shell. A caller that wants one passes a gate that can answer the
- * question, the way the app does.
+ * Commands are refused outright here: nothing screens a command to guess which
+ * ones stay inside, and there is nobody to ask. A caller that wants a shell
+ * passes a gate that can answer the question, the way the app does.
  */
 export function workspaceGate(root: string): AccessGate {
   return {

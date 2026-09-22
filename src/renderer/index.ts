@@ -184,7 +184,7 @@ function closeSpend(): void {
  * configured but not answering. Two numbers, because "MCP is on" and "MCP
  * works" are different claims. A session's servers are dialled on its first
  * message, so before that the tooltip says the counts are what the config asks
- * for rather than showing a red one for something nobody tried yet.
+ * for, and shows no red count for something nobody has tried yet.
  */
 function renderMcp(status: { live: boolean; servers: McpServerStatus[] } | null): void {
   mcpChip.hidden = status === null || status.servers.length === 0
@@ -213,7 +213,7 @@ function renderMcp(status: { live: boolean; servers: McpServerStatus[] } | null)
   mcpChip.title = [head, ...lines].join('\n')
 }
 
-/** The open session's MCP state, asked for rather than waited for. */
+/** The open session's MCP state, asked for and never waited for. */
 async function refreshMcp(sessionId: string | null): Promise<void> {
   if (sessionId === null) {
     renderMcp(null)
@@ -256,7 +256,7 @@ function ran(head: SubagentHead): string {
 }
 
 /** The head is redrawn in place, so a subagent that finishes under the reader's
- * eyes turns into its own result rather than going stale. */
+ * eyes turns into its own result and never goes stale. */
 function drawSubHead(head: SubagentHead): void {
   subHead = head
   subKind.textContent = identity(head)
@@ -267,7 +267,7 @@ function drawSubHead(head: SubagentHead): void {
     `started ${relativeTime(head.startedAt)}`,
     `${head.state === 'running' ? 'running for' : 'ran'} ${ran(head)}`,
   ]
-  // What it did, rather than only how long it took. The count is settled when
+  // What it did, as well as how long it took. The count is settled when
   // the job ends, so a running agent is not given a line reading nought.
   if (head.tools !== undefined && head.state !== 'running') parts.push(toolsText(head.tools))
   subMeta.textContent = parts.join(' · ')
@@ -306,8 +306,7 @@ async function openSubagent(id: string): Promise<void> {
     // The buffer keeps only the last stretch of a long job, so replaying it
     // rebuilds the window but not the whole count. The total comes from the
     // usage events the window kept for this job, and the rate starts over
-    // rather than being divided out of whatever part of the stream survived
-    // the cap.
+    // instead of dividing out whatever part of the stream survived the cap.
     sub.showStoredUsage(spendingOf(id))
     sub.setActivity(live.state === 'running')
     drawSubHead(live)
@@ -348,7 +347,7 @@ function closeSubagent(): void {
 
 /**
  * The permission mode for the session on screen. Read from the main process
- * rather than remembered here: a cached mode would be the previous session's
+ * and never remembered here: a cached mode would be the previous session's
  * the moment somebody clicked another one in the sidebar.
  */
 async function renderMode(): Promise<void> {
@@ -374,7 +373,7 @@ function applyMode(view: PermissionModeView): void {
  * What the chip says on hover: the boundary, who answers the questions it
  * cannot settle, and that the choice carries. The picker is per-session and the
  * setting behind it is not, so a session switched to auto also decides what the
- * next new one starts in, which is worth saying rather than finding out.
+ * next new one starts in, which is worth saying before it is found out.
  */
 function modeTitle(root: string): string {
   const base = `Tools are limited to ${root}`
@@ -386,8 +385,8 @@ function modeTitle(root: string): string {
 }
 
 /**
- * Switch the mode. The answer comes back from the main process rather than
- * being assumed here: a switch to auto that was refused returns the mode the
+ * Switch the mode. The answer comes back from the main process and is never
+ * assumed here: a switch to auto that was refused returns the mode the
  * session is still in, and the picker snaps back to it.
  */
 async function switchMode(): Promise<void> {
@@ -448,7 +447,7 @@ function renderActive(status: ConfigStatus): void {
   for (const provider of status.providers) {
     const models = new Set(provider.models)
     // A provider with nothing ticked still runs the model it is active on, so
-    // that one is its group rather than an empty heading.
+    // that one is its group, where otherwise the heading would be empty.
     if (active !== undefined && provider.id === active.providerId) models.add(active.model)
     if (models.size === 0) continue
     const group = document.createElement('optgroup')
@@ -537,7 +536,7 @@ function renderEfforts(status: ConfigStatus): void {
 function renderShell(): void {
   const open = activeSessionId !== null
   // A diff sits over whichever flow opened it, so back from one goes to that
-  // flow rather than all the way home. Spend covers all three and leaves them
+  // flow and not all the way home. Spend covers all three and leaves them
   // where they were.
   const onDiff = !onSpend && open && showing !== null
   const sideways = !onSpend && open && viewing !== null && !onDiff
@@ -573,8 +572,8 @@ function renderShell(): void {
     const status = currentStatus()
     const workspace = status.workspaces.find(w => w.id === selectedWorkspaceId())
     const configured = latestConfig()?.configured === true
-    // Nothing to send to yet: the card is a "start here" target rather than a
-    // composer that would take a message and then refuse it.
+    // Nothing to send to yet: the card is a "start here" target, where a
+    // composer would take a message and then refuse it.
     const blocked = !configured || workspace === undefined
     heroNote.textContent = !configured
       ? 'No provider yet. Add one in settings, then start a session.'
@@ -695,7 +694,7 @@ async function openSession(id: string): Promise<void> {
     input.focus()
   } catch (err) {
     // The session went away underneath us (deleted, or its folder removed).
-    // Fall back to the hero rather than a composer that cannot send.
+    // Fall back to the hero, since a composer here could not send.
     activeSessionId = null
     renderMcp(null)
     await refreshSidebar()
@@ -716,7 +715,7 @@ async function switchActive(): Promise<void> {
   const model = picked?.model ?? active?.model
   if (providerId === undefined || model === undefined) return
   // The chip still holds the levels of the model being left, so a pick that
-  // moves to a narrower model has to be clamped here rather than sent and
+  // moves to a narrower model is clamped here, before it can be sent and
   // refused.
   const effort = clampEffort(offeredEfforts(latestConfig(), providerId, model), effortSelect.value as Effort)
   try {
@@ -794,7 +793,7 @@ composer.addEventListener('submit', event => {
   else void send()
 })
 // In the blocked state the whole card is one pick target: the click does the
-// thing that would unblock it rather than nothing at all.
+// thing that unblocks it, where otherwise it would do nothing at all.
 composer.addEventListener('click', () => {
   if (!composer.classList.contains('trigger')) return
   if (latestConfig()?.configured !== true) openSettings('providers')
@@ -894,7 +893,7 @@ nh.onEvent(event => {
   if (event.type === 'permission.request') {
     if (event.sessionId === activeSessionId) enqueue(event)
     // A prompt for a session nobody is looking at cannot be answered
-    // meaningfully; deny it rather than park that turn forever.
+    // meaningfully; deny it, and leave no turn parked forever.
     else void nh.respondToPermission(event.id, 'deny')
     return
   }

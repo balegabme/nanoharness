@@ -115,7 +115,7 @@ describe('what a turn cost', () => {
     expect(cacheHitRate(usage)).toBeCloseTo(20000 / 25010, 5)
   })
 
-  it('refuses a contradictory usage report instead of capping it', async () => {
+  it('refuses a contradictory usage report and never caps it', async () => {
     // A server that says more of the prompt was cached than there was prompt
     // has sent two numbers that cannot both be right, so neither is stored:
     // the turn's cost is unknown and the done chunk says why.
@@ -182,8 +182,8 @@ describe('what a turn cost', () => {
  * renderer a runtime import from core and the renderer ships as its own
  * bundle. A copy that nothing compares is a copy that drifts, and a window
  * that disagrees with `nh usage` about a turn they both watched is worse than
- * either number. So the two are run against the same spend, taken off
- * the wire rather than made up, and have to answer the same.
+ * either number. So the two are run against the same spend, taken off the
+ * wire and never made up, and have to answer the same.
  *
  * This test lives outside src/renderer because the same eslint rule would stop
  * it importing core from in there.
@@ -212,7 +212,7 @@ describe('the window and the CLI dividing the same turn', () => {
     expect(hitText(usage)).toBe('80%')
   })
 
-  it('agree that a turn which sent nothing has no rate, rather than one showing 0%', async () => {
+  it('agree that a turn which sent nothing has no rate, with neither showing 0%', async () => {
     const usage = await openai(['data: {"usage":{"prompt_tokens":0,"completion_tokens":0}}', 'data: [DONE]'])
     expect(hitRate(usage)).toBeNull()
     expect(cacheHitRate(usage)).toBeNull()

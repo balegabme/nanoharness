@@ -4,10 +4,10 @@
 in CI or a shell, without booting Electron.
 
 Files:
-- src/cli/index.ts — argument dispatch, `--version`, help
-- src/cli/doc-check.ts — doc-map verification
-- src/cli/mcp.ts — the MCP config as commands: list, add, remove, check
-- src/cli/usage.ts — the usage report, printed
+- src/cli/index.ts: argument dispatch, `--version`, help
+- src/cli/doc-check.ts: doc-map verification
+- src/cli/mcp.ts: the MCP config as the commands list, add, remove and check
+- src/cli/usage.ts: the usage report, printed
 
 The version comes from `package.json` and nothing else (plan §16).
 
@@ -37,7 +37,7 @@ deleted session keeps its row.
 
 `--days N` counts back N whole local days with today included. Without it the
 report covers everything the log holds. Anything that is not a day count is
-refused rather than read as all time, which would print a report for a window
+refused, and never read as all time, which would print a report for a window
 nobody asked for.
 
 Each line carries the schema version it was written under. A line from another
@@ -53,14 +53,14 @@ rest as skipped.
 The log is `usage.jsonl` in the OS user-data dir (`%APPDATA%`,
 `~/Library/Application Support`, `$XDG_DATA_HOME`), one JSON line per completed
 turn, appended by the main process. It never lands in the repo. A torn or
-malformed line is skipped and counted rather than aborting the read.
+malformed line is skipped and counted, and never aborts the read.
 
 Nothing has been recorded until a session runs, so a fresh install prints an
-empty report rather than an error.
+empty report and not an error.
 
 ## nh mcp <command>
 
-The MCP config as commands rather than a file to hand-write. It exists because
+The MCP config as commands, in place of a file to hand-write. It exists because
 of what an agent did without it: wrote the JSON by hand, then wrote a throwaway
 script that re-implemented this project's own parser to check its work, and
 spent five rounds on a job that is one command. A private copy of the parser can
@@ -77,19 +77,19 @@ nh mcp check <name> --call <tool> [--args JSON]   make one real call
 
 `--help` is answered wherever it appears, whether `nh mcp --help`, `nh mcp add
 --help` or `nh help mcp`, and so is a wrong flag: the message names what was
-wrong and the help says what to write instead. That is not politeness. An agent
-that asked `nh mcp add --help` and got `unknown flag --help` back spent two more
-calls guessing at the syntax, which is the whole saving the command exists for.
+wrong and the help says what to write instead. An agent that asked `nh mcp add
+--help` and got `unknown flag --help` back spent two more calls guessing at the
+syntax, which is the whole saving the command exists for.
 
 `--global` writes `~/.nanoharness/mcp.json`, the file every workspace reads;
 without it the target is this folder's own `.nanoharness/mcp.json`. `--dir DIR`
-treats `DIR` as the workspace instead of the current folder, and `--disabled`
+treats `DIR` as the workspace in place of the current folder, and `--disabled`
 writes the entry switched off.
 
 Every write goes through the same `parseServer` a session uses, and `check`
-connects through the same client, so a pass means the session will connect
-rather than that the JSON parsed. `mcp.md` has the file format and what an entry
-may hold.
+connects through the same client, so a pass means the session will connect,
+and not merely that the JSON parsed. `mcp.md` has the file format and what an
+entry may hold.
 
 It does not mean the credential works. A remote server answers `initialize` and
 `tools/list` to anyone and only looks at the key when a tool is called, so
@@ -97,15 +97,14 @@ It does not mean the credential works. A remote server answers `initialize` and
 five tools in the prompt, every call an auth error. So the plain form says what
 it did not check, and `--call <tool>` makes one real call and prints what the
 server said, which is the only part of the protocol a key has to survive. The
-tool is named rather than chosen for you, because a catalog is not a list of
-safe things to run. `--args` takes a JSON object, and a name the server does not
-have comes back with the list of the ones it does.
+tool is yours to name, because a catalog is not a list of safe things to run.
+`--args` takes a JSON object, and a name the server does not have comes back
+with the list of the ones it does.
 
-`--env` and `--token-env` name an environment variable rather than taking a
+`--env` and `--token-env` name an environment variable and never take a
 token. A `--url` that carries its own key is the exception, and `mcp.md` says
 why that one writes a live credential to disk.
 
 A session builds its tool list once, at startup, so a server added now is
 connected the next time the app starts or a session is opened. The command says
-so rather than leaving an agent to report a tool the running session has not
-got.
+so, so no agent reports a tool the running session has not got.

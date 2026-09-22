@@ -32,14 +32,14 @@ folder runs; anything reaching outside it, and every shell command, has to be
 approved. You answer those questions one of two ways, switched per session from
 the chip in the header:
 
-- **ask every time** (the default) — the turn stops and waits for you.
-- **auto-approve** — a second model of your choosing reads the action and
+- Ask every time (the default): the turn stops and waits for you.
+- Auto-approve: a second model of your choosing reads the action and
   answers allow or deny. It decides; it never hands the question back, so a
   task can run for an hour while you are away without stopping on a dialog two
   minutes after you leave. Where it is unsure it denies, and the run carries on.
   It cannot be turned on until you have chosen that model in Settings. If that
-  model cannot be reached at all, after retries, the question comes to you
-  rather than being guessed either way.
+  model cannot be reached at all, after retries, the question comes to you, and
+  is never guessed either way.
 
 What it costs is counted apart from the conversation, and every automatic
 decision is written to a log beside the transcript.

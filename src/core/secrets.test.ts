@@ -13,8 +13,8 @@ import type { ChatChunk, ToolResult } from './types.js'
  * The promise this feature makes is that a key reaches the tool that needs it
  * and nothing else: not the provider, not the transcript, not the journal. So
  * these tests read the provider's own record of every request it was handed,
- * and the session file's worth of state that survives a turn — the two places
- * a leak would actually show up.
+ * and the session file's worth of state that survives a turn. Those are the
+ * two places a leak would show up.
  */
 
 const KEY = 'sk-ant-api03-QRZ8x2LmN4pT7vB1cD5eF9gH0jK3sL6mN8pQ2rS4tU6vW8xY'
@@ -96,7 +96,7 @@ describe('a key pasted into a message', () => {
       // The tool ran with the real key.
       expect(watcher.seen).toEqual([`Bearer ${KEY}`])
 
-      // Nothing the provider was handed contains it — not the user message, not
+      // Nothing the provider was handed contains it: not the user message, not
       // the tool result that quoted the request back.
       expect(provider.wire).not.toContain(KEY)
       expect(provider.wire).toContain('{{secret:anthropic_key}}')
@@ -160,9 +160,9 @@ describe('a key pasted into a message', () => {
     const vault = new SecretVault()
     vault.capture(KEY)
 
-    // The model should never be holding a key — everything it reads has been
-    // scrubbed first — but the last thing written down should not depend on
-    // that holding. Here it says one, in its answer and in its thinking.
+    // The model should never be holding a key, since everything it reads has
+    // been scrubbed first, but the last thing written down should not depend
+    // on that. Here it says one, in its answer and in its thinking.
     const provider = new Recorder(() => [
       { kind: 'thinking', text: `the key is ${KEY}` },
       { kind: 'thinking_block', block: { kind: 'thinking', text: `the key is ${KEY}` } },
@@ -251,7 +251,7 @@ describe('the vault', () => {
     expect(secretsBlock(vault.names()).join(' ')).toContain('tavily_key')
   })
 
-  it('leaves a reference it cannot resolve alone rather than sending an empty header', () => {
+  it('leaves a reference it cannot resolve alone and never sends an empty header', () => {
     const vault = new SecretVault()
     vault.capture(KEY)
     expect(vault.reveal('Bearer {{secret:anthropic_key}}')).toBe(`Bearer ${KEY}`)

@@ -4,11 +4,11 @@ Three roles, one at a time in the window, and a way to hand a piece of work to
 a second agent without leaving the conversation. Plan §5.
 
 Files:
-- src/core/agents.ts — the role registry, with tools, shell and brief
-- src/core/spawn.ts — the spawn host, how a subagent is built and run
-- src/core/jobs.ts — the job registry, every subagent this window has run, waited on or not
-- src/tools/spawn.ts — the `spawn` tool the model calls
-- src/tools/job-update.ts — the `job_update` tool a background job reports with
+- src/core/agents.ts: the role registry, with tools, shell and brief
+- src/core/spawn.ts: the spawn host, how a subagent is built and run
+- src/core/jobs.ts: the job registry, every subagent this window has run, waited on or not
+- src/tools/spawn.ts: the `spawn` tool the model calls
+- src/tools/job-update.ts: the `job_update` tool a background job reports with
 
 ## The three roles
 
@@ -59,7 +59,7 @@ paying for on every request.
 
 Writing to the harness is always the subagent's, including the case where the
 parent has figured out the file and the path on its own, and the case where a
-single command would do it. That last clause is not hypothetical: the MCP block
+single command would do it. The MCP block
 used to hand every writing role the `nh mcp add` line, and a builder read that
 against the delegate rule, argued the two out in its own thinking and ran the
 command itself. Now the commands and the entry shape go only to the
@@ -69,9 +69,9 @@ there is nothing to weigh.
 The parent is told what to hand over and not how to do it: the outcome, and
 whatever the user gave it quoted verbatim, such as a URL, a key or a command
 line, because a distinct subagent cannot see the conversation it was summoned
-from. The subagent is asked to report the files it touched and
-the diff, because its last message is the whole of what the parent gets, and a
-claim with no diff behind it is a claim. It also has to say that a harness
+from. The subagent is asked to report the files it touched and the diff,
+because its last message is the whole of what the parent gets, and a claim with
+no diff behind it cannot be checked. It also has to say that a harness
 change reaches the running app only after a rebuild and a restart, instead of
 reporting it as live.
 
@@ -95,8 +95,8 @@ model holding tools its prompt never mentioned.
 pass of patterns over the command line, refusing redirects, `tee`, the file
 verbs, in-place `sed`/`perl`, mutating git subcommands, package installs,
 `curl -o`, and the PowerShell equivalents. A refusal explains itself in the
-words of the role, *this agent reads but does not write*, instead of as a policy
-error, so the model's next move is to answer rather than to look for a way
+words of the role, *this agent reads but does not write*, instead of as a
+policy error, so the model's next move is to answer, and not to hunt for a way
 around it.
 
 It is a screen and not a security boundary. A command that builds its target at
@@ -134,7 +134,7 @@ nobody had, and wrote a field the server will never use. The same request,
 handed over as *"install this MCP server in the global config, here is the URL
 verbatim"*, was four rounds: `nh mcp --help`, `nh mcp add`, verify, report. The
 harness editor is told the reverse of the rule as well: a task that names a file
-or a field is to be read as a guess and corrected in one line, rather than
+or a field is to be read as a guess and corrected in one line, and not
 researched to exhaustion.
 
 ### Choosing a mode
@@ -158,8 +158,8 @@ default stays `clone`, because most delegated work really does continue the
 conversation, and the expensive mode now has a stated job of its own on top of a
 price.
 
-The economics are the whole design. A provider's prompt cache answers a request
-whose leading bytes it has already seen, so a clone is paid for mostly at the
+Caching is what puts the default there. A provider's prompt cache answers a
+request whose leading bytes it has already seen, so a clone is paid for mostly at the
 cached rate: same system prompt, same tool definitions, same history, differing
 only in the task appended at the end. That is also why clone mode passes the
 parent's exact tool array instead of a filtered one. Dropping `spawn` from a
@@ -169,7 +169,7 @@ called, which costs nothing unless the model tries it.
 
 A clone is the parent's prompt and the parent's tool list, so a clone is the
 parent's *role*, and there is nothing else it could be. A request to clone as
-another role would otherwise be accepted and quietly ignored, labelling the job
+another role would otherwise be accepted and then ignored, labelling the job
 `planner` while a builder ran it. The host resolves that pair itself, running the
 named role distinct and reporting the mode it actually used, so the label and the
 agent agree.
@@ -208,13 +208,13 @@ started it, and a background job's closing note carries it too. A subagent that
 threw carries its count out on the failure itself, because the row is finished
 after the child session is gone, and a job that made forty calls before it broke
 would otherwise be filed as one that made none. A subagent stored before the
-count existed has no count, and the line is left out rather than filled with a
+count existed has no count, and the line is left out and never filled with a
 zero.
 
 That message comes back whole. There is no length limit on an answer: the
-model's own output limit is the bound, and that is a real one in the right
-place. A second limit inside the harness would only remove the end of a finding,
-and remove it silently. The parent reads a tool result as the whole of what the
+model's own output limit is the bound. A second limit inside the harness would
+only remove the end of a finding, with nothing to say it had. The parent reads
+a tool result as the whole of what the
 subagent found, so a review whose verdict was in its last paragraph would arrive
 as a review with no verdict. The job row in the sidebar shows the answer's first
 line, clipped to 200 characters, because a row is a label and the answer is one
@@ -228,8 +228,8 @@ had already reported, so the same tokens are never counted twice. That puts
 subagents into the count in real time, while they are still running. It does
 not put them into the tok/s rate: a spawn generates at the same moment its
 parent does, on a stream this session never timed, so there is no interval the
-two of them share to divide by. The rate stays the parent's own.
-A background subagent that outlives its parent's turn keeps
+two of them share to divide by. The rate stays the parent's own. A background
+subagent that outlives its parent's turn keeps
 adding to the same total, and the total is written back to the session index
 when it finishes, so a reopened session shows what it really cost.
 
@@ -251,7 +251,7 @@ failure means the user finds that out by clicking it. A caller that supplies no
 
 ## Jobs, in the background and not
 
-Every spawn gets a registry entry, and the entry's id **is** the subagent's
+Every spawn gets a registry entry, and the entry's id *is* the subagent's
 session id, which is what lets its stream events reach the window already tagged
 with something the renderer can route. `job.started` when it is created,
 `job.update` for each line it posts with `job_update`, `job.finished` when it
@@ -288,17 +288,17 @@ asked and that its answer is gone. The `spawn` description says the same thing
 up front, so an agent does not finish its work on the promise of a job that may
 not come back.
 
-The timing is the whole of it. A registry belongs to a window and is dropped
+The timing matters. A registry belongs to a window and is dropped
 when that window's `webContents` is destroyed, so this runs on `before-quit`,
 which fires while the windows are still up, and not on `will-quit`, which fires
 after the last of them is gone and would find nothing to abandon. The delivered
-message is then flushed into the transcript rather than queued: a turn is
+message is then flushed into the transcript and never queued: a turn is
 usually still in flight, that is what background means, and the queue is
 drained at the end of a round that is not going to come.
 
-The answer is queued rather than pushed, because a job finishes whenever it
-finishes and a message inserted between a tool call and its result is a request
-both providers reject. It is flushed wherever the transcript is balanced, which
+The answer waits in a queue instead of being pushed in, because a job finishes
+whenever it finishes and a message inserted between a tool call and its result
+is a request both providers reject. It is flushed wherever the transcript is balanced, which
 is every place one can be: the end of a round, the end of the turn, the top of
 the next turn before the user's own message, and immediately when no turn is
 running at all. So a job started early in a long turn is usable before that turn
@@ -336,6 +336,6 @@ thing still spending. A subagent stopped that way finishes as state `stopped`.
 ## What a role does not decide
 
 Model, provider and effort. All three come from the active configuration, and a
-subagent runs on the same settings as its parent. A role that silently switched
-any of them would make the cost of a turn unpredictable in the one place the
-user is not looking.
+subagent runs on the same settings as its parent. A role that switched any of
+them without saying so would make the cost of a turn unpredictable in the one
+place the user is not looking.

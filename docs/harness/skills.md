@@ -4,7 +4,7 @@ A skill is a folder with a `SKILL.md`: instructions for one kind of task,
 written once and reused. Plan §8.
 
 Files:
-- src/core/skills.ts — the loader, the frontmatter parser, and the injected list
+- src/core/skills.ts: the loader, the frontmatter parser, and the injected list
 
 ## The format
 
@@ -13,40 +13,34 @@ Files:
 ```markdown
 ---
 name: Release checklist
-description: Cut a release — version bump, changelog, tag, and what to verify
+description: Cut a release, covering version bump, changelog, tag, and what
 ---
 
 Steps...
 ```
 
 `name` and `description` are all that is read. A folder without a readable
-`SKILL.md`, or without a description in it, is skipped rather than guessed at: a
-skill the agent cannot tell apart from another one is worse than one it never
-hears about. Without a `name`, the folder's own name is used.
+`SKILL.md`, or without a description in it, is skipped. Without a `name`, the
+folder's own name is used.
 
 The frontmatter parser is `key: value` lines between two `---` fences and
-nothing more. These files are written by hand; a parser that also accepted
-anchors and block scalars would be more code than the feature.
+nothing more. These files are written by hand.
 
-## What gets injected, and why it is only the list
+## Why the prompt carries the list and not the documents
 
-This is the whole design. A skill is a document, often a long one. Putting the
-documents in the system prompt would mean paying for every skill on every
-request of every turn, whether or not the task has anything to do with them —
-and a system prompt is the one block of text that is re-sent in full for the
-life of a session.
+A skill is a document, often a long one, and the system prompt is the one block
+of text re-sent in full for the life of a session. Putting the documents there
+means paying for every skill on every request of every turn, whatever the task
+is about.
 
 So the prompt carries one line per skill: name, description, path. The agent
 reads the one it needs with the `read` tool it already has, once, when a task
-matches. Progressive disclosure is not presentation here, it is the token
-budget: ten skills cost ten lines instead of ten documents.
+matches. Ten skills cost ten lines.
 
-The list is sorted by name, because the same skills in a different order are
-different bytes and would invalidate the prompt cache between turns for no
-reason at all. A workspace with no skills injects nothing at all — not even a
-heading saying it has none.
+The list is sorted by name. The same skills in a different order are different
+bytes, and different bytes invalidate the prompt cache between turns. A
+workspace with no skills injects nothing at all.
 
-Skills are read once, when the session is built. Adding one to the folder means
-the next session sees it, for the same cache reason as the sorting: the block
-sits inside the cached prefix, and changing it mid-session throws that prefix
-away.
+Skills are read once, when the session is built, so adding one to the folder
+means the next session sees it. That is the cache again: the block sits inside
+the cached prefix, and changing it mid-session throws the prefix away.

@@ -28,8 +28,8 @@ function parseArgs(args: Record<string, unknown>): ArgsParse<ImprovementArgs> {
 }
 
 // Dev mode: when the workspace is the nanoharness repo itself the ledger is the
-// checked-in one. Any other workspace gets its own under .nanoharness/ — the
-// installed package dir is never written to (plan §4 rule 5).
+// checked-in one. Any other workspace gets its own under .nanoharness/, since
+// the installed package directory is never written to (plan §4 rule 5).
 export async function ledgerPath(cwd: string): Promise<string> {
   if (await isHarnessRepo(cwd)) return join(cwd, 'docs', 'harness', 'improvements.md')
   return join(cwd, '.nanoharness', 'improvements.md')
@@ -77,7 +77,7 @@ export const LOG_IMPROVEMENT_TOOL = defineTool<ImprovementArgs>({
     const path = await ledgerPath(cwd)
     const existing = await readFile(path, 'utf8').catch(() => LEDGER_HEADER)
     const oneLine = (s: string) => s.replace(/\s+/g, ' ')
-    const entry = detail === undefined ? `- [ ] ${oneLine(title)}` : `- [ ] ${oneLine(title)} — ${oneLine(detail)}`
+    const entry = detail === undefined ? `- [ ] ${oneLine(title)}` : `- [ ] ${oneLine(title)}: ${oneLine(detail)}`
 
     await mkdir(dirname(path), { recursive: true })
     await writeFile(path, appendEntry(existing, today(), entry), 'utf8')

@@ -4,7 +4,7 @@
  * JSON-RPC 2.0 as MCP uses it, and the two failure kinds that must never be
  * confused (plan §7).
  *
- * A protocol error is a bug in this client or that server — a bad envelope, an
+ * A protocol error is a bug in this client or that server: a bad envelope, an
  * unknown method, a malformed parameter. The model never sees one; there is
  * nothing it could do about it. A tool-domain failure is the server saying "the
  * search found nothing" or "that path does not exist", and it arrives inside a
@@ -79,7 +79,7 @@ export function isJsonObject(value: unknown): value is Record<string, unknown> {
 
 /**
  * Read one line or one SSE `data:` payload as a JSON-RPC message. Anything that
- * is not a JSON-RPC envelope is dropped rather than thrown: a server is allowed
+ * is not a JSON-RPC envelope is dropped and never thrown: a server is allowed
  * to be chatty on the same channel, and one stray line must not kill a session.
  */
 export function parseMessage(raw: string): JsonRpcMessage | null {

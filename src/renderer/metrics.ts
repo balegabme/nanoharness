@@ -5,7 +5,7 @@ import type { TurnUsage } from '../core/types.js'
  * The two numbers in the corner of the window, kept in one place where they can
  * be tested.
  *
- * The cache hit rate lives here rather than in `chat.ts` for a second reason:
+ * The cache hit rate lives here and not in `chat.ts` for a second reason:
  * it is a copy. `cacheHitRate` in src/core/types.ts is the definition, and the
  * CLI and the main process use that one, but eslint.config.js forbids the
  * renderer a runtime import from core because the renderer is a separate
@@ -89,7 +89,7 @@ export class Throughput {
   /**
    * What a session had already spent before this window saw it. Nothing here
    * was timed, so there is no rate; the total is remembered only so the first
-   * round of the next turn reports what it produced rather than the whole
+   * round of the next turn reports what it produced and not the whole
    * history.
    */
   seed(output: number): void {

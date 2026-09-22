@@ -49,7 +49,7 @@ export function clampEffort(offered: readonly Effort[], wanted: Effort): Effort 
   let nearest = Number.POSITIVE_INFINITY
   // The nearest level on the scale in either direction, so leaving a model for
   // one with no `max` lands on `high`, and `minimal` on a model whose lowest
-  // level is `low` moves up rather than being stranded.
+  // level is `low` moves up to it.
   for (const effort of EFFORTS) {
     if (!offered.includes(effort)) continue
     const distance = Math.abs(EFFORTS.indexOf(effort) - from)
@@ -67,10 +67,10 @@ export function clampEffort(offered: readonly Effort[], wanted: Effort): Effort 
  * The rates a model charges once a prompt passes `over` tokens, replacing the
  * flat ones on `ModelFacts` above that size.
  *
- * Crossing the line is not a surcharge on the tokens past it. The whole request
- * is charged at the higher rate, which is how the endpoints publishing these
- * bill, so `costOf` picks one price list per request rather than splitting it.
- * A rate this list leaves out keeps the flat one.
+ * Crossing the line is not a surcharge on the tokens past it: the whole
+ * request is charged at the higher rate, which is how the endpoints publishing
+ * these bill. So `costOf` picks one price list per request and never splits
+ * one. A rate this list leaves out keeps the flat one.
  */
 export interface PriceTier {
   /** Prompt tokens above which these rates apply. */
@@ -96,8 +96,7 @@ export interface ModelFacts {
   /**
    * Higher rates for a long prompt, cheapest tier first. Most models have
    * none and are charged at one rate whatever the size. Pricing a tiered
-   * model flat under-reports a long session by as much as three times, and
-   * does so exactly once it has run long enough for anyone to look.
+   * model flat under-reports a long session by as much as three times.
    */
   tiers?: PriceTier[]
   /**
@@ -160,7 +159,7 @@ export function resolveFacts(provider: ProviderRecord, model: string): ModelFact
   }
   // A price typed by hand is the price, not a base rate for something else to
   // scale. The form offers no way to edit a tier, so keeping the endpoint's
-  // would quietly double a number the user had just corrected.
+  // would double a number the user had just corrected.
   const tiers = typed.tiers ?? (typed.input === undefined && typed.output === undefined ? reported.tiers : undefined)
   if (tiers !== undefined && tiers.length > 0) merged.tiers = tiers.map(tier => ({ ...tier }))
   const maxOutput = typed.maxOutput ?? reported.maxOutput
@@ -173,7 +172,7 @@ export function resolveFacts(provider: ProviderRecord, model: string): ModelFact
 }
 
 /**
- * One configured endpoint. The key is deliberately absent: it lives in the
+ * One configured endpoint. The key is absent by design: it lives in the
  * OS-encrypted store, keyed by `id`, so this record stays safe to read, copy or
  * paste into an issue (plan §16).
  */
@@ -412,9 +411,9 @@ function parseProvider(value: unknown): ProviderRecord | null {
 
 /**
  * A header name off disk or out of the window, or nothing. Anything `fetch`
- * would throw on is dropped rather than carried to the request: a name is the
- * token RFC 9110 allows, and a record holding something else would fail every
- * turn with an error about the wrong thing.
+ * would throw on is dropped before the request is built: a name is the token
+ * RFC 9110 allows, and a record holding something else fails every turn with
+ * an error about the wrong thing.
  */
 const HEADER_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
 
@@ -490,9 +489,9 @@ function parseTiers(value: unknown): PriceTier[] | undefined {
 }
 
 /**
- * Read auto mode's configuration back, dropping anything malformed. A candidate
- * naming a provider that is gone is kept rather than swept: it may be re-added
- * under the same id, and `approvalProblem` reports the gap in words.
+ * Read auto mode's configuration back, dropping anything malformed. A
+ * candidate naming a provider that is gone is kept: it may be re-added under
+ * the same id, and `approvalProblem` reports the gap in words.
  */
 export function parseApproval(value: unknown): ApprovalConfig | undefined {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined

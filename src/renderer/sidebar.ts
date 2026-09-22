@@ -144,7 +144,7 @@ function sessionRow(session: SessionView): HTMLElement {
   open.append(el('span', 'session-title', session.title), el('span', 'session-time', relativeTime(session.updatedAt)))
   open.addEventListener('click', () => void handlers?.openSession(session.id))
   // The row already carries a delete button; everything else a session can be
-  // asked for lives here rather than as four more icons crowding a 24px row.
+  // asked for lives here, where four more icons would crowd a 24px row.
   row.addEventListener('contextmenu', event => {
     event.preventDefault()
     openMenu(event.clientX, event.clientY, sessionMenu(session))
@@ -188,7 +188,7 @@ function workspaceMenu(workspace: WorkspaceView): MenuItem[] {
 /**
  * A copy that worked says nothing: the clipboard is the confirmation, and a
  * line in the flow for every copy would be noise. A refused one has to speak,
- * because the alternative is a menu item that silently does nothing.
+ * because the alternative is a menu item that does nothing and says nothing.
  */
 async function copy(text: string): Promise<void> {
   try {

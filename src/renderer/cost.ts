@@ -51,7 +51,7 @@ export function initCost(nh: NanoBridge): void {
 
 /**
  * Throw the log away, once the person has said so in as many words. The
- * question names the whole log rather than the window on screen, because the
+ * question names the whole log and not the window on screen, because the
  * whole log is what goes.
  */
 async function clearLog(): Promise<void> {
@@ -209,7 +209,7 @@ function hitRuns(rows: readonly SpendRow[], slot: number): SVGElement[] {
   const flush = (): void => {
     if (run.length === 0) return
     // A day with quiet days either side has no line in it, so it is drawn as
-    // the point it is rather than left off the chart.
+    // the point it is, and never left off the chart.
     if (run.length === 1) {
       const dot = document.createElementNS(SVG_NS, 'circle')
       dot.setAttribute('class', 'cost-hit-dot')
@@ -277,7 +277,7 @@ function key(kind: string, text: string): HTMLElement {
 }
 
 /**
- * One breakdown. Rows past the cut are summed into a last line rather than
+ * One breakdown. Rows past the cut are summed into a last line and never
  * dropped, so the column still adds up to the headline above it.
  */
 function table(title: string, rows: readonly SpendRow[]): HTMLElement {

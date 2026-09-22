@@ -3,8 +3,8 @@
 All notable changes to this project are documented in this file.
 Format based on Keep a Changelog; versioning follows SemVer.
 
-Nothing has been released yet, so this file says what 0.0.1 will contain rather
-than how it got there. An entry says what changed and, where a reader would
+Nothing has been released yet, so this file says what 0.0.1 will contain, and
+not how it got there. An entry says what changed and, where a reader would
 otherwise be surprised, what it was doing wrong before. The reasoning behind a
 design is in `docs/`, the full account of a defect is in
 `docs/harness/improvements.md`, and the step-by-step development history is in
@@ -20,7 +20,7 @@ the git log; none of the three is repeated here.
 - Independent tool calls in one assistant message run together where the tool
   declares itself read-only, and in the model's order either way.
 - OpenAI-compatible and Anthropic-compatible streaming providers, as wire
-  formats rather than vendors. As many configured providers as you want, of
+  formats and not as vendors. As many configured providers as you want, of
   either kind, side by side.
 - Thinking effort as one neutral setting (`none`, `minimal`, `low`, `medium`,
   `high`, `xhigh`, `max`), mapped to `reasoning_effort` or to a thinking budget.
@@ -58,8 +58,8 @@ the git log; none of the three is repeated here.
   harness, and several of them in one message run at the same time. Both skip
   `.git`, `node_modules` and whatever a `.gitignore` excludes, never follow a
   symlink, and name every cap and skip they applied, so an empty answer says
-  whether it looked. A pattern that will not compile is an error
-  rather than no matches. A pattern is rooted at whatever directory precedes
+  whether it looked. A pattern that will not compile is an error, and never no
+  matches. A pattern is rooted at whatever directory precedes
   its first wildcard and the walk starts there; files are read 64 at a time;
   and searches running at once share a walk while it is running. Measured over
   a checkout of 19,859 files, one search went from 6,989 ms to 86 ms.
@@ -69,7 +69,7 @@ the git log; none of the three is repeated here.
   and reports what it found on the way, where it used to answer no matches
   having read nothing.
 - The walk honours every `.gitignore` it meets, not only the one at the root,
-  and reads the pattern syntax rather than the plain names in it: wildcards,
+  and reads the pattern syntax and not the plain names in it: wildcards,
   anchors, directory-only rules, and `!` lines that re-include what an earlier
   line excluded. Of the 74 rule lines in this project's own `.gitignore`, 73
   are applied, and `.env.*` no longer hides the committed
@@ -124,7 +124,7 @@ the git log; none of the three is repeated here.
   question climbs again, and when every rung fails that is an error carrying
   every reason. Nothing falls back to allowing.
 - The person is asked in exactly one case: the approval model could not be
-  reached at all, after retries. That is the absence of a verdict rather than
+  reached at all, after retries. That is the absence of a verdict, and not
   one, and it is never read as a yes or a no.
 - The mode cannot be turned on when nothing is configured to ask. The picker
   says why instead of switching and then prompting for everything.
@@ -145,7 +145,7 @@ the git log; none of the three is repeated here.
 - What the harness spends on its own behalf is counted apart from what the
   conversation spends. The tokens are in the session total, because they are
   billed, under a `harness` split of their own, and their cost is summed at the
-  approval model's own prices rather than the session model's.
+  approval model's own prices and not the session model's.
 - The permission mode is per session and the preference behind it is app-wide:
   switching one session decides what the next new session starts in, and leaves
   the open ones alone. The chip says so on hover.
@@ -190,7 +190,7 @@ the git log; none of the three is repeated here.
   provider accepts. Server tools join the session as `mcp__<server>__<tool>`.
 - Two config files, `~/.nanoharness/mcp.json` and `.nanoharness/mcp.json`, where
   a project entry replaces a global one by name and `"enabled": false` switches
-  it off. Both name a token's environment variable rather than holding the
+  it off. Both name a token's environment variable and never hold the
   token. No server is configured by default.
 - `nh mcp list | add | remove | check`. `check` proves a server works by
   connecting to it through the same client a session uses.
@@ -243,14 +243,14 @@ the git log; none of the three is repeated here.
   being opened: the role and mode it ran as, how many tool calls it took, how
   many worked, how long it ran and what it cost. It is the line a turn ends on,
   written once and read back by the window, and it is drawn under the card in
-  that same line, rather than as a second row inside the card's head.
+  that same line, and not as a second row inside the card's head.
 - A spend view, opened from the sidebar foot or from the session's own usage
   line: what was spent over the window, a bar per day with the cache hit rate
   drawn over it, and the same money broken down by folder, session, model,
   agent and by which part of the harness spent it. The chart puts cost and hit
   rate together because a day the bars jump while the line drops is a prompt
   prefix that stopped matching. **Clear** deletes the log after asking, and
-  takes all of it rather than the range on screen.
+  takes all of it, and not the range on screen.
 - A renderer that fails to load writes a banner into the page instead of leaving
   a blank window.
 
@@ -263,7 +263,7 @@ the git log; none of the three is repeated here.
 - The API key goes out as both `x-api-key` and `Authorization: Bearer`, because
   Anthropic-compatible gateways differ on which they read.
 - Thinking is read from every spelling the OpenAI-compatible world uses.
-- A session runs in its folder rather than in whatever directory Electron was
+- A session runs in its folder, and not in whatever directory Electron was
   launched from.
 - Every agent thinks at the session's own effort; roles no longer carry one.
 - A spawn asking to clone into another role runs that role distinct instead.
@@ -286,7 +286,7 @@ the git log; none of the three is repeated here.
 - A denial is remembered, and a path already refused this session is answered
   from that refusal instead of asking again.
 - A refused tool call is stored as refused, so a re-opened session shows it in
-  red rather than as a successful call.
+  red, and never as a successful call.
 - A turn that ends with no answer says so.
 - An assistant message with no text, no tool call and no thinking is not stored:
   it drew a blank block, and some providers refuse to be sent one back.
@@ -301,15 +301,15 @@ the git log; none of the three is repeated here.
   `e://`; every false prompt stopped a command that had nothing to do with the
   place named. The shell is approved whole instead, never parsed: the modal
   shows the command and offers allow once, allow all shell commands for the
-  session, or deny. A gate with nobody to ask refuses the command rather than
-  run it unscreened.
+  session, or deny. A gate with nobody to ask refuses the command instead of
+  running it unscreened.
 - A refusal no longer says "you denied access to it". A closed window produces
   the same refusal, and the old wording sent agents hunting for another route to
   the same place, one modal per attempt.
 - A background job still running when the app closes is written into the
   conversation that started it, instead of disappearing with the process while
   the last message promises its report.
-- Which failures are worth retrying is decided by rule rather than by a list of
+- Which failures are worth retrying is decided by rule and not by a list of
   status codes. Every 5xx is retried, along with the three 4xx that mean "not
   now": 408, 425 and 429. The list it replaces named nine numbers and stopped
   at 529, so a gateway answering in numbers of its own, such as Cloudflare's 520
@@ -317,13 +317,13 @@ the git log; none of the three is repeated here.
   attempt.
   409 is no longer retried: a conflict with the server's state is not resolved
   by sending the same request again.
-- A broken stream is recognised by its type rather than by its message text. A
+- A broken stream is recognised by its type and not by its message text. A
   body that never arrived used to be thrown carrying the 2xx status of the
   response whose headers were fine, and was only retried because a string
-  comparison caught it first; rewording that sentence would have turned the
-  retry off silently. A connection that never delivered a response is now read
+  comparison caught it first, so rewording that sentence would have turned the
+  retry off with nothing to show for it. A connection that never delivered a response is now read
   from the error code in its `cause` chain instead of from the words "fetch
-  failed", so an expired certificate fails once rather than five times.
+  failed", so an expired certificate fails once instead of five times.
 - The approval model's ladder pins the endpoint that answered, not the model
   name. The same model id offered by two providers matched both rungs, which
   left the ladder in its configured order and sent every question back through

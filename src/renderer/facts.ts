@@ -46,7 +46,7 @@ export function resolveFacts(provider: Described | undefined, model: string): Mo
   }
   // A price typed by hand is the price, not a base rate for something else to
   // scale. The form offers no way to edit a tier, so keeping the endpoint's
-  // would quietly double a number the user had just corrected.
+  // would double a number the user had just corrected.
   const tiers = typed.tiers ?? (typed.input === undefined && typed.output === undefined ? reported.tiers : undefined)
   if (tiers !== undefined && tiers.length > 0) merged.tiers = tiers.map(tier => ({ ...tier }))
   const maxOutput = typed.maxOutput ?? reported.maxOutput
@@ -72,7 +72,7 @@ export function clampEffort(offered: readonly Effort[], wanted: Effort): Effort 
   let best: Effort | undefined
   let nearest = Number.POSITIVE_INFINITY
   // The nearest level on the scale, so leaving a model for one with no `max`
-  // lands on `high` rather than back at `none`. Walking only downwards would
+  // lands on `high` and not back at `none`. Walking only downwards would
   // strand `minimal` at the bottom on a model whose lowest level is `low`.
   for (const effort of EFFORTS) {
     if (!offered.includes(effort)) continue
@@ -102,8 +102,8 @@ export const EFFORT_LABEL: Record<Effort, string> = {
 /**
  * The warning mark on a model nobody has described, and what it means. Most
  * endpoints answer `/v1/models` with an id and nothing else, so an unmarked
- * model is the exception rather than the rule and the mark has to say what to
- * do about it.
+ * model is the exception, not the rule, and the mark has to say what to do
+ * about it.
  */
 export const WARN = '⚠'
 

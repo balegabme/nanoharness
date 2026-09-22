@@ -70,7 +70,7 @@ describe('a path the user refuses', () => {
 })
 
 describe('a window that went away', () => {
-  it('denies what was waiting instead of leaving the turn hanging', async () => {
+  it('denies what was waiting, and leaves no turn hanging', async () => {
     const root = await mkdtemp(join(tmpdir(), 'nh-perm-'))
     // The window goes away with the prompt already on its way to it.
     const broker: PermissionBroker = new PermissionBroker(() => broker.cancelAll())

@@ -5,15 +5,15 @@ inside it, and that folder is the session's root for as long as it exists: its
 working directory and the boundary every tool is held to.
 
 Files:
-- src/core/scope.ts — path containment, `..`, absolute paths, symlinks, `~`
-- src/main/workspace-store.ts — folders, sessions and transcripts on disk
-- src/main/permission.ts — the prompt a tool waits on when it reaches outside
-- src/core/prompt.ts — the system prompt, where the session stands and the rules
+- src/core/scope.ts: path containment, `..`, absolute paths, symlinks, `~`
+- src/main/workspace-store.ts: folders, sessions and transcripts on disk
+- src/main/permission.ts: the prompt a tool waits on when it reaches outside
+- src/core/prompt.ts: the system prompt, where the session stands and the rules
 
 ## What the agent is told
 
-A session's system prompt is built per session (`buildSystemPrompt`) instead of
-being hard-coded, and it names the four things the model cannot see and will
+A session's system prompt is built per session (`buildSystemPrompt`) and never
+hard-coded. It names the four things the model cannot see and will
 otherwise invent: the workspace root, the platform, the shell, and today's date.
 On Windows it says outright that `bash` is Git Bash and not WSL, with no
 `/mnt/c` and no `/proc`, because a model without that line reasons from its
@@ -25,10 +25,9 @@ request of every turn. Stay in the workspace and say why when you cannot. Prefer
 relative paths. Do the task that was asked, and do not explore the machine. Ask
 about a gap in the request instead of inventing work to fill it, because an
 agent handed "spawn three subagents, one of them a weather job" will otherwise
-make the other two up. Change an existing file with `edit` rather than
-rewriting it. Do not retry a failed call unchanged. Ask for
-everything you already know you need in one message, since the read-only calls
-run together.
+make the other two up. Change an existing file with `edit` and never rewrite it
+whole. Do not retry a failed call unchanged. Ask for everything you already
+know you need in one message, since the read-only calls run together.
 
 Three of them are there because of what a model does when it is *nearly* sure.
 "Do not invent a fact about this machine or this project", meaning a path, a
@@ -45,7 +44,8 @@ server spent fifteen rounds and 130k tokens deriving the config layout from
 `src/`, with the doc that says "neither file has to be hand-written" already
 open in its context.
 
-Three came out of one run where the user's first line was that browser tools
+Another three came out of one run where the user's first line was that browser
+tools
 are pointless for a model with no eyes. The agent probed for Chrome, Edge, the
 puppeteer cache and the playwright cache anyway, twice after being interrupted
 to ask why, and each probe was a path outside the workspace, so each one put a
@@ -63,7 +63,7 @@ agent asked to add an MCP server read the unqualified version as covering a JSON
 file in its own workspace and refused. The rule after it is the general form:
 never state a rule, a permission or a limit you were not given. Asked what it
 can do, an agent answers from its tools and its configuration, and something
-unconfigured is unconfigured rather than forbidden. A model with nothing to go
+unconfigured is unconfigured and not forbidden. A model with nothing to go
 on fills that gap from its training set, and a plausible invented policy is much
 harder to catch than an error.
 
@@ -83,9 +83,9 @@ stops every subagent this session still has running, foreground and background
 alike, before aborting the parent's own stream. Aborting the parent's request
 alone would leave the child spending, and a background child would go on
 spending after the turn it belonged to was over. A subagent that was stopped
-rather than finished ends as state `stopped`, which is neither a result nor a
-fault: its note says `Stopped.`, and whatever it had written to disk before then
-is kept.
+before it finished ends as state `stopped`, which is neither a result nor a
+fault: its note says `Stopped.`, and whatever it had written to disk before
+then is kept.
 
 ## The sidebar model
 
@@ -125,9 +125,9 @@ wrong. The notes are everything else the window drew: an error, a stop, a turn
 that ended without an answer, a repeated call the harness refused, a background
 job starting and finishing, and the summary line every turn ends on. The summary
 is a kind of its own, for the reason `ui.md` gives. Each note carries `after`,
-the number of messages
-written when it happened, so a re-opened session puts it back between the same
-two blocks the user saw it between. A file written before notes existed, or one
+the number of messages written when it happened, so a re-opened session puts it
+back between the same two blocks the user saw it between. A file written before
+notes existed, or one
 whose notes are unreadable, opens as a conversation with no notes and no error.
 
 A subagent keeps its own transcript, referenced from the parent's. The parent's
@@ -153,9 +153,9 @@ Re-opening a session rebuilds it with that transcript as history, so the model
 picks up the thread, and hands it back its notes so the window reads the way it
 did live: a turn that stopped looks stopped, a turn that failed looks failed,
 and neither looks like a turn that simply had nothing to say. The system prompt
-is built fresh each launch rather than restored from the file, because a stored
-one would silently freeze whatever the harness said about itself the day the
-session started.
+is built fresh each launch and never restored from the file, because a stored
+one would freeze whatever the harness said about itself the day the session
+started.
 
 ## Scope
 
@@ -196,18 +196,18 @@ and the answer is one of the three below. "Allow all shell commands" then covers
 the rest of the session, because there is nothing finer to remember: once the
 shell is allowed it can reach anything the user can, and the prompt says so.
 This is the one place the harness cannot scope what it approves, and a real
-boundary would need an OS sandbox; the ledger keeps that entry open. What does
-not come back is the parser: paths are resolved where they are used and never
-guessed out of a string.
+boundary would need an OS sandbox; the ledger keeps that entry open. The parser
+is gone for good: paths are resolved where they are used and never guessed out
+of a string.
 
 ## Asking
 
 Outside the root the turn stops and waits for the person at the keyboard. The
 prompt names the *resolved* path, after symlinks and `..` have been followed,
-because seeing where the agent actually ended up pointing is the entire point
-of asking.
+because where the agent ended up pointing is what the person is being asked
+about.
 
-Three answers, and they mean what they say:
+Three answers:
 
 | answer | paths | shell |
 |---|---|---|
@@ -215,7 +215,7 @@ Three answers, and they mean what they say:
 | Allow for this session | that directory, until the app closes | every shell command, until the app closes |
 | Deny | the tool gets an error and the turn carries on | the command does not run; that same command is not asked about again |
 
-"Allow for this session" grants the directory rather than the single file. A
+"Allow for this session" grants the whole directory and not the single file. A
 tool let at one path in a folder invariably wants its neighbours next, and
 prompting per file is how people learn to click yes without reading. The shell
 gets the same answer at the other scale, and the button says "Allow all shell
@@ -236,7 +236,7 @@ source is a question that does not get answered. Reading it is allowed; writing
 to it still asks, and a workspace that *is* the checkout is unaffected either
 way.
 
-Two things cannot be answered, and both resolve to a denial rather than a hang:
+Two things cannot be answered, and both resolve to a denial and never a hang:
 a prompt for a session that is not the one on screen, and a prompt whose window
 went away. A tool waiting on a promise that can never settle would park the
 turn forever.

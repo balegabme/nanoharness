@@ -52,7 +52,7 @@ function turn(over: Partial<UsageRecord> = {}): Omit<UsageRecord, 'v'> {
 }
 
 describe('a usage log that outlived a change to its units', () => {
-  it('skips a line from before the version field instead of adding it to the totals', async () => {
+  it('skips a line from before the version field, so no total counts it', async () => {
     await writeFile(
       path,
       // The first line carries no schema stamp and 10,000 in `input`: a
@@ -106,7 +106,7 @@ describe('a line that cannot say who spent it', () => {
     expect(log.records[0]?.costUsd).toBeNull()
   })
 
-  it('skips a cost that is not a number at all, rather than reading it as unpriced', async () => {
+  it('skips a cost that is not a number at all, and never reads it as unpriced', async () => {
     await writeFile(path, line({ v: USAGE_SCHEMA, ...turn(), costUsd: 'free' }), 'utf8')
 
     const log = await readUsage(path)

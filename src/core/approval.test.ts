@@ -86,7 +86,7 @@ describe('reading the judge’s answer', () => {
     expect(() => parseVerdict('["allow"]')).toThrow(ApprovalUnavailableError)
   })
 
-  it('stands in for a missing reason rather than showing an empty one', () => {
+  it('fills in a missing reason so the line is never empty', () => {
     expect(parseVerdict('{"verdict":"deny"}').reason).toBe('the approval model gave no reason')
   })
 })
@@ -207,7 +207,7 @@ describe('the ladder', () => {
 
   it('tries a rung again before climbing, so a blip is not a dialog', async () => {
     // The only thing past the whole ladder is a prompt on a screen nobody is
-    // sitting at, so a 503 is waited out rather than escalated.
+    // sitting at, so a 503 is waited out and never escalated.
     let tries = 0
     const flaky: JudgeEndpoint = {
       providerId: 'p1',
@@ -229,7 +229,7 @@ describe('the ladder', () => {
     expect(tries).toBe(3)
   })
 
-  it('gives up on a rung that keeps failing rather than retrying for ever', async () => {
+  it('gives up on a rung that keeps failing', async () => {
     let tries = 0
     const broken: JudgeEndpoint = {
       providerId: 'p1',
@@ -282,7 +282,7 @@ describe('the ladder', () => {
     await expect(judge.judge(ACTION, [])).rejects.toThrow(/second: /)
   })
 
-  it('says so rather than guessing when nothing is configured', async () => {
+  it('says so, and guesses nothing, when nothing is configured', async () => {
     const judge = new Judge({ endpoints: async () => [] })
     await expect(judge.judge(ACTION, [])).rejects.toThrow(/no approval model is configured/)
   })
@@ -310,7 +310,7 @@ describe('the ladder', () => {
 })
 
 describe('whether auto mode can be turned on', () => {
-  it('says what is missing instead of letting the mode turn on and do nothing', () => {
+  it('says what is missing, so the mode cannot turn on and do nothing', () => {
     expect(approvalProblem(undefined, [RECORD])).toBe('no approval model is configured')
     expect(approvalProblem({ candidates: [] }, [RECORD])).toBe('no approval model is configured')
     expect(approvalProblem({ candidates: [{ providerId: 'gone', model: 'm' }] }, [RECORD])).toContain('no longer exists')

@@ -168,8 +168,8 @@ export interface SubagentOpenResponse {
   usage: TurnUsage
   /**
    * What its tool calls came to: how many, how many failed. Absent on a
-   * subagent stored before the count existed, which is a line the window leaves
-   * out rather than a zero it makes up.
+   * subagent stored before the count existed, which is a line the window
+   * leaves out instead of making up a zero.
    */
   tools?: ToolStats
   startedAt: number
@@ -234,7 +234,7 @@ export interface ConfigStatus {
   /**
    * Endpoints the harness already knows the address and habits of, for the
    * picker that fills the form in. The window cannot import the provider layer,
-   * so the list travels rather than being kept in two places.
+   * so the list travels and is never kept in two places.
    */
   knownProviders: readonly KnownProvider[]
   /** Why it is not configured yet. Absent once it is. */
@@ -359,7 +359,7 @@ export interface NanoBridge {
   usageReport(days: number | null): Promise<UsageReport>
   /**
    * Delete the usage log and report on what is left, which is nothing. The
-   * answer comes back as a report rather than as void so the view redraws from
+   * answer comes back as a report and not as void, so the view redraws from
    * the same channel it drew from before.
    */
   usageClear(days: number | null): Promise<UsageReport>

@@ -11,7 +11,7 @@ import type { StoredSecret } from '../core/secrets.js'
  * OS through the same `safeStorage` that holds the provider API keys.
  *
  * It has to survive a restart, because the placeholder in a stored transcript
- * does not mean anything without it — a session re-opened tomorrow would show
+ * does not mean anything without it: a session re-opened tomorrow would show
  * `{{secret:tavily_key}}` referring to a value that no longer exists, and the
  * next tool call would send that literal string to an API.
  *
@@ -74,7 +74,7 @@ async function write(secrets: readonly StoredSecret[]): Promise<void> {
 export async function secretVault(): Promise<SecretVault> {
   // The promise is what is memoised, not the vault. Two callers that arrive
   // while the file is being read would otherwise both see `null`, both build,
-  // and end up writing their keys into different objects — one of which is
+  // and end up writing their keys into different objects, one of which is
   // then the one nobody holds.
   vault ??= (async () => {
     const built = new SecretVault(secrets => {

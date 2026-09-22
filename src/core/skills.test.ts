@@ -50,8 +50,8 @@ describe('a workspace with skills', () => {
 
   it('injects the list and never the documents', async () => {
     const block = skillsBlock(await loadSkills(root)).join('\n')
-    expect(block).toContain('- audit — Read a diff for security problems (.nanoharness/skills/audit/SKILL.md)')
-    expect(block).toContain('- release-checklist — What to do before tagging a release (.nanoharness/skills/release/SKILL.md)')
+    expect(block).toContain('- audit: Read a diff for security problems (.nanoharness/skills/audit/SKILL.md)')
+    expect(block).toContain('- release-checklist: What to do before tagging a release (.nanoharness/skills/release/SKILL.md)')
     // The point of the whole design: the body is paid for only when read.
     expect(block).not.toContain(BODY)
   })

@@ -5,7 +5,7 @@ import type { ChatChunk, ChatMessage } from '../core/types.js'
 /**
  * The Responses wire. Everything below is shaped the way a live endpoint sent
  * it: named events in the `type` field of each `data:` line, a transcript that
- * is a flat list of items rather than a list of messages, and a usage report
+ * is a flat list of items and not a list of messages, and a usage report
  * under different names for the same arithmetic the other wire does.
  */
 
@@ -83,11 +83,11 @@ describe('reading a Responses stream', () => {
     expect(chunks.filter(c => c.kind === 'text').map(c => c.text).join('')).toBe('Hello there.')
     expect(chunks.filter(c => c.kind === 'thinking').map(c => c.text).join('')).toBe('The user said hello.')
     // The whole of it once more at the end, so the transcript keeps a block
-    // rather than the deltas it was drawn from.
+    // and not the deltas it was drawn from.
     expect(chunks.find(c => c.kind === 'thinking_block')?.block).toEqual({ kind: 'thinking', text: 'The user said hello.' })
   })
 
-  it('takes a tool call off the finished item rather than the fragments', async () => {
+  it('takes a tool call off the finished item and not off the fragments', async () => {
     const chunks = await collect(
       stream([
         { type: 'response.function_call_arguments.delta', delta: '{"city"' },
@@ -121,7 +121,7 @@ describe('what a Responses turn charged', () => {
   it('counts the cached tokens apart from the ones read in full', async () => {
     const { usage } = doneOf(await collect(stream([completed()])))
     // 299 read, 128 of them cached, so 171 fresh. Reasoning is a breakdown of
-    // the output rather than something to add to it.
+    // the output, never something to add to it.
     expect(usage).toEqual({ input: 171, output: 63, cacheRead: 128, cacheWrite: 0, reasoning: 51 })
   })
 
@@ -158,7 +158,7 @@ describe('what a Responses turn charged', () => {
 })
 
 describe('a Responses stream that gives up after answering 200', () => {
-  it('reports the failure rather than finishing quietly', async () => {
+  it('reports the failure and does not finish in silence', async () => {
     const chunks = await collect(
       stream([{ type: 'response.failed', response: { status: 'failed', error: { code: 'server_error', message: 'Upstream request failed.' } } }]),
     )

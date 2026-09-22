@@ -4,8 +4,8 @@ import { must } from './dom.js'
 /**
  * The composer is one element in two seats. Before a session exists it sits in
  * the middle of the hero; once one is open it moves into the dock that floats
- * over the bottom of the flow. Moving the node rather than mounting a second
- * copy is what keeps a half-written message, and the caret, across the move.
+ * over the bottom of the flow. The node is moved and no second copy is
+ * mounted, which keeps a half-written message, and the caret, across the move.
  */
 
 const composer = must<HTMLFormElement>('composer')
@@ -27,7 +27,7 @@ export function autoGrow(): void {
 
 /**
  * The docked card floats over the flow, so the flow has to end above it. The
- * tail spacer is written from the card's measured height rather than a guess,
+ * tail spacer is written from the card's measured height and never a guess,
  * which keeps the last message clear of the card at any composer height.
  */
 function measure(): void {

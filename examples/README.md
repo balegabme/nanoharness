@@ -2,7 +2,7 @@
 
 Configuration you can copy into a workspace's `.nanoharness/` folder. Nothing
 here holds a secret, and nothing here can: the formats name environment
-variables rather than carrying values.
+variables and never carry values.
 
 ## `mcp.json`
 
@@ -11,10 +11,10 @@ Copy to `~/.nanoharness/mcp.json` for every workspace, or to a project's
 the global entry, and `"enabled": false` switches one off. Two servers here, one
 of each kind:
 
-- **tavily** — web search and fetch, spawned over stdio. It reads
-  `TAVILY_API_KEY` from the environment, and it is the stdio server rather than
+- `tavily`: web search and fetch, spawned over stdio. It reads
+  `TAVILY_API_KEY` from the environment, and it is the stdio server and not
   Tavily's hosted URL because that URL carries the key in the query string.
-- **internal-docs** — a remote server over Streamable HTTP, with its bearer
+- `internal-docs`: a remote server over Streamable HTTP, with its bearer
   token read from `EXAMPLE_MCP_TOKEN`. Shipped `"enabled": false`, because a
   server that cannot authenticate costs a handshake to end up refusing.
 

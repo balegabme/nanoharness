@@ -73,7 +73,7 @@
         <header class="topbar">
           <!-- Shown while a subagent or a diff is open. Both sit one step in
                front of the flow that opened them, so this goes back a step
-               rather than to a place of its own. -->
+               and never to a place of its own. -->
           <button class="icon-btn back" id="back" type="button" title="Back" aria-label="Back" hidden>
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M15 5l-7 7 7 7" />
@@ -142,7 +142,7 @@
 
           <!--
             What has been spent, drawn where the conversation is. It belongs to
-            the window rather than to a session: the tables are every folder,
+            the window and not to a session: the tables are every folder,
             session, model and agent the log has ever seen.
           -->
           <div class="cost-view" id="cost-view" hidden>
@@ -351,13 +351,13 @@
         <h2>Approval</h2>
         <p class="hint">
           In auto-approve mode a second model answers the permission questions your session folder cannot settle, allow or
-          deny, decided there and then, so a long task can run while you are away instead of stopping on a dialog. Where it is
+          deny, decided there and then, so a long task can run while you are away without stopping on a dialog. Where it is
           unsure it denies and the run carries on; you see what was stopped on the line each turn ends with. It is a check, not
           a sandbox: an approved shell command can reach everything you can.
         </p>
         <p class="hint">
           Pick the model it asks. More than one makes a ladder, tried top to bottom, so a provider being briefly down does not
-          take the mode down with it. This is a security decision, so choose a capable model rather than the cheapest one
+          take the mode down with it. This is a security decision, so choose a capable model and not the cheapest one
           available. The whole value is in correctly refusing the rare command that matters, and nothing else is watching.
         </p>
         <div class="approval-add">

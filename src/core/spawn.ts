@@ -74,7 +74,7 @@ export interface SpawnResult {
   ms: number
   /** Priced at the model the parent is on, or null when nobody priced it. */
   costUsd: number | null
-  /** True when the user's stop ended it rather than the agent finishing. */
+  /** True when the user's stop ended it, so the agent never finished. */
   stopped: boolean
 }
 
@@ -199,8 +199,7 @@ const ENDED: Record<SubagentRecord['state'], string> = {
  * A job row is a label, and one click away is the answer it labels.
  *
  * This is the only length limit in this file. The answer itself is handed over
- * whole: what bounds its length is the model's own output limit, enforced where
- * it belongs.
+ * whole, bounded only by the model's own output limit.
  */
 const HEADLINE_CAP = 200
 
@@ -288,10 +287,9 @@ export function createSpawnHost(deps: SpawnDeps): SpawnHost {
     try {
       await deps.save(slot, { request, state, note, usage, tools: child.toolStats, messages: child.transcript, notes: child.notes })
     } catch (err) {
-      // This runs on all three ways out, so the sentence says which one it was:
-      // a subagent that failed or was stopped is exactly the one whose
-      // conversation was worth reading, and telling the user it "finished"
-      // would be the harness's second wrong statement in one line.
+      // This runs on all three ways out, so the sentence says which one it
+      // was: a subagent that failed or was stopped is exactly the one whose
+      // conversation is worth reading.
       report(
         `The ${request.role} subagent ${ENDED[state]}, but its conversation could not be written: ${fail(err)}. Opening it from the tool call will find nothing.`,
       )
@@ -314,8 +312,8 @@ export function createSpawnHost(deps: SpawnDeps): SpawnHost {
 
   /**
    * What a failed job had spent and done, when the failure kept a record of it.
-   * A failure from anywhere else leaves both out rather than filing zeroes,
-   * which the row would draw as an agent that did nothing.
+   * A failure from anywhere else leaves both out; zeroes would draw as an
+   * agent that did nothing.
    */
   function ledger(err: unknown): { usage?: TurnUsage; tools?: ToolStats } {
     if (err instanceof SubagentFailure) return { usage: err.usage, tools: err.tools }
@@ -382,9 +380,9 @@ export function createSpawnHost(deps: SpawnDeps): SpawnHost {
  * and its tool calls have no results yet, because the parent is inside one of
  * them. A provider will not take a conversation that ends on an unanswered tool
  * call: OpenAI rejects it outright ("an assistant message with 'tool_calls'
- * must be followed by tool messages"). Cutting the in-flight turn, instead of
- * patching it with a fake result, leaves the clone starting from the user's own
- * last message, which is what it is being asked about.
+ * must be followed by tool messages"). Cutting the in-flight turn leaves the
+ * clone starting from the user's own last message, which is what it is being
+ * asked about.
  */
 export function cloneHistory(transcript: readonly ChatMessage[]): ChatMessage[] {
   const answered = new Set<string>()

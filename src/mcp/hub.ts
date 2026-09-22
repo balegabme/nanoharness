@@ -105,7 +105,7 @@ export class McpHub {
  * lives. Both are a handful of lines, and they are the difference between "I
  * cannot install MCP servers" and a written config.
  *
- * The connected servers are listed by name rather than by tool: the tools are
+ * The connected servers are listed by name and not by tool: the tools are
  * already in the tool definitions, and repeating them here would be paying
  * twice for the same list.
  */
@@ -146,7 +146,7 @@ export function mcpBlock(
   if (!options.canConfigure) return lines
 
   lines.push(
-    'Both files use the shape every MCP client uses: {"mcpServers": {"<name>": {...}}}. A stdio entry has command, args and envPassthrough (variable names, passed through from the environment); an HTTP entry has url and, where the server takes a bearer token, tokenEnv, the name of the variable holding it, so that token is named rather than written. A server that authenticates through its own URL instead is a different case: the placeholder is substituted before the writer runs, so that URL is stored with the real credential in it.',
+    'Both files use the shape every MCP client uses: {"mcpServers": {"<name>": {...}}}. A stdio entry has command, args and envPassthrough (variable names, passed through from the environment); an HTTP entry has url and, where the server takes a bearer token, tokenEnv, the name of the variable holding it, so the token is named and never written. A server that authenticates through its own URL is a different case: the placeholder is substituted before the writer runs, so that URL is stored with the real credential in it.',
   )
 
   if (options.cli === undefined) {

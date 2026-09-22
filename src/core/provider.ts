@@ -64,12 +64,12 @@ export function retryAfterMs(header: string | null): number | undefined {
 export const RETRY_AFTER_CAP_MS = 60_000
 
 /**
- * A stream that broke rather than a request that was refused: the body never
+ * A stream that broke, as against a request that was refused: the body never
  * arrived, or an event stopped halfway through.
  *
- * A class rather than a message, so that rewording the sentence cannot silently
- * stop the retry. It carries no status: the response whose body never arrived
- * had perfectly good headers.
+ * A class and not a message, so rewording the sentence cannot stop the retry.
+ * It carries no status: the response whose body never arrived had perfectly
+ * good headers.
  */
 export class StreamBrokenError extends ProviderError {
   constructor(message: string) {
@@ -83,9 +83,10 @@ export const NO_BODY = 'no response body'
 export const BAD_SSE = 'provider sent malformed SSE chunk'
 
 /**
- * The 4xx statuses worth sending the same request again for: each is the server
- * saying "not now" rather than "not this". Every other 4xx is the request
- * itself being wrong, and the same bytes are wrong again on arrival.
+ * The 4xx statuses worth sending the same request again for: each is the
+ * server saying "not now" where the rest say "not this". Every other 4xx is
+ * the request itself being wrong, and the same bytes are wrong again on
+ * arrival.
  */
 const RETRY_ANYWAY = new Set([408, 425, 429])
 
@@ -114,8 +115,8 @@ const RETRY_CODE = new Set([
 
 /**
  * The first `code` in an error's cause chain, which is where the reason for a
- * bare `fetch failed` is kept. Walked rather than opened once, because undici
- * nests: a `TypeError` over an `AggregateError` over the real socket error.
+ * bare `fetch failed` is kept. The chain is walked because undici nests: a
+ * `TypeError` over an `AggregateError` over the real socket error.
  */
 export function causeCode(err: unknown): string | undefined {
   for (let at: unknown = err; at instanceof Error; at = at.cause) {
@@ -164,7 +165,7 @@ export function backoffFor(err: unknown, attempt: number, schedule: readonly num
 
 /**
  * Wait, and stop waiting early if the person presses Stop. It resolves either
- * way rather than rejecting.
+ * way and never rejects.
  */
 export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted === true) return Promise.resolve()

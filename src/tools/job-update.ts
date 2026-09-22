@@ -13,9 +13,9 @@ function parseArgs(args: Record<string, unknown>): ArgsParse<JobUpdateArgs> {
 }
 
 /**
- * How a background job says where it has got to. Nobody is reading its stream —
- * a job runs while the user is doing something else — so this line is the only
- * thing the window can show between "started" and the final answer.
+ * How a background job says where it has got to. A job runs while the user is
+ * doing something else, so this line is the only thing the window can show
+ * between "started" and the final answer.
  */
 export const JOB_UPDATE_TOOL = defineTool<JobUpdateArgs>({
   input: {

@@ -97,12 +97,12 @@ describe('nh mcp add', () => {
     expect(code).toBe(0)
     const written = await entries(join(project, '.nanoharness', 'mcp.json'))
     expect(written.probe).toEqual({ command: process.execPath, args: [script], envPassthrough: [] })
-    // A restart is what makes it live, and the command says so rather than
-    // leaving the agent to report a server the running session has not got.
+    // A restart is what makes it live, and the command says so. Otherwise the
+    // agent reports a server the running session has not got.
     expect(printed.out()).toContain('restart the app')
   })
 
-  it('names a token instead of writing one', async () => {
+  it('names a token and writes none', async () => {
     captured()
     await runMcp(['add', 'tickets', '--global', '--url', 'https://mcp.example.com/mcp', '--token-env', 'TICKETS_TOKEN'])
 
@@ -110,7 +110,7 @@ describe('nh mcp add', () => {
     expect(written.tickets).toEqual({ url: 'https://mcp.example.com/mcp', tokenEnv: 'TICKETS_TOKEN' })
   })
 
-  it('refuses an entry the harness would ignore, rather than writing it', async () => {
+  it('refuses an entry the harness would ignore, and writes nothing', async () => {
     const printed = captured()
     expect(await runMcp(['add', 'nonsense', '--dir', project])).toBe(2)
     expect(printed.err()).toContain('--command')
@@ -119,7 +119,7 @@ describe('nh mcp add', () => {
 })
 
 describe('asking the command what it takes', () => {
-  it('answers `--help` wherever it appears, not only as the command', async () => {
+  it('answers `--help` wherever it appears, as the command or after it', async () => {
     for (const argv of [['--help'], ['add', '--help'], ['check', '-h'], ['remove', 'tavily', '--help']]) {
       const printed = captured()
       expect(await runMcp(argv)).toBe(0)

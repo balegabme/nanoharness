@@ -17,7 +17,7 @@ export const MCP_HELP = `nh mcp: the MCP servers this harness will connect to
   --global   the file every workspace reads (~/.nanoharness/mcp.json)
              default is this folder's own .nanoharness/mcp.json
   --disabled write the entry switched off
-  --dir DIR  treat DIR as the workspace instead of the current folder
+  --dir DIR  treat DIR as the workspace in place of the current folder
 
 A bearer token is named, not written: --env and --token-env give the name of
 an environment variable, and the harness reads it at connect time. A server
@@ -141,7 +141,7 @@ export async function runMcp(argv: readonly string[]): Promise<number> {
   } catch (err) {
     // A wrong command line is answered with the right one. Anything else, an
     // unreadable file or a server that threw, is a real failure and is left to
-    // the caller rather than dressed up as a typo.
+    // the caller, and never dressed up as a typo.
     if (!(err instanceof UsageError)) throw err
     process.stderr.write(`nh mcp: ${err.message}\n${MCP_HELP}`)
     return 2
@@ -223,7 +223,7 @@ async function remove(flags: Flags, path: string): Promise<number> {
 
 /**
  * The `--call` half of `check`: one real tool call, which is the only part of
- * the protocol a credential has to survive. It is asked for rather than done
+ * the protocol a credential has to survive. It is asked for and never done
  * automatically, because a catalog is not a list of safe things to run. The
  * caller names the tool, so nothing is invoked that they did not choose.
  */

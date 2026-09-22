@@ -5,21 +5,21 @@ Everything the harness does is a typed event on the bus; the renderer
 (step 5) is only a renderer of those events.
 
 Files:
-- src/core/types.ts — shared types: events, usage, messages, tools
-- src/core/event-bus.ts — EventBus: emit + subscribe
-- src/core/session.ts — one session loop: provider stream, tool rounds, usage
-- src/core/usage-log.ts — append-only record of what each turn spent, in the OS user-data dir
-- src/core/roots.ts — workspace root vs harness root, and the harness-editor cwd
-- src/main/index.ts — Electron entry, typed IPC wiring
-- src/ipc/contract.ts — IPC channel names and payloads
+- src/core/types.ts: the shared types for events, usage, messages and tools
+- src/core/event-bus.ts: the EventBus, emit and subscribe
+- src/core/session.ts: one session loop, the provider stream, tool rounds and usage
+- src/core/usage-log.ts: append-only record of what each turn spent, in the OS user-data dir
+- src/core/roots.ts: workspace root vs harness root, and the harness-editor cwd
+- src/main/index.ts: Electron entry, typed IPC wiring
+- src/ipc/contract.ts: IPC channel names and payloads
 
 The provider contract (`src/core/provider.ts`) is documented in
 `providers.md`; how a provider is configured is documented there too.
 
 ## Two roots
 
-A session has a **workspace** — the project it is working on, which is its
-`cwd` — and the harness has a **root**, the nanoharness install itself. They
+A session has a workspace, the project it is working on, which is its `cwd`.
+The harness has a root, the nanoharness install itself. They
 are different directories and `src/core/roots.ts` is the only place that knows
 how to find either.
 
@@ -28,8 +28,8 @@ the harness, not the user's project, so it runs with `harnessEditorCwd()` as
 its cwd no matter which workspace it was summoned from. That call also refuses
 to hand back a packaged install: an app bundle has no `src/` to edit and is
 never written to (plan §4 rule 5), so a harness-editor job asks for a source
-checkout rather than silently editing files inside the bundle. The improvement
-ledger uses the same test — `isHarnessRepo(cwd)` decides between the repo's
+checkout and never edits files inside the bundle. The improvement ledger uses
+the same test: `isHarnessRepo(cwd)` decides between the repo's
 `docs/harness/improvements.md` and a workspace's `.nanoharness/`.
 
 ## Session loop
@@ -39,28 +39,27 @@ streams a provider turn, emits `usage`, and if the model called tools it
 executes them and repeats until no tool calls remain. The calls of one message
 run in the model's order; a run of tools that declared themselves read-only
 starts together (`executeTools`), because the wait was already paid for once.
-The assistant message
-(with its tool calls) is kept in history so later turns see it, unless the
-round produced nothing at all — no text, no tool call, no thinking — which is
-not a message and is not written down. Provider or harness failures emit
-`session.error` and rethrow.
+The assistant message (with its tool calls) is kept in history so later turns
+see it, unless the round produced nothing at all, no text, no tool call, no
+thinking, which is not a message and is not written down. Provider or harness
+failures emit `session.error` and rethrow.
 
 There is no round budget. A cap is the harness deciding that a long task is a
-bug, and the failure it produces is the worst one available: a turn that ends
-mid-investigation with no answer and nothing on screen to say why. What is
-caught instead is a model going in circles, which is a different thing and is
-detectable — the *same* tool with the *same* arguments, over and over. The
-third identical call is not run (the answer is the one it already has) and the
-model is told so; if it keeps asking, the turn ends with a note that says
-exactly that happened. Five failed calls in a row appends a line to the result
-saying so, which is a nudge and not a stop: debugging is mostly failures.
+bug, and what it produces is a turn that ends mid-investigation with no answer
+and nothing on screen to say why. What is caught instead is a model going in
+circles, which is detectable: the same tool with the same arguments, over and
+over. The third identical call is not run (the answer is the one it already
+has) and the model is told so; if it keeps asking, the turn ends with a note
+that says exactly that happened. Five failed calls in a row appends a line to
+the result saying so, which nudges without stopping the turn: debugging is
+mostly failures.
 
 Every way a turn can end that is not an answer now says so in the window and in
 the session file. `Session.note(text)` emits `session.note` and records a
 `SessionNote`; a stop and an error record one without an event, because the
 window is already being told about those another way. `notes` is what gets
 persisted alongside the transcript, and `restoreNotes()` puts them back when the
-session is rebuilt — see `sessions.md`.
+session is rebuilt; see `sessions.md`.
 
 ## Usage accounting
 
@@ -70,7 +69,7 @@ that wants per-round deltas can diff consecutive events).
 
 `input` means prompt tokens the provider read in full, with anything served
 from cache counted under `cacheRead` instead, and `reasoning` is a breakdown of
-`output` rather than a sixth number. The two wires report neither of those the
+`output` and not a sixth number. The two wires report neither of those the
 same way, so both are normalized at the provider boundary; `providers.md` has
 which wire sends what.
 
@@ -95,8 +94,8 @@ resolved when it is read.
 
 The line is stamped with a schema version and a build reads only its own, since
 there is no converting a line that predates a change in what a field means. The
-project is pre-1.0 and the log is a record rather than a database, so a bump
-skips the old lines and counts them instead of migrating them.
+project is pre-1.0 and the log is a record and not a database, so a bump skips
+the old lines and counts them, with no migration.
 
 Reading it back is `cost.md`: one report, drawn by the window and printed by
 `nh usage`. `clearUsage` deletes the file, which is what the spend view's Clear
@@ -108,7 +107,7 @@ cleared log is gone.
 Renderer talks to the main process over typed channels (`src/ipc/contract.ts`).
 `config:get` reports whether a session can start at all and lists the configured
 providers. `config:save-provider`, `config:delete-provider` and
-`config:set-active` change them — the first two edit the registry, the third
+`config:set-active` change them: the first two edit the registry, the third
 switches provider, model or effort from the header. A write that changes what a
 running session was built from retires it, so the next turn picks up the
 change. `config:probe` asks an endpoint what it offers, which doubles as the
@@ -126,5 +125,6 @@ first message names it.
 One of those events flows the other way in spirit: `permission.request` is
 emitted when a tool reaches outside the session folder or wants to run a shell
 command, and the turn stays parked until the renderer answers it over
-`permission:respond`. There is no HTTP listener in v1, and a session can still be driven
-headlessly without a window, though a gate with nobody to ask refuses the shell.
+`permission:respond`. There is no HTTP listener in v1, and a session can still
+be driven headlessly without a window, though a gate with nobody to ask refuses
+the shell.

@@ -67,7 +67,7 @@ export function transcriptPath(id: string): string {
  * result quotes back to the model.
  *
  * A subagent is a second conversation, not a stretch of the first, so it is
- * stored as one rather than folded into the parent's rounds.
+ * stored as one and never folded into the parent's rounds.
  */
 export function subagentDir(sessionId: string): string {
   return join(userDataDir(), 'sessions', sessionId, 'subagents')
@@ -91,8 +91,8 @@ export interface StoredSubagent {
   usage: TurnUsage
   /**
    * What its tool calls came to: how many, how many failed. Absent on a
-   * subagent stored before the count existed, which is a line the window leaves
-   * out rather than a zero it makes up.
+   * subagent stored before the count existed, which is a line the window
+   * leaves out instead of making up a zero.
    */
   tools?: ToolStats
   startedAt: number
@@ -117,7 +117,7 @@ export async function loadSubagent(sessionId: string, jobId: string): Promise<St
     if (typeof parsed.id !== 'string' || !Array.isArray(parsed.messages)) return null
     // A file may have no count at all, or three numbers that are not numbers.
     // The window draws whatever is here, so a field that is not three numbers
-    // is dropped instead of being handed on to be read as a count.
+    // is dropped, and never handed on to be read as a count.
     if (!isToolStats(parsed.tools)) delete parsed.tools
     return parsed
   } catch {
@@ -165,8 +165,8 @@ export function parseState(parsed: unknown): WorkspaceState {
         createdAt: created,
         updatedAt: typeof updatedAt === 'number' ? updatedAt : created,
         // Sessions written before usage was stored have spent something the
-        // file cannot say, so they start the count again rather than claim a
-        // total that is not true.
+        // file cannot say, so they start the count again and claim no total
+        // that is not true.
         ...(isUsage(usage) ? { usage } : {}),
         ...(isUsage(subagentUsage) ? { subagentUsage } : {}),
         ...(isUsage(harnessUsage) ? { harnessUsage } : {}),
@@ -388,7 +388,7 @@ export async function noteTurn(id: string, firstText: string, spend?: SessionSpe
   if (session === undefined) return null
   session.updatedAt = Date.now()
   // The session's own running total, so re-opening it shows what it has cost
-  // rather than starting the count at zero.
+  // and does not start the count at zero.
   if (spend !== undefined) {
     session.usage = spend.total
     session.subagentUsage = spend.subagents
@@ -419,7 +419,7 @@ async function readSession(id: string): Promise<{ messages: ChatMessage[]; notes
 
 const NOTE_KINDS: readonly string[] = ['error', 'stopped', 'note', 'summary']
 
-/** A note from an older or a corrupt file is dropped rather than rendered raw. */
+/** A note from an older or a corrupt file is dropped and never rendered raw. */
 function isNote(value: unknown): value is SessionNote {
   if (typeof value !== 'object' || value === null) return false
   const raw = value as Record<string, unknown>

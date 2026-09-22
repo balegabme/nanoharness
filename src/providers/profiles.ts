@@ -32,7 +32,7 @@ export const KNOWN_PROVIDERS: readonly KnownProvider[] = [
     // Its gateway pins a conversation to one upstream by this header, and
     // refuses any request that arrives without it.
     sessionHeader: 'x-opencode-session',
-    note: 'A monthly subscription rather than metered API credit. Paste the key and fetch the models: the plan covers all of them.',
+    note: 'A monthly subscription, not metered API credit. Paste the key and fetch the models: the plan covers all of them.',
   },
 ]
 

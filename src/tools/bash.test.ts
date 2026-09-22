@@ -64,8 +64,7 @@ describe('a command whose text only looks like a path', () => {
 describe('a command the gate has not approved', () => {
   it('does not run, and says it did not', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'nh-bash-'))
-    // The default gate has nobody to ask, so it refuses every command rather
-    // than let an unscreened shell run.
+    // The default gate has nobody to ask, so it refuses every command.
     const result = await BASH_TOOL.run({ command: 'echo hello > note.txt' }, { cwd, access: workspaceGate(cwd), reads: new ReadIndex() })
 
     expect(result.ok).toBe(false)

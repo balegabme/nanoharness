@@ -166,7 +166,7 @@ describe('an MCP server over stdio', () => {
 })
 
 describe('a server that will not start', () => {
-  it('is reported rather than thrown, and the session gets no tools from it', async () => {
+  it('is reported and never thrown, and the session gets no tools from it', async () => {
     const broken = await McpHub.connect(dir, [server(join(dir, 'missing.mjs'))])
     expect(broken.tools()).toEqual([])
     expect(broken.status[0]?.connected).toBe(false)
@@ -214,7 +214,7 @@ describe('what a session is told about MCP', () => {
     // The configurer is the one that gets the fields.
     expect(text).toContain('tokenEnv')
     // Its own folder is the harness, not the workspace the user meant, so the
-    // flag that says which workspace is in the command rather than in a note.
+    // flag that says which workspace is in the command and not in a note.
     expect(text).toContain('--dir /work/app')
     expect(text).toContain('mcp --help')
   })

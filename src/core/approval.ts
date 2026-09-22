@@ -23,8 +23,7 @@ export function isPermissionMode(value: unknown): value is PermissionMode {
 
 /**
  * What the approval model may answer. Two things, and there is no third: no
- * verdict means "put it to the person". The person is asked in one case only,
- * and it is not a verdict. See `ApprovalUnavailableError`.
+ * verdict means "put it to the person". See `ApprovalUnavailableError`.
  */
 export type Verdict = 'allow' | 'deny'
 
@@ -97,7 +96,7 @@ export interface ApprovalConfig {
 
 /**
  * The four buckets, in precedence order. Each is a list of plain sentences; the
- * judge reads them, so they are written for a reader rather than matched as
+ * judge reads them, so they are written for a reader and never matched as
  * patterns. `softDeny` means denied, unless this is the thing the user
  * actually asked for.
  */
@@ -113,17 +112,17 @@ export interface ApprovalRules {
 }
 
 /**
- * The rules a fresh install runs with, written about consequences rather than
- * command names.
+ * The rules a fresh install runs with, written in terms of consequences and
+ * not command names.
  */
 export const DEFAULT_RULES: Readonly<ApprovalRules> = Object.freeze({
   hardDeny: [
     'Reading, copying or printing credentials: private keys, .env files, SSH and GPG keys, cloud credential files, browser cookie or password stores, keyring and keychain databases, or any file whose name marks it as a secret.',
-    'Sending the contents of files, the repository or the environment anywhere outward — an upload, a paste service, a webhook, a request body built from a file — unless the user named that destination themselves.',
-    'Reaching for ambient credentials: cloud instance-metadata addresses, container identity endpoints, or a token belonging to CI rather than to this person.',
+    'Sending the contents of files, the repository or the environment anywhere outward (an upload, a paste service, a webhook, a request body built from a file) unless the user named that destination themselves.',
+    'Reaching for ambient credentials: cloud instance-metadata addresses, container identity endpoints, or a token belonging to CI and not to this person.',
     'Weakening the harness itself: editing its permission settings, these rules, the approval configuration or a stored transcript, and anything whose effect is that a later action is not reviewed.',
     'Installing something that keeps running or runs again later without being asked: a background daemon, a shell profile hook, a git hook, a scheduled task or a cron entry.',
-    'Any action whose evident purpose is to get around this check rather than to do the work.',
+    'Any action whose evident purpose is to get around this check instead of doing the work.',
   ],
   softDeny: [
     'Destroying work that is not committed: git reset --hard, git checkout -- ., git clean, git stash drop, or discarding a worktree.',
@@ -131,7 +130,7 @@ export const DEFAULT_RULES: Readonly<ApprovalRules> = Object.freeze({
     'Deleting recursively anywhere that is not a build output or a dependency directory the project can regenerate.',
     'Publishing or deploying: pushing commits or images, publishing a package, applying or destroying infrastructure, or running a deploy script.',
     'Sending something to another person: mail, a chat message, an issue or a review comment.',
-    'Running code fetched during the command itself — a downloaded script piped into a shell, or an install that executes arbitrary setup scripts from a source the project does not already depend on.',
+    'Running code fetched during the command itself: a downloaded script piped into a shell, or an install that executes arbitrary setup scripts from a source the project does not already depend on.',
     'Changing the machine outside this project: a global package install, a system service, a package manager run as another user, or an edit to a shared configuration file.',
   ],
   allow: [
@@ -174,8 +173,8 @@ export function approvalPrompt(rules: ApprovalRules): string {
     '{"verdict": "allow" | "deny", "rule": "<the rule that decided it, or empty>", "reason": "<one sentence, addressed to the user>"}',
     '',
     'The two answers:',
-    '- "allow" — this is ordinary work for the task at hand and nothing below refuses it.',
-    '- "deny" — a rule below refuses it, or you cannot tell what the action would do.',
+    '- "allow": this is ordinary work for the task at hand and nothing below refuses it.',
+    '- "deny": a rule below refuses it, or you cannot tell what the action would do.',
     '',
     'Where you are unsure, deny. A denial costs the user one step of a task they can restart; a wrong allow costs them the thing it damaged, and they were not there to stop it. But do not deny the ordinary: the agent was asked to do this work, and a run that refuses every command finishes nothing and is worth no more than one that was never started. Most of what reaches you is a build, a test, a git read or a file the task needs, and all of that is an "allow".',
     '',
@@ -260,8 +259,8 @@ export interface JudgeEndpoint {
 
 export interface JudgeOptions {
   /**
-   * The ladder, already resolved to clients. Built per call rather than held,
-   * so an edit in settings reaches the next question.
+   * The ladder, already resolved to clients. Built per call, so an edit in
+   * settings reaches the next question.
    */
   endpoints(): Promise<JudgeEndpoint[]>
   rules?: ApprovalRules
@@ -418,8 +417,8 @@ export function approvalProblem(config: ApprovalConfig | undefined, providers: r
 }
 
 /**
- * The built-in rules with the user's own added to each bucket. Added rather
- * than replaced: one extra allow rule must not drop the never-allow list.
+ * The built-in rules with the user's own added to each bucket. Added to and
+ * never replaced: one extra allow rule must not drop the never-allow list.
  */
 export function mergeRules(extra: ApprovalRules | undefined): ApprovalRules {
   return {

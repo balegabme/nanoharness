@@ -70,7 +70,7 @@ let lastStatus: ConfigStatus | null = null
 let editing: string | null = null
 // What the endpoint offers, and which of those the user allows. A session may
 // only run something in `allowed`, which is why the picker is a list of
-// checkboxes rather than a free-text field once a fetch has succeeded.
+// checkboxes and not a free-text field once a fetch has succeeded.
 let available: string[] = []
 let allowed = new Set<string>()
 /** What is typed in the box over the model list, narrowing what it draws. */
@@ -178,7 +178,7 @@ function drawApproval(): void {
     text.append(
       el('code', 'entry-name', candidate.model),
       // A provider that has been deleted leaves a rung nothing can climb. It
-      // is shown as broken rather than dropped from the list.
+      // is shown as broken and never dropped from the list.
       el('span', 'entry-hint', provider === undefined ? `${WARN} this provider is gone` : `${index + 1}. ${provider.name}`),
     )
 
@@ -271,7 +271,7 @@ function drawSecrets(held: readonly SecretView[]): void {
     forget.type = 'button'
     forget.textContent = 'Forget'
     // A reference in an old transcript outlives the key it names, so say what
-    // forgetting actually costs before it happens rather than after.
+    // forgetting costs before it happens, and not after.
     forget.title = 'Drop the key. Messages that already reference it stop working.'
     forget.addEventListener('click', () => void forgetSecret(secret.name))
 
@@ -314,7 +314,7 @@ function currentKind(): ProviderKind {
  * the version segment, and nobody can tell from an empty field whether the
  * endpoint path belongs in it, so the field says so.
  *
- * The text lives here rather than in `core/config.ts` because the renderer is
+ * The text lives here and not in `core/config.ts` because the renderer is
  * served over `app://` and may only load modules from its own directory: a
  * runtime import from `../core/` fails to fetch and takes the whole page down.
  */
@@ -358,13 +358,13 @@ function renderPicked(): void {
   setupFields.hidden = entry !== undefined
   // Reachability is the question a typed address raises. An entry's address is
   // right by construction, and fetching answers the key as well as the host,
-  // so the picked path is one button rather than two of equal weight.
+  // so the picked path is one button and not two of equal weight.
   setupTest.hidden = entry !== undefined
 }
 
 /**
  * The rows to draw: what the endpoint offered, in an order a person can scan,
- * narrowed to whatever the filter asks for. Sorting happens here rather than on
+ * narrowed to whatever the filter asks for. Sorting happens here and not on
  * the way in, because the order the list is stored in is the endpoint's to
  * decide and this one is only about reading it. Digits sort as numbers, so
  * `gpt-5.2` comes before `gpt-5.10`.
@@ -538,7 +538,7 @@ function modelEditor(id: string): HTMLElement {
 }
 
 /**
- * Whether the model takes images. Three answers rather than a checkbox: an
+ * Whether the model takes images. Three answers and not a checkbox: an
  * endpoint that published nothing has not said no, and a box left unticked
  * would say it had.
  */
@@ -619,7 +619,7 @@ function renderProviders(status: ConfigStatus): void {
     })
 
     // Removing a provider is an act on one card, so the control is on that
-    // card rather than at the foot of the form.
+    // card and not at the foot of the form.
     const remove = el('button', 'icon-btn tiny danger provider-remove')
     remove.type = 'button'
     remove.append(icon(GLYPH.close, 12))
@@ -633,8 +633,8 @@ function renderProviders(status: ConfigStatus): void {
 }
 
 /**
- * The address the facts on screen were fetched from, so that editing the field
- * can tell a changed endpoint from a cursor moved through it.
+ * The address the facts on screen were fetched from, so editing the field can
+ * tell a changed endpoint from a cursor moved through it.
  */
 let savedBase = ''
 /** The wire the facts on screen describe, alongside the address. */
@@ -770,7 +770,7 @@ async function probe(intent: 'test' | 'fetch'): Promise<void> {
       savedBase = setupBase.value.trim()
       savedKind = currentKind()
       fetched = { providerId: asked, ids, note }
-      // A fetch is a look at an endpoint rather than a choice to run it, so the
+      // A fetch is a look at an endpoint and not a choice to run it, so the
       // write it makes on its own does not move the active selection.
       const saved = await saveSetup(true)
       // A refusal is repeated here, next to the list it applies to. A
@@ -823,8 +823,8 @@ async function saveSetup(keepActive = false): Promise<boolean> {
           facts: reported,
           // The form is what the user is looking at, so it decides: a model it
           // holds no correction for is sent as `null`, which clears a
-          // correction typed before rather than leaving a stale one behind the
-          // new screen.
+          // correction typed before and leaves no stale one behind the new
+          // screen.
           overrides: Object.fromEntries(available.map(id => [id, overrides[id] ?? null])),
         }),
   }

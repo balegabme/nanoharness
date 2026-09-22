@@ -57,9 +57,9 @@ function patternToRegExp(pattern: string): RegExp {
  * The rules one `.gitignore` holds, in the order they were written.
  *
  * A line holding a character class or a backslash escape is counted in
- * `dropped` rather than applied. Half-reading a pattern language is how a
- * search misses a directory, or walks one it was told to skip, and the count
- * is what lets the answer say so.
+ * `dropped` and never applied. Half-reading a pattern language is how a search
+ * misses a directory, or walks one it was told to skip, so the count goes into
+ * the answer.
  */
 export function parseIgnore(text: string): ParsedIgnore {
   const rules: Rule[] = []

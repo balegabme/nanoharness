@@ -8,7 +8,7 @@ import type { Layer } from './ignore.js'
 import type { ArgsParse } from '../core/session.js'
 import type { ToolResult } from '../core/types.js'
 
-/** Never walked, whatever the project says. `.git` alone is bigger than most repos. */
+/** Never walked, whatever the project says. */
 const ALWAYS_SKIP = ['.git', '.hg', '.svn', 'node_modules']
 
 export const MAX_FILES = 20_000
@@ -18,9 +18,8 @@ const MAX_PATHS = 500
 const MAX_MATCH_CHARS = 400
 
 /**
- * How many files are read at once. Reading them one after another spends the
- * whole search waiting on the disk: measured over this repository, 2000 files
- * took 7.8 seconds in a row and 1.1 seconds sixty-four at a time.
+ * How many files are read at once. Measured over this repository, 2000 files
+ * took 7.8 seconds read one after another and 1.1 seconds sixty-four at a time.
  */
 const READ_AT_ONCE = 64
 
@@ -30,7 +29,7 @@ export type WalkOptions = { honorIgnores: boolean; limit?: number }
 /**
  * What one walk came to. `ignored` counts the entries a `.gitignore` excluded
  * and `dropped` the lines of those files this harness could not read, so an
- * answer can say both rather than let either pass for "not there".
+ * answer can name both.
  */
 export type Walked = { files: string[]; capped: boolean; ignored: number; dropped: number }
 
@@ -38,13 +37,11 @@ export type Walked = { files: string[]; capped: boolean; ignored: number; droppe
  * Every file under `root`, in one pass.
  *
  * A `.gitignore` applies to its own directory and everything below it, so the
- * walk carries the ones it has passed and an ignored directory is dropped
- * before it is descended into. The file is spotted in the entries already
- * read, and opened only where there is one.
+ * walk carries the ones it has passed and drops an ignored directory before
+ * descending into it.
  *
- * Symlinks are not followed, in either kind. A link is the one entry that can
- * leave the workspace or point back at its own parent, and the walk has no way
- * to tell those two apart from the name.
+ * Symlinks are not followed. A link is the one entry that can leave the
+ * workspace or point back at its own parent, and the name does not say which.
  */
 export async function walkFiles(root: string, { honorIgnores, limit = MAX_FILES }: WalkOptions): Promise<Walked> {
   const files: string[] = []
@@ -85,11 +82,10 @@ export async function walkFiles(root: string, { honorIgnores, limit = MAX_FILES 
 }
 
 /**
- * Walks in progress, keyed by the directory they start from.
+ * Walks in progress, keyed by the directory they start from, so several
+ * searches in one message share one walk over the same tree.
  *
- * Several searches in one message run at the same time over the same tree, and
- * without this each one walks it again. An entry lives only while its walk is
- * running, so nothing here is ever a stale answer: a search that starts after
+ * An entry lives only while its walk is running. A search that starts after
  * one finishes walks again and sees whatever is on disk then.
  */
 const walking = new Map<string, Promise<Walked>>()
@@ -193,9 +189,8 @@ function failed(why: string): ToolResult {
 }
 
 /**
- * What the walk left out, on an answer that found something. A search that hit
- * is not finished being explained: the file it wants may be the one a
- * `.gitignore` kept out of the walk.
+ * What the walk left out, on an answer that found something. The file the
+ * search wanted may be one a `.gitignore` kept out of the walk.
  */
 function excludedNote(walked: Walked, wide: boolean): string {
   const excluded =
@@ -210,11 +205,9 @@ function excludedNote(walked: Walked, wide: boolean): string {
  * What the paths in an answer are counted from, when `path` named somewhere
  * below the workspace root.
  *
- * The pattern is written from the directory that was named and the answer is
- * written from the root, and a model that reads one as the other concludes the
- * directory holds another of the same name. `glob` over `nanoharness` answering
- * `nanoharness/README.md` is the case: without this line it reads as
- * `nanoharness/nanoharness/README.md`.
+ * The pattern is written from the directory that was named and the answer from
+ * the workspace root. Without this line, `glob` over `nanoharness` answering
+ * `nanoharness/README.md` reads as `nanoharness/nanoharness/README.md`.
  */
 function baseNote(root: string, base: string): string {
   const here = label(root, base)
@@ -223,9 +216,8 @@ function baseNote(root: string, base: string): string {
 }
 
 /**
- * Where the search did not look. An empty answer has to carry this, or "no
- * matches" reads as proof the code is not there when it only means the walk
- * was narrowed.
+ * Where the search did not look. Without it, "no matches" reads as proof the
+ * code is not there when it only means the walk was narrowed.
  */
 function scopeNote(walked: Walked, wide: boolean): string {
   return `\n\n[not searched: ${ALWAYS_SKIP.join(', ')}]${excludedNote(walked, wide)}`
@@ -309,9 +301,9 @@ export const GREP_TOOL = defineTool<GrepArgs>({
     const info = await stat(base).catch(() => null)
     if (info === null) return failed(`grep: ${rel ?? '.'}: no such file or directory`)
 
-    // Nothing outside the include's own directory can match it, so that is
-    // where the walk starts rather than at the top of the searched tree. A
-    // `path` naming one file is that file, with nothing to walk.
+    // Nothing outside the include's own directory can match it, so the walk
+    // starts there and not at the top of the searched tree. A `path` naming
+    // one file is that file, with nothing to walk.
     const from = include === undefined ? base : resolve(base, literalPrefix(include))
     const empty: Walked = { files: [], capped: false, ignored: 0, dropped: 0 }
     const walked = !info.isDirectory() ? { ...empty, files: [base] } : await sharedWalk(from, { honorIgnores: !ignored })

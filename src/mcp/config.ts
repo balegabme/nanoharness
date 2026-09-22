@@ -12,15 +12,14 @@ import { isJsonObject } from './protocol.js'
  * is the same server in every project, and configuring it once is the whole
  * point of a home directory; a server that reaches this project's own issue
  * tracker belongs to this project and nowhere else. The project file wins on a
- * name, which is what makes a global server disablable — or replaceable —
- * where it does not belong, without editing the file every other workspace
- * reads.
+ * name, which is what makes a global server disablable, or replaceable, where
+ * it does not belong, without editing the file every other workspace reads.
  *
  * Nothing is configured by default. A server is added by writing one of those
  * files, and the agent has `write`, so "add a search server" is work it can do
- * rather than a setting only the user can reach.
+ * and not a setting only the user can reach.
  *
- * Secret-free by schema (plan §16) — a token is named, never written. The file
+ * Secret-free by schema (plan §16): a token is named, never written. The file
  * is meant to be readable, diffable and pasteable into an issue, which it only
  * stays if there is no field a key could land in.
  */
@@ -88,7 +87,7 @@ export function parseServer(name: string, value: unknown): McpServer | null {
 
 /**
  * Read the workspace's server list. The file's shape is the one every MCP
- * client uses — a `mcpServers` object keyed by name — so a config written for
+ * client uses, a `mcpServers` object keyed by name, so a config written for
  * another harness works here unchanged, minus the fields that would hold a key.
  */
 export function parseMcpConfig(parsed: unknown): McpServer[] {
@@ -108,8 +107,8 @@ export interface ServerList {
   servers: McpServer[]
   /**
    * Why a config file was ignored, if one was. A broken file is not a reason to
-   * lose the session — but it is a reason to say so: silently starting with no
-   * MCP tools after a stray comma looks exactly like a harness that never
+   * lose the session, but it is a reason to say so: starting with no MCP
+   * tools after a stray comma looks exactly like a harness that never
    * supported them, and the user has no way to tell the two apart.
    */
   problems: string[]
@@ -139,8 +138,8 @@ export async function readEntries(path: string): Promise<Record<string, unknown>
  * Write one entry into one config file, creating the file and the
  * `.nanoharness` folder around it. The entry is validated by the same
  * `parseServer` a session uses, so "the harness accepted it" is what the
- * command actually checked rather than a second opinion; a validator written
- * beside a hand-written entry would only be checking its own homework.
+ * command checked, and not a second opinion; a validator written beside a
+ * hand-written entry would only be checking its own homework.
  */
 export async function writeEntry(path: string, name: string, entry: Record<string, unknown>): Promise<McpServer> {
   const server = parseServer(name, entry)
@@ -168,8 +167,8 @@ async function save(path: string, entries: Record<string, unknown>): Promise<voi
 /**
  * The servers a session in `cwd` should connect to: the global file, then the
  * project's own on top of it. A project entry with the same name replaces the
- * global one outright rather than merging field by field — a half-overridden
- * command line is a server nobody configured — and `"enabled": false` is how a
+ * global one outright and never merges field by field, since a half-overridden
+ * command line is a server nobody configured. `"enabled": false` is how a
  * project turns a global server off without touching the global file.
  */
 export async function loadServers(cwd: string, env: NodeJS.ProcessEnv = process.env): Promise<ServerList> {

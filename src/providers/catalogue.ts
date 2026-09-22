@@ -10,8 +10,8 @@ import { USER_AGENT } from './headers.js'
  * base URL the user pastes into settings.
  *
  * Fetched when the model list is asked for and kept nowhere. The request
- * carries no key, no address and no model id. `providers.md` has why it is read
- * live rather than written down here.
+ * carries no key, no address and no model id. `providers.md` has why it is
+ * read live and never written down here.
  */
 
 const CATALOGUE_URL = 'https://models.dev/api.json'

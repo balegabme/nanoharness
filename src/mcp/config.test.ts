@@ -6,9 +6,9 @@ import { loadServers, mcpPaths } from './config.js'
 
 /**
  * The two config files, read off disk the way a session reads them. What is
- * being pinned here is the layering — a server configured once for every
- * workspace, a project that can replace or switch off any of them — and the
- * fact that a workspace with no files gets no servers at all. Nothing is
+ * being pinned here is the layering: a server configured once for every
+ * workspace, and a project that can replace or switch off any of them. Also
+ * that a workspace with no files gets no servers at all. Nothing is
  * installed by default, so an agent that reports a search tool it was never
  * given is reporting a bug.
  */
@@ -61,7 +61,7 @@ describe('the global file and the project file', () => {
     })
     const loaded = await loadServers(project, env())
     const search = loaded.servers.find(server => server.name === 'search')
-    // Replaced, not merged: the global args are gone rather than half-applied.
+    // Replaced, not merged: the global args are gone and never half-applied.
     expect(search).toEqual({ name: 'search', transport: 'stdio', command: 'uvx', args: ['project-search'], envPassthrough: [], enabled: true })
     expect(loaded.servers.find(server => server.name === 'tickets')).toEqual({
       name: 'tickets',

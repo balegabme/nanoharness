@@ -13,8 +13,8 @@ type SpawnArgs = { role: AgentRole; mode: SpawnMode; task: string; background: b
 function parseArgs(args: Record<string, unknown>): ArgsParse<SpawnArgs> {
   if (!isAgentRole(args.role)) return { ok: false, error: `role must be one of ${AGENT_ROLES.join(', ')}` }
   if (typeof args.task !== 'string' || args.task.trim() === '') return { ok: false, error: 'task must be a non-empty string' }
-  // Left unsaid, the cheap mode is the default: most delegated work does carry
-  // on this conversation. The description says which work does not.
+  // Left unsaid, the cheap mode is the default. The description says which
+  // work needs the other one.
   const mode = args.mode === undefined ? 'clone' : args.mode
   if (!isSpawnMode(mode)) return { ok: false, error: `mode must be one of ${SPAWN_MODES.join(', ')}` }
   if (args.background !== undefined && typeof args.background !== 'boolean') {
@@ -81,10 +81,9 @@ export const SPAWN_TOOL = defineTool<SpawnArgs>({
 
     if (background) {
       const job = spawn.background({ role, mode, task })
-      // The marker is how the window finds the subagent behind a tool call, in
-      // a live turn and in a transcript re-opened a week later: it is stored
-      // with the result, so the conversation itself points at the subagent's
-      // own conversation.
+      // The marker is how the window finds the subagent behind a tool call,
+      // live or in a transcript re-opened a week later. It is stored with the
+      // result, so the conversation points at the subagent's own.
       const note = `started ${job.role}/${job.mode} as background job ${job.id}. Do not wait for it and do not go looking for its output: when it finishes, what it answered arrives here as a message. It only survives while the app is open, so do not end the work on the promise of one: say what you have, and what is still out. [subagent:${job.id}]`
       return { ok: true, summary: note, content: note }
     }

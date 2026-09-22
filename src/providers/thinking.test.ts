@@ -136,7 +136,7 @@ describe('fitting a request inside what the model will produce', () => {
     expect(body.thinking).toEqual({ type: 'enabled', budget_tokens: 64_000 - 8192 })
   })
 
-  it('splits a ceiling too small to hold both, rather than thinking with nothing left over', async () => {
+  it('splits a ceiling too small to hold both, so thinking leaves room to answer', async () => {
     const body = await sent('high', 8192)
     expect(body.max_tokens).toBe(8192)
     expect(body.thinking).toEqual({ type: 'enabled', budget_tokens: 4096 })

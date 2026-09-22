@@ -86,9 +86,8 @@ export const EDIT_TOOL = defineTool<EditArgs>({
     }
     if (!info.isFile()) return failed(`edit: ${rel}: not a regular file`)
 
-    // An edit is written against a view of the file. If nobody in this
-    // conversation has that view, or the file moved on since they had it, the
-    // edit is a guess and the guess is what overwrites somebody's work.
+    // An edit is written against a view of the file, so the file has to have
+    // been read in this conversation and be unchanged since.
     const before = await versionOf(abs)
     const may = reads.mayWrite(abs, before, `edit: ${rel}:`)
     if (!may.ok) return failed(may.reason)
@@ -120,8 +119,7 @@ export const EDIT_TOOL = defineTool<EditArgs>({
       return failed(`could not write ${rel}: ${err instanceof Error ? err.message : String(err)}`)
     }
     reads.wrote(abs, await versionOf(abs))
-    // What changed, rather than how many times something matched. The window
-    // opens it as a diff and the model reads the same lines.
+    // The window opens this diff and the model reads the same lines.
     const diff = unifiedDiff(rel, content, edited)
     const done = `edited ${rel} (${replacements} ${replacements === 1 ? 'replacement' : 'replacements'}, ${statText(diff.stat)})`
     return { ok: true, summary: done, content: `${done}\n\n${diffBlock(diff)}` }

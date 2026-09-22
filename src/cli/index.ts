@@ -81,7 +81,7 @@ async function runUsage(args: readonly string[]): Promise<number> {
 /**
  * `--days N` counts back N whole local days, today included; without it the
  * report covers everything the log holds. Anything that is not a day count is
- * refused rather than read as all time, which would print a report for a
+ * refused, and never read as all time, which would print a report for a
  * window nobody asked for.
  */
 function daysFrom(args: readonly string[]): number | null {

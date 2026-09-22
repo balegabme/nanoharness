@@ -1,4 +1,4 @@
-# Plan — opencode Go
+# Plan: opencode Go
 
 Go is a $10/month subscription behind `https://opencode.ai/zen/go/v1`. Zen
 already works in nanoharness as an ordinary OpenAI-compatible record. Go rejects
@@ -28,7 +28,7 @@ efficiently."}}
 ```
 
 Go asks every client for a stable session ID in `x-opencode-session`, one per
-conversation, and for a user agent naming the client rather than the HTTP
+conversation, and for a user agent naming the client and not the HTTP
 library. nanoharness sends neither. `src/providers/openai.ts:90` sends
 `content-type` and `authorization`, `src/providers/anthropic.ts:162` adds
 `anthropic-version` and `x-api-key`, and no `user-agent` appears anywhere in
@@ -111,7 +111,7 @@ The docs publish an endpoint table assigning each model one of
 routing rule, and it is not free to ignore either. Three separate facts decide
 what nanoharness should do.
 
-**The gateway converts between formats.** `handler` builds converters from
+The gateway converts between formats. `handler` builds converters from
 `providerInfo.format`, the wire the upstream vendor speaks, and `opts.format`,
 the path the client called (`provider/provider.ts:182`):
 
@@ -121,7 +121,7 @@ export function createStreamPartConverter(from: ZenData.Format, to: ZenData.Form
 export function createResponseConverter(from: ZenData.Format, to: ZenData.Format)
 ```
 
-**Conversion is lossy, in exactly the places nanoharness cares about.**
+Conversion is lossy, in exactly the places nanoharness cares about.
 Everything funnels through one intermediate, and `CommonRequest` is the whole of
 it: `model`, `max_tokens`, `temperature`, `top_p`, `stop`, `messages`, `stream`,
 `tools`, `tool_choice`. No thinking parameter, no `reasoning_effort`, no
@@ -132,7 +132,7 @@ count, no cache-write count. Neither converter file mentions thinking or
 reasoning at all. A converted request loses the effort level; a converted
 response loses the thinking and half the cache accounting `cost.md` reports on.
 
-**Most models accept most paths anyway.** `validateModel` refuses a format only
+Most models accept most paths anyway. `validateModel` refuses a format only
 when a model's config entry is a list and no member matches
 (`handler.ts:546`):
 
@@ -160,7 +160,7 @@ the first run of this probe saw 37 ids and a `grok-4.5` that has since gone.
 Reach is read from the endpoint at fetch time for that reason, and nothing in
 `src/` holds a list of which models exist.
 
-**What the pieces add up to.** Thirty-six models go over `/chat/completions`.
+The pieces add up to this. Thirty-six models go over `/chat/completions`.
 Those whose upstream is already OpenAI-compatible get no converter at all, and
 oh-my-pi reaches the same conclusion from the other direction: it deliberately
 forces `minimax-m2.7`, `minimax-m3`, `qwen3.5-plus` and `qwen3.6-plus` onto
@@ -172,10 +172,10 @@ assign to it.
 means a third wire client. That is not a compromise of the `providers.md` rule:
 Responses is a wire format like the other two, no vendor is named by it, and
 `kind: 'responses'` sits beside `openai` and `anthropic` honestly. `openai.ts`
-cannot be bent into it either, since the request takes `input` rather than
+cannot be bent into it either, since the request takes `input` in place of
 `messages`, tools are flat instead of nested under `function`, and the stream is
 named events (`response.output_text.delta`, `response.output_item.done`,
-`response.completed`) rather than deltas on a choice. It is its own file, about
+`response.completed`) and not deltas on a choice. It is its own file, about
 the size of `anthropic.ts`.
 
 Which leaves one record that has to speak two wires. `kind` is one value, so the
@@ -188,7 +188,7 @@ reason the user would understand.
 All three come from oh-my-pi's production notes, and one of them is a live
 conflict with nanoharness's current code.
 
-**`authHeaders` sends a header combination Go rejects.** On opencode's Anthropic
+`authHeaders` sends a header combination Go rejects. On opencode's Anthropic
 endpoints, "Bearer-only requests fail with HTTP 401 Missing API key", and
 oh-my-pi deletes the `Authorization` header so only `X-Api-Key` goes out.
 `src/providers/anthropic.ts:28` sends both:
@@ -198,14 +198,14 @@ return { 'x-api-key': apiKey, authorization: `Bearer ${apiKey}` }
 ```
 
 Sending both may well be fine, and our probe with an invalid key got a normal
-`AuthError` rather than `Missing API key`. Worth knowing about before debugging
+`AuthError` and not `Missing API key`. Worth knowing about before debugging
 a 401 that looks like a bad key. Routing over `/chat/completions` sidesteps it
 entirely.
 
-**Thinking models demand `reasoning_content` on tool-call replays.** Reported,
-and then not reproducible. When reasoning is on, the gateway is said to return
-400 if a prior assistant tool-call message arrives without `reasoning_content`,
-400 again if one arrives while thinking is off, and 400 for a synthetic
+Thinking models demand `reasoning_content` on tool-call replays. Reported, and
+then not reproducible. When reasoning is on, the gateway is said to return 400
+if a prior assistant tool-call message arrives without `reasoning_content`, 400
+again if one arrives while thinking is off, and 400 for a synthetic
 placeholder.
 
 Twenty-eight replays went out against the live gateway on 2026-09-21: glm-5.2,
@@ -219,8 +219,8 @@ out, with the door open: if the 400 does turn up, `session.ts:675` already
 stores the text and `toWireMessage` is the only thing to change.
 
 One real defect came out of those probes and is unrelated to any of this:
-`minimax-m3` writes its thinking into `content` wrapped in `<think>` tags rather
-than into `reasoning_content`, so it reaches the transcript as the answer.
+`minimax-m3` writes its thinking into `content` wrapped in `<think>` tags, and
+not into `reasoning_content`, so it reaches the transcript as the answer.
 
 Less work than it sounds. `openai.ts:21` already reads `reasoning_content` off
 the delta, and `session.ts:675` already stores the result on the assistant
@@ -236,7 +236,7 @@ is fine if the gateway only checks the field is present and non-empty, and not
 fine if it checks the content. The refusal of placeholders hints at some
 checking. Worth trying before building around it.
 
-**MiniMax M2/M3 accept only `low`, `medium` and `high`.** They reject `minimal`
+MiniMax M2/M3 accept only `low`, `medium` and `high`. They reject `minimal`
 and `xhigh`. `clampEffort` already handles this given the right `efforts` list,
 which models.dev supplies.
 
@@ -268,8 +268,8 @@ differ sharply per model. Kimi K3 accepts `max` alone. GPT 5.6 Luna accepts six
 of the seven. GLM-5.2 accepts `high` and `max`. Two of the three
 `reasoning_options` shapes need a mapping:
 
-- `{"type":"toggle"}` — thinking on or off. Reads as `['none','high']`.
-- `{"type":"budget_tokens"}` — a token budget, the Anthropic thinking parameter
+- `{"type":"toggle"}`: thinking on or off. Reads as `['none','high']`.
+- `{"type":"budget_tokens"}`: a token budget, the Anthropic thinking parameter
   `anthropic.ts` already computes from an effort level.
 
 Use the live `/models` list for reach and models.dev for facts. The two disagree
@@ -279,25 +279,25 @@ on membership in both directions: `ox-alpha-free` is only in models.dev,
 ## Cost, and the multiplier that changes what it means
 
 Go charges $10 and meters consumption in dollars, so a Go turn's dollar figure
-is allowance spent rather than money leaving a card. The important part is that
+is allowance spent and not money leaving a card. The important part is that
 the allowance is not spent at face value (`handler.ts:1194`):
 
 ```ts
 const quotaCost = Math.round(cost * modelInfo.costMultiplier)
 ```
 
-There is **one account-wide dollar allowance**, and each model carries a
+There is *one* account-wide dollar allowance, and each model carries a
 `costMultiplier` applied before the usage counters move. The docs' per-model
 "monthly limit" of $60, $30 or $15 is that one allowance divided by a multiplier
 of 1, 2 or 4, which is why the docs annotate DeepSeek V4.1 Flash as "4x". So a
-turn that costs $0.04 on a 4× model takes $0.16 of the plan.
+turn that costs $0.04 on a 4x model takes $0.16 of the plan.
 
 Two different true numbers exist here: what the tokens cost, which models.dev
 prices and `costOf` already computes, and what the allowance lost, which is that
 times the multiplier.
 
 Only the first is the harness's to compute. The multiplier appears in no
-machine-readable source, the allowance is a share of a window rather than an
+machine-readable source, the allowance is a share of a window and not an
 amount of money, and a figure built here out of transcribed prices and a
 transcribed ratio would be a guess presented as an account balance. The meter
 reads from `GET /usage`, which is the account itself answering, and the
@@ -321,7 +321,7 @@ people will actually run:
 The server charges this way (`calculateCost` reads `cost200K`), so flat prices
 under-report a long context by up to 3x, and the error grows exactly when a
 session has been running long enough for someone to care. The threshold differs
-per model, so it is a field on `ModelFacts` rather than a constant, and
+per model, so it is a field on `ModelFacts` and not a constant, and
 models.dev already publishes it as `cost.tiers[].tier.size`.
 
 The gateway also computes cost per request and puts it in the stream
@@ -361,30 +361,30 @@ docs' per-model table: that table is the multiplier expressed as dollars.
 
 One caveat from oh-my-pi worth carrying into the adapter: an exhausted monthly
 window can still serve when the console's "Use balance" option is on, so
-`monthly` is a display figure rather than a gate. The hard failure is a
+`monthly` is a display figure and not a gate. The hard failure is a
 `401 Insufficient balance`.
 
 ## Steps
 
-The goal is every Go model usable, so the list runs to the end rather than
+The goal is every Go model usable, so the list runs to the end instead of
 stopping at the 400.
 
-1. **Done.** `conversationId` on `ChatInput`, threaded from `sessionId` through
+1. Done. `conversationId` on `ChatInput`, threaded from `sessionId` through
    both `stream()` call sites. A `user-agent` of `nanoharness/<version>` on
    every provider request. `src/providers/headers.ts` holds both, and the
-   session header comes from the address rather than from a field the user has
+   session header comes from the address, and not from a field the user has
    to fill in.
-2. **Dropped**, for the reason under the quirk above: twenty-eight replays, no
+2. Dropped, for the reason under the quirk above: twenty-eight replays, no
    400 to work around.
-3. **Done**, without a `profile` field. `src/providers/profiles.ts` names the
+3. Done, without a `profile` field. `src/providers/profiles.ts` names the
    address and `src/providers/opencode-go.ts` holds the table; `describe()`
    lays it over whatever the endpoint returned, so the record that gets saved
    is an ordinary one and `ProviderRecord` grew nothing. Thirty models arrive
    with prices, vision, ceilings and effort levels.
-4. **Done.** `ModelFacts.tiers`, read by `costOf` in both copies, with the whole
+4. Done. `ModelFacts.tiers`, read by `costOf` in both copies, with the whole
    request charged at whichever tier the prompt reaches.
-5. **Done.** `kind: 'responses'` and `src/providers/responses.ts`, written
-   against the live stream rather than the specification. `OPENCODE_GO_WIRES`
+5. Done. `kind: 'responses'` and `src/providers/responses.ts`, written
+   against the live stream and not the specification. `OPENCODE_GO_WIRES`
    names the one model that needs it and `wireFor()` answers for the address,
    so `createProvider` takes the model along with the record and the endpoint
    stays one record in settings. Verified end to end in the app: a tool round
@@ -396,25 +396,25 @@ stopping at the 400.
 Only steps 3 and 6 are Go-specific. The session header, context tiers and a
 Responses client are things the harness is missing in general, and Go is just
 the endpoint that made each one unavoidable. That is why step 3 ended up as a
-table one address happens to be listed in rather than as a field on every
+table one address happens to be listed in, and not a field on every
 provider record: the next endpoint that publishes its prices on a web page
 instead of on the wire is a second entry in the same file.
 
 What is in `src/` today turns a hard failure into a working provider for every
 model the endpoint offers, each with its prices and its effort levels. What is
-left is the subscription meter, which says how much of the month is gone rather
-than whether a turn can run at all.
+left is the subscription meter, which says how much of the month is gone, and
+not whether a turn can run at all.
 
 ## Session identity
 
 Go wants one stable ID per conversation, held across turns and across a resume.
 `SessionOptions.sessionId` is exactly that. Three callers make requests:
 
-- **The turn** (`session.ts:775`) — the session's own id.
-- **A subagent** (`agents.ts`) — its own id, not the parent's. It runs a
+- The turn (`session.ts:775`): the session's own id.
+- A subagent (`agents.ts`): its own id, not the parent's. It runs a
   separate message history, and the header exists to keep a prompt cache warm;
   two histories under one id defeat that.
-- **The approval judge** (`approval.ts:362`) — its own id, stable for the
+- The approval judge (`approval.ts:362`): its own id, stable for the
   session. Go's client table calls these auxiliary requests and expects the
   header on them too. oh-my-pi sends it on usage polls as well.
 

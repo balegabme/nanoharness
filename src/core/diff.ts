@@ -1,14 +1,11 @@
 // doc: docs/harness/tools.md
 
 /**
- * A unified diff of what an edit did, built here rather than pulled in as a
- * dependency. The whole of it is a line LCS and a hunk formatter. The two
- * things a package would add on top, word-level highlighting and patch
- * application, would go unused: the harness only ever displays a change.
+ * A unified diff of what an edit did: a line LCS and a hunk formatter.
  *
- * The result goes into the tool's own output, so it is read twice: by the
- * window, which draws it, and by the model, which is billed for it. That is why
- * the caps below exist and why they are tight.
+ * The result goes into the tool's own output, so it is read twice, by the
+ * window that draws it and by the model that is billed for it. Hence the caps
+ * below.
  */
 
 /** Lines of context kept either side of a change. */
@@ -19,8 +16,8 @@ const DIFF_LINE_CAP = 120
 
 /**
  * The largest pair of files the line LCS is run on. The table is
- * width × height cells, so a pair past this is answered with a count rather
- * than with a table that would take a second and a gigabyte to fill.
+ * width × height cells, so a pair past this is answered with a count instead.
+ * Filling the table for one costs about a second and a gigabyte.
  */
 const LCS_CELL_CAP = 4_000_000
 
@@ -32,8 +29,7 @@ export interface DiffStat {
 export interface FileDiff {
   /**
    * The unified diff, or '' when the two texts are identical. A diff cut to
-   * `DIFF_LINE_CAP` says so in its own last line, so both readers of this text,
-   * the window and the model, learn about the cut from the diff itself.
+   * `DIFF_LINE_CAP` says so in its own last line.
    */
   text: string
   stat: DiffStat
@@ -176,8 +172,8 @@ export function unifiedDiff(path: string, before: string, after: string): FileDi
   }
 
   // Two texts that differ only in whether the last line is terminated have the
-  // same lines, so there is nothing for a hunk to show. Saying so beats a diff
-  // with a header and no body, which reads as a write that changed nothing.
+  // same lines, so there is nothing for a hunk to show. A header with an empty
+  // body under it would read as a write that changed nothing.
   if (stat.added === 0 && stat.removed === 0) {
     const gained = after.endsWith('\n')
     return {

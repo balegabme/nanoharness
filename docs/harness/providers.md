@@ -9,28 +9,27 @@ means one that answers `/responses`. Which company runs it is not the harness's
 business, and no vendor address is compiled in anywhere.
 
 Files:
-- src/providers/openai.ts — OpenAI chat-completions streaming (SSE)
-- src/providers/anthropic.ts — Anthropic messages streaming (named SSE events)
-- src/providers/responses.ts — Responses streaming (named SSE events, items rather than messages)
-- src/providers/factory.ts — the one place a provider kind becomes a client
-- src/core/provider.ts — interface
-- src/core/config.ts — the provider registry: records, effort, resolution, validation
-- src/main/config-store.ts — settings on disk, keys encrypted by the OS
-- src/providers/headers.ts — the user agent, and the conversation id where an endpoint asked for one
-- src/providers/profiles.ts — the endpoints the harness has met before, and the one file allowed to name them
-- src/providers/catalogue.ts — what the public model catalogue says about the models at an address
-- src/providers/model-facts.ts — what a `/models` answer says about each model, where it says anything
-- src/core/cost.ts — what a run of tokens came to, at one model's prices
+- src/providers/openai.ts: OpenAI chat-completions streaming (SSE)
+- src/providers/anthropic.ts: Anthropic messages streaming (named SSE events)
+- src/providers/responses.ts: Responses streaming (named SSE events, items and not messages)
+- src/providers/factory.ts: the one place a provider kind becomes a client
+- src/core/provider.ts: interface
+- src/core/config.ts: the provider registry, its records, effort, resolution and validation
+- src/main/config-store.ts: settings on disk, keys encrypted by the OS
+- src/providers/headers.ts: the user agent, and the conversation id where an endpoint asked for one
+- src/providers/profiles.ts: the endpoints the harness has met before, and the one file allowed to name them
+- src/providers/catalogue.ts: what the public model catalogue says about the models at an address
+- src/providers/model-facts.ts: what a `/models` answer says about each model, where it says anything
+- src/core/cost.ts: what a run of tokens came to, at one model's prices
 
 ## OpenAI provider
 
 `POST {baseURL}/chat/completions`, with `stream: true` and
 `stream_options: {"include_usage": true}`. See [base URLs](#base-urls) for where
-the version segment comes from. Without that second option OpenAI sends no usage
-at all and every turn records zero tokens. Servers that do not know
-the field ignore it. SSE lines
-(`data: ...`), tool-call arguments arrive as fragments and are accumulated
-per call index.
+the version segment comes from. Without that second option OpenAI sends no
+usage at all and every turn records zero tokens. Servers that do not know the
+field ignore it. The stream is plain SSE lines (`data: ...`), and tool-call
+arguments arrive as fragments, accumulated per call index.
 
 ### Usage on this wire
 
@@ -47,15 +46,15 @@ uncached part directly, so this is the one place the two have to be brought into
 line, and `input` means the same thing afterwards.
 
 `completion_tokens` already contains the reasoning tokens, so `reasoning` is a
-breakdown of `output` rather than a sixth figure to add to it.
+breakdown of `output` and not a sixth figure to add to it.
 
 The cached count has two spellings. The documented one is
 `prompt_tokens_details.cached_tokens`; some servers send
 `prompt_cache_hit_tokens` at the top level instead, with
 `prompt_cache_miss_tokens` beside it. Both are read, the documented one
-first. A usage report that arrives without its two totals, or
-with more cached tokens than prompt tokens, is rejected rather than smoothed
-over: the session keeps the answer and records one fault saying the turn's cost
+first. A usage report that arrives without its two totals, or with more cached
+tokens than prompt tokens, is rejected and never smoothed over: the session
+keeps the answer and records one fault saying the turn's cost
 is unknown. Capping the count or defaulting it to zero would put a number true
 under nothing into the window and the append-only log, where an entry cannot be
 repaired later.
@@ -65,8 +64,8 @@ and never names them, so `cacheWrite` stays 0 and only Anthropic ever reports
 one.
 
 Key: passed via `Authorization: Bearer`. Effort rides as `reasoning_effort`,
-left out entirely at `none`, because which values a family accepts varies and an
-unknown one either 400s or is silently dropped.
+left out entirely at `none`, because which values a family accepts varies and
+an unknown one either 400s or is dropped without a word.
 
 Thinking has no standard field on this wire. Servers that stream it send it as
 `reasoning_content` or as `reasoning`, and the documented shape has neither;
@@ -77,29 +76,29 @@ that streams none.
 
 `POST {baseURL}/messages`, with `anthropic-version: 2023-06-01`.
 
-That header is not a "latest" marker that ought to be bumped. It names the
-request and response **format**, and every request must carry one; `2023-06-01`
-is the version the Messages API documents, and the only one this code speaks.
-Changing the string changes the wire contract, so it is pinned rather than
-derived from a date or a package version.
+That header is not a "latest" marker to bump. It names the request and response
+*format*, and every request must carry one; `2023-06-01` is the version the
+Messages API documents, and the only one this code speaks. Changing the string
+changes the wire contract, so it is pinned, and never derived from a date or a
+package version.
 
 The key goes out as both `x-api-key` and `Authorization: Bearer`. Anthropic's
 own API reads the first; several Anthropic-compatible gateways read the second
 (the same token they document as `ANTHROPIC_AUTH_TOKEN`). Sending
 both means the endpoint's convention does not have to be guessed at.
 
-Five differences matter, and each is handled at the boundary rather than
-leaking into the session loop:
+Five differences matter, and each is handled at the boundary, so none of it
+leaks into the session loop:
 
-- **`max_tokens` is required.** It is derived from the effort, because a
-  thinking budget has to stay strictly below it.
-- **The system prompt is a top-level field**, never a message.
-- **Tool results are `tool_result` blocks on a user message**, and consecutive
+- `max_tokens` is required. It is derived from the effort, because a thinking
+  budget has to stay strictly below it.
+- The system prompt is a top-level field, never a message.
+- Tool results are `tool_result` blocks on a user message, and consecutive
   results merge into one message, because the API wants alternating roles.
-- **Events are named** (`message_start`, `content_block_*`, `message_delta`),
+- Events are named (`message_start`, `content_block_*`, `message_delta`),
   and tool arguments stream as `input_json_delta` fragments that are
   concatenated and parsed once at `content_block_stop`.
-- **Usage arrives in two halves**, and in the units the harness stores.
+- Usage arrives in two halves, and in the units the harness stores.
   `message_start` carries `input_tokens`, `cache_read_input_tokens` and
   `cache_creation_input_tokens`, and `message_delta` carries `output_tokens` at
   the end. `input_tokens` here is the uncached part of the prompt already, with
@@ -108,15 +107,15 @@ leaking into the session loop:
   it. It reports no reasoning count, so `reasoning` stays 0 even on a turn that
   thought: the thinking tokens are inside `output_tokens` and are not broken
   out.
-- **Thinking blocks are signed and must come back.** When a turn uses tools, the
+- Thinking blocks are signed and must come back. When a turn uses tools, the
   next request has to carry the assistant's `thinking` blocks, text plus the
   `signature` that arrived on `signature_delta`, ahead of the text and
   `tool_use` blocks, in the order they were produced. The API verifies the
   signature and rejects an edited, reordered or missing block. `redacted_thinking`
   blocks are encrypted, unreadable here, and passed back untouched. So thinking
   is collected whole (`ChatChunk` gains `thinking_block`), stored on the
-  assistant message, and replayed on the wire, rather than streamed to the
-  screen and dropped.
+  assistant message, and replayed on the wire, and never streamed to the screen
+  and dropped.
 
 ## Responses provider
 
@@ -124,13 +123,13 @@ leaking into the session loop:
 storing, the endpoint keeps the turn and hands back an id to carry on from,
 which would make it the owner of a transcript the harness already has on disk.
 
-Three things make it its own file rather than a branch inside `openai.ts`. The
-request carries `input` rather than `messages`. A tool definition is flat,
-`{type, name, description, parameters}`, where the other wire nests the last
-three under `function`. And the stream is a sequence of named events rather than
-deltas hanging off a choice, so there is no shape in common to branch on.
+Three things make it its own file instead of a branch inside `openai.ts`. The
+request carries `input` where the other carries `messages`. A tool definition
+is flat, `{type, name, description, parameters}`, where the other wire nests
+the last three under `function`. And the stream is a sequence of named events,
+not deltas hanging off a choice, so there is no shape in common to branch on.
 
-`input` is a flat list rather than a list of messages. A plain turn is a role
+`input` is a flat list and not a list of messages. A plain turn is a role
 with its content (`input_text` going up, `output_text` coming back), and a tool
 round is two loose items beside it: a `function_call` carrying the arguments the
 model asked with, and a `function_call_output` carrying what the tool returned,
@@ -139,11 +138,11 @@ and an assistant turn that only called tools becomes no message item at all,
 since an empty one would be a turn the model never took.
 
 Four of the events matter. `response.output_text.delta` is the answer.
-`response.reasoning_summary_text.delta` is the thinking, and what arrives is the
-summary the model wrote of its own reasoning rather than the reasoning itself.
+`response.reasoning_summary_text.delta` is the thinking, and what arrives is
+the summary the model wrote of its own reasoning and not the reasoning itself.
 `response.output_item.done` closes an item, and the finished `function_call`
 carries its arguments in full, so the fragments streamed ahead of it are read
-past rather than reassembled. `response.completed` carries the usage.
+past and never reassembled. `response.completed` carries the usage.
 
 Thinking does not go back on the next request. This wire hands out a summary and
 no signature to verify it against, so as on the OpenAI wire the block is kept
@@ -152,8 +151,8 @@ it was accepted by every endpoint this has been run against.
 
 `response.incomplete` is read for usage exactly as `response.completed` is: a
 turn cut short still spent what it spent, and the log it goes to is append-only.
-A `response.failed` or a bare `error` event becomes an `error` chunk rather than
-ending the stream quietly, so a turn that failed halfway is not recorded as a
+A `response.failed` or a bare `error` event becomes an `error` chunk instead of
+an ending with nothing said, so a turn that failed halfway is not recorded as a
 turn that finished. It carries status 500, because a stream that has already
 answered 200 and then gives up is the provider's fault as far as asking again
 goes, and this wire publishes no table of codes to read a finer answer from.
@@ -168,8 +167,8 @@ is zero.
 ## Effort
 
 One neutral scale, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`,
-because the three wires express the same idea in different units. The mapping is
-not invented; each side uses the field its own API documents:
+because the three wires express the same idea in different units. Each side
+uses the field its own API documents:
 
 | effort | OpenAI-compatible | Responses | Anthropic-compatible |
 |---|---|---|---|
@@ -182,17 +181,17 @@ not invented; each side uses the field its own API documents:
 | `max` | `reasoning_effort: "max"` | `reasoning.effort: "max"` | `thinking.budget_tokens: 65536` |
 
 Both OpenAI-shaped wires pass the level through as the same word the API takes;
-`none` leaves the field out, which is what each of them reads as the model's own
-default. No model takes all six words: families differ, and a value
-a model does not know comes back as a 400 or is dropped without a word. Which ones a model does take is a fact about
-that model, so it is read from the endpoint and kept per model rather than
-guessed from the id. See [Model facts](#model-facts).
+`none` leaves the field out, which is what each of them reads as the model's
+own default. No model takes all six words: families differ, and a value a model
+does not know comes back as a 400 or is dropped without a word. Which ones a
+model does take is a fact about that model, so it is read from the endpoint and
+kept per model, and never guessed from the id. See [Model facts](#model-facts).
 
 Anthropic has no effort word. It takes a token budget, so the levels become
 budgets. The floor is the API's own: a budget must be at least 1,024 tokens and
-strictly below `max_tokens`, which is why `max_tokens` is derived from the budget
-rather than set independently. The four original levels kept their budgets when
-the scale was widened, so a session that ran at `medium` still thinks exactly as
+strictly below `max_tokens`, which is why `max_tokens` is derived from the
+budget and not set independently. The four original levels kept their budgets
+when the scale was widened, so a session that ran at `medium` still thinks exactly as
 hard as it did.
 
 The top two levels want more output than several Claude models will produce, so
@@ -221,11 +220,11 @@ names, so the reader knows every spelling anyone has been seen to use:
 
 | shape | prices | effort levels | ceiling | images |
 |---|---|---|---|---|
-| a `capabilities` block | — | `capabilities.effort.<level>.supported` | `max_tokens` | `capabilities.vision.supported`, or `vision` in a `capabilities` list |
-| a `pricing` block | `pricing.prompt`, `.completion`, `.input_cache_read`, sometimes as strings | — | — | — |
-| reasoning metadata | — | `metadata.reasoning.supported_efforts` | — | — |
-| per-token costs | `model_info.input_cost_per_token` and friends, or the same names at the top level | — | — | `supports_vision`, at the top level or in `model_info` |
-| an `architecture` block | — | — | — | `architecture.input_modalities`, or the older `modality: "text+image->text"` |
+| a `capabilities` block | n/a | `capabilities.effort.<level>.supported` | `max_tokens` | `capabilities.vision.supported`, or `vision` in a `capabilities` list |
+| a `pricing` block | `pricing.prompt`, `.completion`, `.input_cache_read`, sometimes as strings | n/a | n/a | n/a |
+| reasoning metadata | n/a | `metadata.reasoning.supported_efforts` | n/a | n/a |
+| per-token costs | `model_info.input_cost_per_token` and friends, or the same names at the top level | n/a | n/a | `supports_vision`, at the top level or in `model_info` |
+| an `architecture` block | n/a | n/a | n/a | `architecture.input_modalities`, or the older `modality: "text+image->text"` |
 
 A `capabilities` block is the one shape that states the levels outright, so it
 is read first. `none` is added to whatever it names, because on that wire the
@@ -234,7 +233,7 @@ permission for that; `minimal` is not added, because it is a budget the list doe
 not mention and inventing it here is how a 400 arrives mid-turn. A model whose
 `capabilities.thinking.supported` is false takes `none` and nothing else. A
 `capabilities` block that says nothing about effort leaves the levels unknown,
-which marks the model rather than guessing for it.
+which marks the model instead of guessing for it.
 
 A field that only says whether a model reasons at all, as `supported_parameters`
 does, is read by nothing: it never names the levels, and turning "reasons" into
@@ -253,8 +252,9 @@ bare shape, an id, an object type, a timestamp and an owner, with nothing about
 price or thinking. The catalogue below fills that in.
 
 A model neither the endpoint nor the catalogue describes ends up with no facts,
-which is not an error. The settings screen marks it, the composer keeps offering every
-level, and the user can type the answer in: `overrides` on the provider record
+which is not an error. The settings screen marks it, the composer keeps
+offering every level, and the user can type the answer in: `overrides` on the
+provider record
 holds what they typed, wins over the endpoint field by field, and survives the
 next fetch. `resolveFacts` does that merge, so one wrong price corrected by hand
 does not throw away an effort list the endpoint got right.
@@ -267,8 +267,8 @@ they press it.
 
 A settings write that changes the active provider's record, meaning its
 address, wire kind, key or allowlist, or that moves the active selection,
-retires the live
-sessions, which rebuild from the stored transcript on their next turn. A write
+retires the live sessions, which rebuild from the stored transcript on their
+next turn. A write
 that touches another provider's fields, or one carrying nothing but prices and
 effort levels, leaves them running: **Fetch models** makes that write on its
 own, and a fetch must not end a turn running on a different endpoint. The next
@@ -304,22 +304,22 @@ that changed models mid-way reads as an estimate; its tooltip says so.
 
 Some models charge a higher rate once a prompt passes a length. `tiers` holds
 those rates, each with the prompt size it starts at, and the whole request is
-billed at whichever tier the prompt reaches rather than only the tokens above
-the line, which is how the endpoints doing this actually bill. Cached tokens
+billed at whichever tier the prompt reaches, and not only the tokens above the
+line, which is how the endpoints doing this actually bill. Cached tokens
 count towards the length: the endpoint sizes the request it was sent, and a
 cache hit is still context the model reads. A tier that names only some rates
 keeps the base ones for the rest.
 
 Tiers arrive from the table above, and the settings form has no field for one.
-A price typed by hand therefore drops them, because keeping a tier would quietly
-double a figure the user had just corrected. A correction that says nothing
+A price typed by hand therefore drops them, because keeping a tier would double
+a figure the user had just corrected. A correction that says nothing
 about price leaves them where they are.
 
 ## Configuration
 
 Nothing about a vendor is compiled in. There is no default base URL, no default
 model, and no fallback key: an incomplete configuration raises `ConfigError`
-naming exactly what is missing, and the app opens its setup screen rather than
+naming exactly what is missing, and the app opens its setup screen instead of
 talking to somebody's cloud unasked.
 
 The settings screen is the only way in. A provider has to be configured before
@@ -347,8 +347,8 @@ treated as what it is. The model-list fetches send it too.
 
 Some endpoints also want to know which conversation a request belongs to, so
 they can pin it to one upstream or keep its prompt cache warm. There is no
-standard header for this. Each endpoint that wants it chose a spelling, and most
-want nothing, so the name is a per-provider setting rather than something the
+standard header for this. Each endpoint that wants it chose a spelling, and
+most want nothing, so the name is a per-provider setting and not something the
 harness assumes.
 
 Known addresses are answered by `src/providers/profiles.ts`. An unlisted host is
@@ -381,16 +381,16 @@ source is how a wrong number reaches the spend view.
 
 The request carries no key, no model id and no address. It is one public file,
 the same file for every user, and the configured endpoint is matched against it
-here rather than asked about. What models.dev learns is that somebody running
+here, and never asked about. What models.dev learns is that somebody running
 this harness pressed the button.
 
-A figure from a catalogue is the vendor's published rate rather than what this
+A figure from a catalogue is the vendor's published rate and not what this
 particular key is billed, and the same model id at a subscription address and a
 pay-per-token address is two different prices. So the endpoint stays the
 authority on itself: `describe()` fills only the fields the `/models` answer left
 empty and overwrites none it filled, and a correction typed in settings outranks
-both. A model the catalogue has never heard of is offered undescribed and marked
-rather than not at all, and a model only the catalogue knows about is not
+both. A model the catalogue has never heard of is offered undescribed and
+marked, and never left out, and a model only the catalogue knows about is not
 conjured into the list.
 
 The wire is read the same way and stored with the model's prices. A gateway
@@ -399,7 +399,7 @@ one model in a catalogue can be reachable on one wire alone. The catalogue names
 the SDK each model is reached with and `WIRES` maps those names onto the three
 this harness speaks; a name nobody has mapped leaves the record's wire standing.
 `createProvider` then takes that wire alongside the record, which keeps such an
-endpoint a single record in settings rather than two the user would have to know
+endpoint a single record in settings instead of two the user would have to know
 to pick between. A model's own wire outranks the record's, the other way round
 from the session header: a header the user typed is a preference, and a wire the
 endpoint refuses is a 400.
@@ -432,7 +432,7 @@ histories under one id are two histories fighting over one cache.
 
 A name that `fetch` would reject is dropped on the way in, from the window and
 from disk alike. Carrying one would fail every turn with an error about the
-header rather than about the endpoint that wanted it.
+header and not about the endpoint that wanted it.
 
 ### Base URLs
 
@@ -451,7 +451,7 @@ adds the version only when the base does not already end in one:
 | `https://host/api/paas/v4` | `https://host/api/paas/v4/chat/completions` |
 | `https://host/api/anthropic` | `https://host/api/anthropic/v1/messages` |
 
-What does **not** belong in the field is the endpoint path itself: the base ends
+What does *not* belong in the field is the endpoint path itself: the base ends
 before `/chat/completions` or `/messages`. The settings screen says so under the
 field, with examples for the kind that is selected.
 
@@ -464,8 +464,8 @@ The settings file is **secret-free by schema** (plan §16): `StoredConfig` has
 no `apiKey` field at all, so it can be read, copied or pasted into an issue
 without leaking anything. The key lives in its own file, encrypted through
 Electron `safeStorage` (DPAPI on Windows, Keychain on macOS, libsecret on
-Linux). Where the OS has no such store, the app refuses to save a key rather
-than falling back to plaintext. Neither file is ever written to the repo.
+Linux). Where the OS has no such store, the app refuses to save a key and never
+falls back to plaintext. Neither file is ever written to the repo.
 
 `facts` is what the last fetch reported for each model and `overrides` is what
 the user typed over it; both are keyed by model id and both are absent until
@@ -477,7 +477,7 @@ is how a proxy without `/v1/models` still works.
 
 A settings write that changes the active provider's record or the selection
 retires the live sessions, so the next turn is built against the new endpoint,
-model or effort rather than the one the window started with.
+model or effort, and not the one the window started with.
 
 ## Listing models
 
@@ -485,25 +485,25 @@ model or effort rather than the one the window started with.
 with its own auth headers and the same version rule as every other endpoint. It
 returns sorted, de-duplicated ids, each with whatever the answer said about
 it. The settings screen uses it for both its buttons: reaching the endpoint at
-all is the connection test, and the ids are the model picker. A 404 is reported as
-"this server has no model list" rather than as a failure, because plenty of
-OpenAI-compatible proxies do not implement it. Failures come back as values, not
-exceptions, because a typo in a URL is an expected outcome of a settings
-screen, and an unreachable host is named with its address and error code instead of Node's
-bare `fetch failed`.
+all is the connection test, and the ids are the model picker. A 404 is reported
+as "this server has no model list" and not as a failure, because plenty of
+OpenAI-compatible proxies do not implement it. Failures come back as values,
+not exceptions, because a typo in a URL is an expected outcome of a settings
+screen, and an unreachable host is named with its address and error code, in
+place of Node's bare `fetch failed`.
 
 ## When a request fails
 
 A round is asked for up to five times. Both wires throw `ProviderError`, which
 carries the HTTP status where there was one, and `isRetryable` in
-`src/core/provider.ts` decides from it by the rule HTTP already states rather
-than from a list of numbers. A 5xx is the server saying it failed, so the same
+`src/core/provider.ts` decides from it by the rule HTTP already states, and not
+from a list of numbers. A 5xx is the server saying it failed, so the same
 request may well work a second time; a 4xx is the server saying the request was
 wrong, and it will be wrong in the same way when it arrives again. Three 4xx
-statuses are exceptions, because each means "not now" rather than "not this":
+statuses are exceptions, because each means "not now" and not "not this":
 408, 425 and 429.
 
-The rule matters more than it sounds. Most hosted endpoints sit behind a proxy
+Most hosted endpoints sit behind a proxy
 that answers in numbers of its own; Cloudflare alone has 520 through 527. A
 hand-written list of retryable statuses would have to name every one of them,
 and a 522 it had not heard of would read as a malformed request not worth
@@ -511,8 +511,8 @@ sending again, the opposite of what it means.
 
 Two things are retried without a status. A stream that broke, whether the body
 never arrived or an SSE event stopped halfway, is thrown as `StreamBrokenError`,
-which is a class rather than a message so that rewording the sentence cannot
-silently switch the retry off. A connection that never delivered a response at
+which is a class and not a message, so rewording the sentence cannot switch the
+retry off. A connection that never delivered a response at
 all is recognised by the `code` in its `cause` chain, which is where Node keeps
 the reason behind a bare `fetch failed`; the codes are named because they are a
 closed set, and what is outside it is a misconfiguration that fails identically
@@ -526,7 +526,7 @@ and is honoured up to a minute, past which the provider is asking for longer
 than a turn should hang on one header. Stop cuts a wait short: a person who has
 pressed it does not get another attempt made on their behalf.
 
-`backoffFor` and `sleep` live here rather than in the session, because the
+`backoffFor` and `sleep` live here and not in the session, because the
 approval judge in `src/core/approval.ts` retries a rung of its ladder on the
 same policy with a shorter schedule of its own. One backoff, one place that
 honours `Retry-After`.
@@ -544,9 +544,9 @@ provider having trouble. `src/providers/failure.test.ts` holds that table to its
 word.
 
 A retry starts the round from the top, which means whatever had already
-streamed is thrown away rather than welded onto the answer that replaces it.
-Nothing partial reaches the transcript, because the
-transcript is written when a round returns, and the window is told to take back
+streamed is thrown away and never welded onto the answer that replaces it.
+Nothing partial reaches the transcript, because the transcript is written when
+a round returns, and the window is told to take back
 what it drew by the `round.retry` event. What a failed attempt was charged for
 is carried onto the round that succeeds, so a rate-limited turn still counts the
 prompt it paid to have read twice. That only works where the wire says what it

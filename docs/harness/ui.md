@@ -5,22 +5,22 @@ The renderer draws events and nothing else. Every fact on screen arrives as an
 its own, which is why the window can be rebuilt without touching the core.
 
 Files:
-- src/main/window.ts — BrowserWindow, the `app://` scheme, navigation lockdown
-- src/main/preload.ts — the context bridge, with ping, send, workspaces, sessions, rename, transcript paths, role, jobs, one subagent's stored conversation, agents, MCP status, secrets, config, permission answers, the usage report and clearing it, external links, onEvent
-- src/renderer/index.ts — the shell, which session is open, the agent, model and effort chips, and the diff and spend panes
-- src/renderer/composer.ts — the composer in its two seats, and the height the flow clears
-- src/renderer/jobs.ts — the running subagents and the buffered stream of each one
-- src/renderer/sidebar.ts — folders and their sessions, search, add and delete
-- src/renderer/metrics.ts — tokens per second and the cache hit rate, kept away from the DOM so both can be tested
-- src/renderer/facts.ts — the effort scale, what a model takes and what it costs; a copy of what src/core/config.ts and src/core/cost.ts define, held against them by src/providers/model-facts.test.ts
-- src/renderer/chat.ts — the message flow, drawn the same for the main agent and for an opened subagent, with streamed text, thinking, tool rows, notes and replayed transcripts
-- src/renderer/settings.ts — the settings sheet, with the provider list, form, probe and model ticking
-- src/renderer/permission.ts — the modal a tool waits on when it reaches outside its folder
-- src/renderer/confirm.ts — the app's own yes/no and one-line-of-text sheets, in place of the browser's `confirm()` and `prompt()`
-- src/renderer/menu.ts — the right-click menu, one at a time, placed near the pointer, closed by the next thing the user does
-- src/renderer/notify.ts — the blip and desktop notification when a turn ends or asks for approval
-- src/renderer/match.ts — whether a model id is what somebody typing into the filter box meant to find
-- src/renderer/dom.ts — the small DOM helpers the rest share
+- src/main/window.ts: BrowserWindow, the `app://` scheme, navigation lockdown
+- src/main/preload.ts: the context bridge, with ping, send, workspaces, sessions, rename, transcript paths, role, jobs, one subagent's stored conversation, agents, MCP status, secrets, config, permission answers, the usage report and clearing it, external links, onEvent
+- src/renderer/index.ts: the shell, which session is open, the agent, model and effort chips, and the diff and spend panes
+- src/renderer/composer.ts: the composer in its two seats, and the height the flow clears
+- src/renderer/jobs.ts: the running subagents and the buffered stream of each one
+- src/renderer/sidebar.ts: folders and their sessions, search, add and delete
+- src/renderer/metrics.ts: tokens per second and the cache hit rate, kept away from the DOM so both can be tested
+- src/renderer/facts.ts: the effort scale, what a model takes and what it costs; a copy of what src/core/config.ts and src/core/cost.ts define, held against them by src/providers/model-facts.test.ts
+- src/renderer/chat.ts: the message flow, drawn the same for the main agent and for an opened subagent, with streamed text, thinking, tool rows, notes and replayed transcripts
+- src/renderer/settings.ts: the settings sheet, with the provider list, form, probe and model ticking
+- src/renderer/permission.ts: the modal a tool waits on when it reaches outside its folder
+- src/renderer/confirm.ts: the app's own yes/no and one-line-of-text sheets, in place of the browser's `confirm()` and `prompt()`
+- src/renderer/menu.ts: the right-click menu, one at a time, placed near the pointer, closed by the next thing the user does
+- src/renderer/notify.ts: the blip and desktop notification when a turn ends or asks for approval
+- src/renderer/match.ts: whether a model id is what somebody typing into the filter box meant to find
+- src/renderer/dom.ts: the small DOM helpers the rest share
 
 `src/renderer/index.html` and `src/renderer/renderer.css` ship alongside and are
 copied into `out/` by `scripts/copy-assets.mjs`.
@@ -76,7 +76,7 @@ answering.
 An empty session shows the mark, faint and large behind where the first answer
 will land, and it goes the moment anything is appended. A session that has been
 started but not answered yet is otherwise a blank rectangle with a composer
-under it, which reads as broken rather than as ready.
+under it, which reads as broken instead of ready.
 
 The running total sits in the topbar, to the right of the title, as a row of
 small pills: in, out, cached, what it has spent, hit rate, and tokens per
@@ -84,13 +84,14 @@ second, plus reasoning and cache-written where there are any. The spend appears
 only once a model has a price, and it is the session's whole total put through
 the rate of the model selected now, so a session that switched models is an
 estimate; the tooltip says as much. The exact figure for one turn is on that
-turn's own summary line, priced by the model that ran it. A turn that delegates gets one more, **by
-agents**, which is how much of the output was written by subagents this session
-started. A session can read fifty thousand out while having written a paragraph
-itself, and the single total cannot say which of those happened. The pill is quieter than the ones beside it, because
-it is an aside about `out` rather than a measure of its own. It is stored with
-the session's total, so a session re-opened a week later still shows the split
-rather than folding it back into one number. Each pill is a bright number and a
+turn's own summary line, priced by the model that ran it. A turn that delegates
+gets one more, **by agents**, which is how much of the output was written by
+subagents this session started. A session can read fifty thousand out while
+having written a paragraph itself, and the single total cannot say which of
+those happened. The pill is quieter than the ones beside it, because it is an
+aside about `out` and not a measure of its own. It is stored with the session's
+total, so a session re-opened a week later still shows the split and never
+folds it back into one number. Each pill is a bright number and a
 dim name, so the row reads as numbers first and labels second. Everything the
 hit rate divides by is on the row, so the percentage can be checked against the
 numbers beside it.
@@ -101,10 +102,10 @@ that round, because by the time an event arrives the gap since the last one is
 mostly whatever tool ran in between: a turn with one slow bash call in it used
 to report the model at a fraction of its real speed. Tokens and generating-time
 accumulate across the turn, and a turn that has generated for under 0.4s shows
-no rate rather than a noisy one. A subagent's usage carries no `streamMs`, so it
-adds to the counters and stays out of the rate. Re-opening a session shows its
-stored totals without a rate, because nothing has been timed yet. `metrics.ts`
-has both, away from the DOM so both are tested.
+no rate at all, where a noisy one would be worse. A subagent's usage carries no
+`streamMs`, so it adds to the counters and stays out of the rate. Re-opening a
+session shows its stored totals without a rate, because nothing has been timed
+yet. `metrics.ts` has both, away from the DOM so both are tested.
 
 The topbar is where that row belongs. It is a fact about the session, like the
 title and the folder beside it, and not a control. On the control row the chips
@@ -114,7 +115,7 @@ outside the card. The total is stored with the session, so re-opening one shows
 what it has already cost instead of starting the count at zero, and the rebuilt
 session picks the total back up and carries on adding to it.
 
-The control row is measured against the composer card rather than the window,
+The control row is measured against the composer card, never the window,
 because the same card is narrow with the rail open and wide with it collapsed.
 As it tightens, `alerts` goes first and the scope badge second: both repeat
 something the settings pane says, while the three selects are the only way to
@@ -135,7 +136,7 @@ who stopped watching. Every ask rings, queued ones included, because each is a
 separate question. The `alerts` chip is a bell, struck through when it is off,
 which is the state worth being able to read at a glance. It turns both off and
 remembers that in `localStorage`, because it is a preference about this
-machine's speakers rather than part of the harness configuration. Approval
+machine's speakers and not part of the harness configuration. Approval
 prompts fall silent with everything else, since silence is a thing people ask
 for on purpose. The tone differs by outcome, rising for finished, falling
 for stopped, flat and low for an error, so a turn's ending is legible from the
@@ -153,14 +154,14 @@ took and how many failed, which files `edit` and `write` left different, and how
 long it ran. A `bash` call that writes a file is invisible to the count, so the
 line claims only what those two tools touched, and a long list is cut short
 after twelve paths with the rest counted. It is the dimmest thing in the flow,
-because the numbers are worth a glance and never worth a stop, and it is drawn
-as its own kind of block rather than as a note for that reason. The line is
+because the numbers are worth a glance and never worth a stop, and that is why
+it is drawn as its own kind of block and not as a note. The line is
 stored with the transcript, so a session opened next week still shows what each
 turn cost; `sessions.md` has the shape. Every ending gets one, an error and a
 stop included.
 
-A turn the permission system stopped something in counts those calls **apart
-from the failures**, as `2 ok, 0 failed, 1 prevented`, and the line becomes a
+A turn the permission system stopped something in counts those calls apart from
+the failures, as `2 ok, 0 failed, 1 prevented`, and the line becomes a
 disclosure you can open on what was stopped and why, each entry carrying the
 refusal in the words it was refused with. The count is only ever shown when
 there is one, so an ordinary turn reads exactly as it always did.
@@ -176,7 +177,7 @@ still there next week.
 
 A note block says what the run did, as its own rule across the flow, dim where
 an error block is red. The window uses it for anything that is about the run
-rather than about the conversation: a stop, a turn that came back with no answer
+and not about the conversation: a stop, a turn that came back with no answer
 at all, a call the harness refused because it was the third identical one, a
 background job starting and finishing, a request that failed and is being made
 again. Without it, a turn that ends without an answer leaves the flow looking
@@ -190,12 +191,12 @@ alternative is leaving the reader to work out which half of two interleaved
 answers is the real one. `providers.md` has what counts as worth asking again.
 
 Re-opening a session replays its stored messages and tool calls, refusals
-included: a tool that was denied comes back marked failed rather than dressed
-up as a call that worked. Thinking replays too, folded away, where the provider
+included: a tool that was denied comes back marked failed and never dressed up
+as a call that worked. Thinking replays too, folded away, where the provider
 signed it and it therefore had to be kept (see `providers.md`). The notes come
 back with them, each one drawn between the same two blocks it appeared between
 live, because the session file records how many messages had been written when
-it happened, so the position is stored rather than guessed. A note is drawn
+it happened, so the position is stored and never guessed. A note is drawn
 once: the live path draws an error and a stop from their own events, and only
 the replay path draws them from the journal.
 
@@ -216,14 +217,15 @@ as the sidebar header at 24px, gets `mark.svg`, the dot-free variant.
 Settings is a sheet over the app, not a screen the app falls back to: the
 conversation stays where it was. It opens by itself only when nothing can run
 (no provider saved, or a saved one that no longer resolves), and Esc reopens it
-in that state rather than stranding the user on an app that cannot run.
+in that state instead of stranding the user on an app that cannot run.
 
 The providers pane asks for a name, an API kind, a base URL and a key, because
 none of them has a default (see `providers.md`). The kind is named for the wire
-format rather than the vendor, as "OpenAI-compatible (/chat/completions)",
+format and not the vendor, as "OpenAI-compatible (/chat/completions)",
 "Anthropic-compatible (/messages)" and "OpenAI Responses (/responses)", and the
-base-URL field carries a hint that changes with it, saying which part of the address to paste and giving examples
-for that side. **Test connection** and **Fetch models** both call
+base-URL field carries a hint that changes with it, saying which part of the
+address to paste and giving examples for that side. **Test connection** and
+**Fetch models** both call
 `GET {base}/models` through `config:probe`; the first reports reachability, the
 second lists what the server offers as a set of checkboxes. Ticking is the
 point: only ticked models can become the active model, so a provider's full
@@ -239,9 +241,9 @@ key as well as the host. Going back to setting it up by hand brings the fields
 out again, holding what the entry put there.
 
 The picker is offered only while adding, because picking would otherwise write
-over the record on screen. What it saves is an ordinary provider record, renamed,
-repointed or deleted like any other. `providers.md` has where the list lives and
-why the window is sent it rather than keeping its own copy.
+over the record on screen. What it saves is an ordinary provider record,
+renamed, repointed or deleted like any other. `providers.md` has where the list
+lives and why the window is sent it instead of keeping its own copy.
 
 Once one provider is saved the pane grows a list of them across the top. A card
 switches the form to that provider; **Add another provider** blanks it for a new
@@ -256,23 +258,21 @@ There is no **Active model** control in the sheet. The model chip on the
 composer is the one place to change it, and saving keeps the running model if it
 is still ticked, or falls back to the first ticked one if it is not, so a save
 cannot leave a provider with no model to run.
-
-Each model in the fetched list carries what the fetch found out about it: its
+ Each model in the fetched list carries what the fetch found out about it: its
 price per million tokens, and the effort levels it takes. A model nobody has
 described is marked ⚠ and reads what is missing beside its id, because the mark
 has to say what to do about it, and what to do is the cogwheel at the end of
 the row, which opens the levels, the four prices for that model (in, out, and
 the two halves of the cache, which fall back to the input rate when they are
 left blank), and whether it takes images. The cogwheel stays lit while its
-fields are open. Images are a picker of three rather than a tick box: most
+fields are open. Images are a picker of three and not a tick box: most
 endpoints publish nothing about it, and an unticked box would say those models
-cannot take one. Typed
-answers outrank the endpoint field by field and survive the next fetch, so
-correcting one wrong price does not throw away an effort list that was right.
-**Clear what I typed** goes back to whatever the endpoint said, which for a
-model it did not describe is the way back to "nobody has said". A price the
-endpoint did give cannot be un-said from here; what can be done to it is to type
-a different one. Leaving a model unmarked-up costs
+cannot take one. Typed answers outrank the endpoint field by field and survive
+the next fetch, so correcting one wrong price does not throw away an effort
+list that was right. **Clear what I typed** goes back to whatever the endpoint
+said, which for a model it did not describe is the way back to "nobody has
+said". A price the endpoint did give cannot be un-said from here; what can be
+done to it is to type a different one. Leaving a model unmarked-up costs
 nothing: it keeps all seven levels and shows no price.
 
 An endpoint can offer thirty, in an order it chose for itself, so the list is
@@ -283,7 +283,7 @@ punctuation as a space on both sides and tries the run-together spelling too:
 before it closes the sheet, since a full box is the nearer thing to leave.
 
 The tick at the top answers for the rows under it, which with a filter on is
-what the filter left. Ticking every Qwen is then two gestures rather than
+what the filter left. Ticking every Qwen is then two gestures instead of
 thirty, and the models the box is hiding are not something the user was just
 asked about. The count beside it stays whole, `12 of 36 ticked`, because the
 list scrolls and a filtered view cannot say how much of the catalogue is on.
@@ -296,7 +296,7 @@ Fetching the models of a provider that is already saved writes the answer to
 disk on the spot, so the prices and effort levels are stored without a second
 click; the offered list stays on screen with the unticked models still there to
 tick. A provider being added for the first time is not saved by a fetch, because
-the form is still being typed and a Fetch is a look at an endpoint rather than a
+the form is still being typed and a Fetch is a look at an endpoint and not a
 decision to keep it.
 
 Three chips on the composer are the fast path past the sheet entirely: the
@@ -305,12 +305,12 @@ the live sessions, so the next message runs on what the chips say.
 
 The effort picker is built from the model now selected, not from a fixed list.
 The scale has seven levels and no model takes all of them, so offering the same
-seven everywhere meant offering levels the provider would refuse and hiding ones
-it had. What a model takes is a fact about that model, read from the endpoint and
-kept per provider; `providers.md` covers where it comes from and what happens
-when nobody supplies it. Switching to a narrower model clamps the level to the
-nearest one it does take, ties going to the quieter of the two, and writes that
-back, so what a turn runs on is what the chip says.
+seven everywhere meant offering levels the provider would refuse and hiding
+ones it had. What a model takes is a fact about that model, read from the
+endpoint and kept per provider; `providers.md` covers where it comes from and
+what happens when nobody supplies it. Switching to a narrower model clamps the
+level to the nearest one it does take, ties going to the quieter of the two,
+and writes that back, so what a turn runs on is what the chip says.
 
 The model picker holds every configured provider's ticked models, grouped by
 provider name, and picking one from another provider moves the session there in
@@ -319,7 +319,7 @@ first: the thing being chosen is a model, and which endpoint serves it follows
 from the pick. Two providers can offer the same model id, so an option's value
 carries both and `setActive` is given the pair. A provider with nothing ticked
 still appears when it is the one running, showing the model it is active on,
-rather than as an empty heading.
+and never as an empty heading.
 
 Each chip draws its own label and lays an invisible native `<select>` over it. A
 bare select sizes itself to its widest option, so one long model id would push
@@ -337,15 +337,15 @@ the snippet picker. Plan §13 has the full list.
 Nothing the app opens is drawn by the browser. `confirm()` is replaced by a
 sheet in the app's own vocabulary (`confirm.ts`), and Esc and a backdrop click
 both answer no. A native dialog in the middle of a themed window is the tell
-that a screen was assembled rather than designed, and it ignores the theme
+that a screen was assembled instead of designed, and it ignores the theme
 besides.
 
 The sheet answers on the right, Cancel first and the destructive button last,
 and that button is filled in the same red as the stop button. Red text on
 nothing beside an outlined Cancel drew the weaker of the two controls as the
 one the sheet exists for. `danger` is now kept for buttons that actually
-destroy something: the permission sheet's **Deny** refuses a request rather
-than deleting anything, so it is an ordinary outlined button.
+destroy something: the permission sheet's **Deny** refuses a request without
+deleting anything, so it is an ordinary outlined button.
 
 The `<select>` popups are ours too, through `appearance: base-select`: the list
 is a card on the app's surfaces, borders and shadow, with the accent on the
@@ -376,7 +376,7 @@ the rule, the three answers and why a prompt per path stops being read.
 - `contextIsolation: true`, `nodeIntegration: false`, no remote content. The
   renderer sees one small bridge object on `window.nanoharness` and never
   `ipcRenderer`.
-- The page is served over a registered `app://` scheme rather than `file://`.
+- The page is served over a registered `app://` scheme instead of `file://`.
   A file URL has an opaque origin, which makes `default-src 'self'` meaningless
   and blocks ES modules; the custom scheme gives the page a real origin. The
   handler refuses any path that escapes `out/renderer`.
@@ -414,7 +414,7 @@ today's.
 A finished card says what the subagent did on a line under it: the role and
 mode it ran as, how many tool calls it took, how many worked, how long it ran
 and what it cost. It is the same line `tools/spawn.ts` writes for the model at
-the end of the result, read back rather than composed a second time.
+the end of the result, read back and never composed a second time.
 
 The line is drawn where a turn's own total is drawn, under the thing it is
 about, in the same dim `block summary` the answer ends on. Inside the card's
@@ -424,7 +424,7 @@ place and the same weight. It stays visible while the card is folded, which is
 what tells a reader whether to open it: twelve calls and eighty are different
 pieces of work.
 
-A foreground spawn becomes a way in when the job starts rather than when it
+A foreground spawn becomes a way in when the job starts and not when it
 answers. Its card sits there running while the parent's turn is blocked behind
 it, and until the answer lands that card is the only thing in the window naming
 the subagent: a minute of apparently nothing happening, with no way in. A
@@ -434,8 +434,8 @@ both notes link to the same conversation.
 A subagent's own stream reaches the window. Its events are emitted under
 `sessionId` = its job id, so `index.ts` routes anything carrying a known job id
 to `jobs.ts`, which folds it into a per-subagent buffer, with consecutive text
-and thinking deltas merged, so a buffer is the size of the answer rather than
-the size of the stream. That is what lets a subagent nobody was watching be
+and thinking deltas merged, so a buffer is the size of the answer and not the
+size of the stream. That is what lets a subagent nobody was watching be
 opened mid-run and read from the beginning.
 
 Opening one shows it in the conversation's own place. A subagent is an agent
@@ -445,18 +445,18 @@ subagent on screen. A sheet beside the flow, redrawing a subagent as one line
 per event, would be a second and dimmer rendering of the same events, a second
 thing to keep correct, and never as good as the first. The stream, the composer
 dock and the subagent view swap places; the topbar grows a back button, which is
-the only way out, because the conversation is one step behind a subagent rather
-than somewhere else to navigate to.
+the only way out, because the conversation is one step behind a subagent and
+not somewhere else to navigate to.
 
 Above the flow sits what the card's one line could not hold: the state, how
 long it has been going, the task as the parent phrased it, what the subagent
 has spent, how its tool calls went, and a copy button for the result, which for
 a background job is nowhere else in the window. The role and mode are on both:
-the card is read in the flow, and this is read after leaving it.
-The role and mode are there because those two words decide what the subagent
-could see: a `clone` carries the parent's prompt, tools and history, a
-`distinct` one starts from its task and nothing else.
-Reading what a subagent said without knowing which it was is reading half of it.
+the card is read in the flow, and this is read after leaving it. Those two
+words decide what the subagent could see: a `clone` carries the parent's
+prompt, tools and history, a `distinct` one starts from its task and nothing
+else. Reading what a subagent said without knowing which it was is reading half
+of it.
 
 Only running subagents are held in memory. `jobs.ts` keeps the facts and the
 buffer of each one that is in flight, and drops both when it finishes, because
@@ -464,8 +464,8 @@ by then the child's whole conversation is on disk and opening it afterwards
 reads the transcript over `subagent:open`. One that finishes while it is on
 screen is kept until the reader leaves it, so it does not blink out from under
 them. The result is that there is one path for a subagent that ended a second
-ago and one that ended last week, and both give the whole conversation rather
-than a summary.
+ago and one that ended last week, and both give the whole conversation and not
+a summary.
 
 ## Diffs
 
@@ -483,7 +483,7 @@ readable, so the pane scrolls sideways instead. The path is the title, the
 change is counted beside it, and a copy button hands over the diff as text.
 
 A diff sits over whichever flow opened it, so an edit made by a subagent opens
-from the subagent's own view and back goes there rather than all the way home.
+from the subagent's own view and back goes there, not all the way home.
 The text comes out of the stored tool result, which means a session reopened
 next week opens its diffs the same way it opens its subagents.
 
@@ -492,7 +492,7 @@ next week opens its diffs the same way it opens its subagents.
 The third thing drawn where the conversation is, after a subagent and a diff,
 and the only one of them that is not a session's: what every session has spent,
 opened from the Spend item in the sidebar foot or from the topbar usage line,
-and left by the same back button. It covers whatever was open rather than
+and left by the same back button. It covers whatever was open instead of
 closing it, so back returns to the diff or the subagent that was there.
 
 The renderer does no arithmetic on it. The main process sends a finished report
@@ -517,8 +517,8 @@ blank line, and a model that writes "Let me read both." and two newlines before
 calling a tool was putting more empty space between two cards than the sentence
 itself took up. Text that was only whitespace leaves no block at all, where it
 used to leave a labelled empty one. What survives sits close to the call it
-introduces, since commentary belongs with its tool card rather than spaced off
-as a block of its own.
+introduces, since commentary belongs with its tool card and not spaced off as a
+block of its own.
 
 ## Right-click
 
@@ -534,7 +534,7 @@ Rename asks in the app's own one-line sheet (`confirm.ts`), which resolves to
 `null` when the user backs out, which is distinguishable from an empty answer,
 and the main process refuses an empty answer anyway. A copy that works says
 nothing: the clipboard is the confirmation. A copy that is refused says so,
-because the alternative is a menu item that silently does nothing.
+because the alternative is a menu item that does nothing and says nothing.
 
 ## Which MCP servers answered
 
@@ -560,11 +560,11 @@ process pushes an `mcp.status` event and the chip becomes the real answer.
 A key in a message is taken out of it before the window draws it: the composer
 sends the text through `captureSecrets`, and what appears in the flow, in the
 transcript and in the prompt is a `{{secret:name}}` reference. A note in the
-flow says which references were made, once, so the user knows the key was caught
-rather than eaten. **Settings › Secrets** lists what the vault holds, names and
-vendors and never values, which do not cross the bridge even here, and offers to
-forget any of them. `secrets.md` has the rest of it, including why the model
-never sees the value.
+flow says which references were made, once, so the user knows the key was
+caught and not eaten. **Settings › Secrets** lists what the vault holds, names
+and vendors and never values, which do not cross the bridge even here, and
+offers to forget any of them. `secrets.md` has the rest of it, including why
+the model never sees the value.
 
 ## Tokens
 
@@ -578,7 +578,7 @@ never sees the value.
 3. components: read alias tokens and nothing else.
 
 There is one set of alias values, because the app is dark and only dark (plan
-section 3). The layer still earns its keep without a second theme to justify it:
+section 3). The layer still earns its keep with one theme:
 a rule that reads `--nh-label-tertiary` says what the colour is for, which a hex
 code never does, and the ramp underneath keeps the greys on one hue. Alongside
 the colour sits the rest of the vocabulary: one easing curve and three

@@ -10,7 +10,7 @@ import type { ToolContext } from '../core/session.js'
 /**
  * What a read hands back. Two things the model depends on: every line carries
  * the number an edit will be described against, and asking twice for the same
- * unchanged lines returns a pointer to them rather than a second copy.
+ * unchanged lines returns a pointer to them instead of a second copy.
  */
 
 async function fixture(content: string): Promise<{ root: string; path: string; ctx: ToolContext }> {

@@ -56,7 +56,7 @@ async function writeStored(stored: StoredConfig): Promise<void> {
 
 /**
  * One encrypted blob holding every key, indexed by provider id. A file written
- * by the single-provider version decrypts to a bare key string instead of a
+ * by the single-provider version decrypts to a bare key string in place of a
  * map, so that shape is read back under the id its record was migrated to.
  */
 export async function readSecrets(): Promise<Record<string, string>> {
@@ -167,8 +167,8 @@ export async function saveProvider(request: ProviderSaveRequest): Promise<boolea
     const model = models[0]
     if (model !== undefined) stored.active = { providerId: id, model, effort: 'medium' }
   } else if (active.providerId === id && models.length > 0 && !models.includes(active.model)) {
-    // The active model was just un-ticked. Fall back rather than leave a
-    // selection the allowlist no longer permits.
+    // The active model was just un-ticked. Fall back, and leave no selection
+    // the allowlist has stopped permitting.
     const model = models[0]
     if (model !== undefined) stored.active = { ...active, model }
   }
@@ -281,7 +281,7 @@ export async function setActive(request: ActiveSetRequest): Promise<void> {
     throw new Error(`${model} is not one of the models selected for ${provider.name}`)
   }
   // The composer only offers levels the model takes, so this catches a stale
-  // window rather than a normal pick. The window is not the only caller, and a
+  // window and not a normal pick. The window is not the only caller, and a
   // rejected level is a 400 from the provider mid-turn.
   const efforts = resolveFacts(provider, model).efforts
   if (efforts !== undefined && !efforts.includes(request.effort)) {
@@ -326,7 +326,7 @@ export async function configStatus(): Promise<ConfigStatus> {
 /**
  * Ask an endpoint what it can run, before anything is saved. The same call is
  * the connection test: an answer proves the endpoint is reachable and the key
- * was accepted. Failures come back as a value rather than a throw: a typo in a
+ * was accepted. Failures come back as a value and not as a throw: a typo in a
  * URL is an expected outcome of a settings screen, not an exception.
  */
 export async function probeProvider(request: ConfigProbeRequest): Promise<ConfigProbeResult> {
@@ -366,7 +366,7 @@ function describeFailure(baseURL: string, err: unknown): string {
 
 /**
  * Set which models auto mode may ask, in the order it should try them. A
- * candidate naming a provider that is not configured is refused rather than
+ * candidate naming a provider that is not configured is refused and never
  * stored.
  */
 export async function saveApproval(approval: ApprovalConfig): Promise<void> {
@@ -384,7 +384,7 @@ export async function saveApproval(approval: ApprovalConfig): Promise<void> {
 
 /**
  * The mode a new session starts in, and where a change to it is remembered.
- * Stored rather than held in memory, so it survives a restart.
+ * Stored on disk and not held in memory, so it survives a restart.
  */
 export async function setDefaultMode(mode: PermissionMode): Promise<void> {
   const stored = await readStored()

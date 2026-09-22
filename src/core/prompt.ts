@@ -29,9 +29,8 @@ function platformNote(platform: NodeJS.Platform): string {
 }
 
 /**
- * The system prompt for one session. Short on purpose, because a long prompt is
- * paid for on every request of every turn, and never vague about the two things
- * that make an agent wander: where it is, and what it may touch.
+ * The system prompt for one session. Short on purpose: it is paid for on every
+ * request of every turn.
  */
 export function buildSystemPrompt(env: PromptEnvironment): string {
   const lines = [
@@ -58,7 +57,7 @@ export function buildSystemPrompt(env: PromptEnvironment): string {
     '- When the user cuts in with a question, answer it in words before running anything else. They can see your tool calls, so another command in place of the answer reads as ignoring them.',
     '- If the request leaves something open that would change what you do, ask. Do not invent work to fill the gap.',
     '- Search with `grep` and `glob`, not with a shell. They start no process, and several of them in one message run at the same time, which a shell command cannot.',
-    '- Read a file once, in a window wide enough to work from. What you have already read stays in this conversation: asking for it again returns a pointer to it rather than the lines, and overlapping slices of one file buy nothing.',
+    '- Read a file once, in a window wide enough to work from. What you have already read stays in this conversation: asking for it again returns a pointer to it instead of the lines, and overlapping slices of one file buy nothing.',
     '- Use `edit` for a change to an existing file and `write` to create one or replace all of it. Each says what changed, so do not read the file back to check.',
     '- Ask for everything you already know you need in one message: the read-only calls run together, and one round trip pays for all of them. Check a command\'s output before acting on it.',
     '- Remove exactly what was named and nothing around it. Deleting the entry you were asked about does not license deleting the file it lived in, or the folder that held it. Then say what you removed, by path.',

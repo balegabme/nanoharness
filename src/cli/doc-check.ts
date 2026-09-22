@@ -7,7 +7,7 @@ const DOC_DIR = 'docs/harness'
 const DOC_TAG = /^\/\/ doc:\s*(\S+?\.md)(?:#\S+)?\s*$/
 const HEADER_LINES = 5
 
-// The map itself and the ledger describe the convention rather than code, so
+// The map itself and the ledger describe the convention and not code, so
 // they are the only docs allowed to have no `Files:` section.
 const DOCLESS = new Set(['doc-map.md', 'improvements.md'])
 
@@ -74,7 +74,7 @@ function docTag(text: string): string | null {
   return null
 }
 
-// A `Files:` section is the run of `- path — summary` bullets that follows the
+// A `Files:` section is the run of `- path: summary` bullets that follows the
 // heading, ending at the first blank line.
 function filesSection(text: string): Set<string> | null {
   const lines = text.split('\n')
@@ -84,7 +84,7 @@ function filesSection(text: string): Set<string> | null {
   for (const line of lines.slice(start + 1)) {
     const trimmed = line.trim()
     if (trimmed === '') break
-    const match = /^-\s+(\S+)/.exec(trimmed)
+    const match = /^-\s+([^\s:]+)/.exec(trimmed)
     if (match?.[1]) files.add(match[1])
   }
   return files

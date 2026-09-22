@@ -9,11 +9,10 @@ import { workspaceGate } from '../core/scope.js'
 import type { ToolResult } from '../core/types.js'
 
 /**
- * Targeted edits, run the way a session runs them. The tool saves the round
- * trip and the half-written file a patch through a `bash` heredoc costs. These
- * tests pin four behaviors: the match is literal, it must be unique unless
- * asked otherwise, the file goes back out with the line endings it came in
- * with, and the target has to have been read.
+ * Targeted edits, run the way a session runs them. These tests pin four
+ * behaviors: the match is literal, it must be unique unless asked otherwise,
+ * the file goes back out with the line endings it came in with, and the target
+ * has to have been read.
  */
 
 /**
@@ -141,9 +140,7 @@ describe('edit', () => {
     expect(content).toContain('--- a/note.txt')
     expect(content).toContain('-three')
     expect(content).toContain('+THREE')
-    // Three lines of context either side, and none of the file beyond that: the
-    // diff is read by the model as well as by the window, and the rest of the
-    // file is what it is already paying to have read once.
+    // Three lines of context either side, and none of the file beyond that.
     expect(content).toContain(' six')
     expect(content).not.toContain(' seven')
     await rm(root, { recursive: true, force: true })

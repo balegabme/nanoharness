@@ -16,7 +16,7 @@ const { pathToFileURL } = require('node:url')
 const brand = join(__dirname, '..', 'docs', 'assets', 'brand')
 const SIZES = [16, 24, 32, 48, 64, 128, 256, 512]
 
-// A file:// page rather than a data: URL: an <img> pointed at a data: URL from
+// A file:// page, and not a data: URL: an <img> pointed at a data: URL from
 // a data: URL document taints the canvas, and a tainted canvas cannot be read
 // back as a PNG.
 const draw = `

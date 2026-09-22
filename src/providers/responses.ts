@@ -11,11 +11,11 @@ import { wireHeaders } from './headers.js'
  *
  * A third format beside `/chat/completions` and `/messages`, and far enough
  * from the first that it could not be a branch inside `openai.ts`: the request
- * carries `input` rather than `messages`, a tool definition is flat rather than
- * nested under `function`, and the stream is a sequence of named events rather
- * than deltas hanging off a choice. The reader below keys off the `type` field
- * inside each `data:` payload, so the `event:` lines beside them are read past
- * rather than parsed a second time.
+ * carries `input` where the other carries `messages`, a tool definition is
+ * flat and not nested under `function`, and the stream is a sequence of named
+ * events in place of deltas hanging off a choice. The reader below keys off
+ * the `type` field inside each `data:` payload, so the `event:` lines beside
+ * them are read past and never parsed a second time.
  *
  * Token counting is the same arithmetic the other wire does, and
  * `providers.md` has the whole of it.
@@ -70,7 +70,7 @@ interface WireEvent {
   item?: WireDoneItem
   /** The whole response, on the events that report the end of one. */
   response?: { usage?: unknown; error?: unknown }
-  /** Set on a bare `error` event, which reports the request rather than a turn. */
+  /** Set on a bare `error` event, which reports the request and not a turn. */
   message?: string
   code?: string
 }
@@ -94,8 +94,8 @@ export function createResponsesProvider(opts: ResponsesOptions): ChatProvider {
         stream: true,
         store: false,
       }
-      // As on the other wire, "none" leaves the field out rather than asserting
-      // a level the model may not have. Left out is what this wire reads as the
+      // As on the other wire, "none" leaves the field out and asserts no level
+      // the model may not have. Left out is what this wire reads as the
       // model's own default.
       if (input.effort !== undefined && input.effort !== 'none') body.reasoning = { effort: input.effort }
       const res = await fetch(endpointURL(opts.baseURL, 'v1', 'responses'), {
@@ -123,7 +123,7 @@ export function createResponsesProvider(opts: ResponsesOptions): ChatProvider {
       const calls: ToolCall[] = []
       /**
        * The round's reasoning, kept so the transcript has it. What arrives here
-       * is the summary the model wrote of its own thinking rather than the
+       * is the summary the model wrote of its own thinking and not the
        * thinking itself, and it carries no signature, so as on the other wire
        * the block is for the window and the stored transcript alone.
        */
@@ -153,7 +153,7 @@ export function createResponsesProvider(opts: ResponsesOptions): ChatProvider {
                 break
               case 'response.output_item.done': {
                 // The finished item carries its arguments in full, so the
-                // fragments streamed ahead of it are read past rather than
+                // fragments streamed ahead of it are read past and never
                 // reassembled.
                 const call = toolCallOf(event.item)
                 if (call !== null) calls.push(call)
@@ -195,7 +195,7 @@ export function createResponsesProvider(opts: ResponsesOptions): ChatProvider {
 /**
  * The transcript as this wire wants it.
  *
- * A tool round is two loose items rather than a message with the calls hanging
+ * A tool round is two loose items and not a message with the calls hanging
  * off it, so one assistant turn can expand into several entries: what it said,
  * then one `function_call` for each tool it asked for. An assistant turn that
  * said nothing and only called tools contributes no message item, since an

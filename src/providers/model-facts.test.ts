@@ -254,7 +254,7 @@ describe('an effort the model does not take', () => {
     }
   })
 
-  it('steps down the scale rather than falling to the bottom', () => {
+  it('steps down the scale and never falls to the bottom', () => {
     expect(clampEffort(['none', 'low', 'medium', 'high'], 'max')).toBe('high')
     expect(clampEffort(['low', 'medium', 'high'], 'minimal')).toBe('low')
     // Nearest wins over cheapest: none and high are three and one steps away.
@@ -269,7 +269,7 @@ describe('an effort the model does not take', () => {
 })
 
 describe('the price on a model row', () => {
-  it('says free rather than nothing when a model is free', () => {
+  it('says free, and not nothing, when a model is free', () => {
     expect(priceText({ input: 0, output: 0 })).toBe('free')
   })
 
@@ -354,8 +354,8 @@ describe('a model that charges more for a long prompt', () => {
       facts: { m: TIERED },
       overrides: { m: { input: 1, output: 1 } },
     }
-    // The form offers no way to edit a tier, so keeping one would quietly
-    // double a number the user had just corrected.
+    // The form offers no way to edit a tier, so keeping one would double a
+    // number the user had just corrected.
     expect(resolveFacts(record, 'm').tiers).toBeUndefined()
     expect(windowResolve(record, 'm').tiers).toBeUndefined()
     // A correction that says nothing about price leaves them alone.
@@ -381,13 +381,13 @@ describe('what a turn cost', () => {
     expect(costOf(usage({ cacheWrite: 1_000_000 }), flat)).toBe(3)
   })
 
-  it('says nothing rather than zero when the model has no price', () => {
+  it('says nothing, and never zero, when the model has no price', () => {
     expect(costOf(usage({ input: 1_000, output: 1_000 }), {})).toBeNull()
     expect(costOf(usage({ input: 1_000 }), { input: 3 })).toBeNull()
     expect(costOf(usage({}), PRICED)).toBe(0)
   })
 
-  it('keeps a small figure legible instead of rounding it to nothing', () => {
+  it('keeps a small figure legible, never rounded to nothing', () => {
     expect(moneyText(0)).toBe('$0')
     expect(moneyText(0.000_02)).toBe('<$0.0001')
     expect(moneyText(0.0123)).toBe('$0.012')

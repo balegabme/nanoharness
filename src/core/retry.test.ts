@@ -11,7 +11,7 @@ import type { AppEvent, ChatChunk, SessionNote } from './types.js'
 /**
  * A round that fails is asked for again. These tests pin the parts of that which
  * leave no trace in the transcript: an answer that broke half way through is
- * thrown away rather than stitched onto the one that replaces it, and a refusal
+ * thrown away and never stitched onto the one that replaces it, and a refusal
  * the provider will repeat is not asked five times.
  */
 
@@ -193,8 +193,8 @@ describe('the tokens a failed attempt burned', () => {
 
 /**
  * How long the turn waits, when the provider named a time. The wait itself is
- * what is under test, so these drive the clock in steps instead of jumping to
- * the end the way `run` does.
+ * what is under test, so these drive the clock in steps where `run` jumps to
+ * the end.
  */
 async function waitsOut(asked: number, before: number, after: number): Promise<number> {
   const provider = new FlakyProvider(round =>
@@ -217,7 +217,7 @@ async function waitsOut(asked: number, before: number, after: number): Promise<n
 }
 
 describe('a provider that says when to come back', () => {
-  it('is waited out on its own terms rather than on the schedule', async () => {
+  it('is waited out on its own terms and not on the schedule', async () => {
     // The schedule's first gap is 500ms, and a 429 that asks for 20 seconds
     // means a request sent at second two is refused again.
     expect(await waitsOut(20_000, 2_000, 21_000)).toBe(1)

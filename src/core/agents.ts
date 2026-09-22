@@ -9,13 +9,11 @@ import type { PromptEnvironment } from './prompt.js'
  * Three roles, one session at a time (plan §5). A role is not a personality:
  * it is the set of tools the agent gets and the paragraph of context it is
  * worth paying for on every request. Effort is not part of it: how hard to
- * think is the user's setting, and a role that overrode it would make the
- * chip on the composer a lie for every agent but the builder.
+ * think is the user's setting, and the chip on the composer shows it.
  *
- * The registry is data rather than three subclasses, because every consumer
- * needs to enumerate the roles: the session builder, the spawn tool's schema
- * and the role chip in the composer. A list is the only shape all three can
- * read.
+ * The registry is data and not three subclasses, because every consumer has
+ * to enumerate the roles: the session builder, the spawn tool's schema and the
+ * role chip in the composer. A list is the only shape all three can read.
  */
 
 export type AgentRole = 'builder' | 'planner' | 'harness-editor'

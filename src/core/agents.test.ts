@@ -145,7 +145,7 @@ function harness(
           parent.session?.fault(text)
         },
         // Also what the app does: a background job's answer goes back into the
-        // conversation that started it, not only into the window.
+        // conversation that started it, as well as into the window.
         finished: (slot, outcome) => {
           parent.session?.deliver(
             `Background ${outcome.request.role} job ${slot.id} ${outcome.state}. It was asked: ${outcome.request.task}
@@ -313,7 +313,7 @@ describe('spawn', () => {
     }
   })
 
-  it('runs a clone asked for another role as that role instead, rather than relabelling itself', async () => {
+  it('runs a clone asked for another role as a distinct agent of that role', async () => {
     const cwd = await workspace()
     try {
       const { session, provider } = harness(
@@ -388,7 +388,7 @@ describe('background jobs', () => {
 
       await session.run('update the docs while we talk')
 
-      // The turn came back with a job id rather than the work.
+      // The turn came back with a job id and not the work.
       const started = jobs.list()[0]
       expect(started?.role).toBe('builder')
       const answer = session.transcript.find(message => message.role === 'tool')
@@ -409,7 +409,7 @@ describe('background jobs', () => {
   })
 
   /**
-   * A background job's answer has to reach the model, not only the window: a
+   * A background job's answer has to reach the model as well as the window: a
    * note carries the first line and nothing else, and the full answer sits
    * under the app's data directory, outside the workspace, where the agent may
    * not read it. "Start three of these and tell me what they found" only works

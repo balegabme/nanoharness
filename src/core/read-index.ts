@@ -86,24 +86,23 @@ export class ReadIndex {
   }
 
   /**
-   * Note that this session wrote the file. Its own change is not a reason to
-   * make it read the file again, so the record moves to the new version with
-   * no spans: nothing of the new content is in the conversation.
+   * Note that this session wrote the file. The record moves to the new version
+   * with no spans, since none of the new content is in the conversation.
    */
   wrote(abs: string, version: FileVersion | null): void {
     if (version === null) this.seen.delete(abs)
     else this.seen.set(abs, { version, spans: [] })
   }
 
-  /** Forget a file, for the case where it went away. */
+  /** Forget a file that went away. */
   forget(abs: string): void {
     this.seen.delete(abs)
   }
 
   /**
    * May a tool rewrite this file? Creating one is always allowed. Replacing
-   * content that nobody looked at, or that has changed since they did, is not:
-   * both rewrite a file against a view of it that is out of date.
+   * content nobody looked at, or content that has changed since, is refused:
+   * both would write against a view of the file that is out of date.
    */
   mayWrite(abs: string, version: FileVersion | null, label: string): WritePlan {
     if (version === null) return { ok: true }

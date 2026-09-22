@@ -64,7 +64,7 @@ export function readFacts(entry: Record<string, unknown>): ModelFacts {
  *
  * A `false` is an answer and is kept as one. An endpoint that names none of
  * these has said nothing, so undefined reaches the settings screen as a
- * question rather than as a no.
+ * question and not as a no.
  */
 function readVision(entry: Record<string, unknown>): boolean | undefined {
   const architecture = object(entry.architecture)
@@ -88,10 +88,10 @@ function readVision(entry: Record<string, unknown>): boolean | undefined {
 const PER_MILLION = 1_000_000
 
 /**
- * Where an effort list can be. A `capabilities` block is read first, because it
- * is the only spelling that states the levels outright rather than leaving them
- * to be inferred; after that come `metadata.reasoning` and the top-level names
- * other servers use for the same list.
+ * Where an effort list can be. A `capabilities` block is read first, because
+ * it is the only spelling that states the levels outright; every other one
+ * leaves them to be inferred. After that come `metadata.reasoning` and the
+ * top-level names other servers use for the same list.
  *
  * A field that only says whether a model takes reasoning at all is skipped, as
  * `supported_parameters` is: turning "takes reasoning" into a list of seven
@@ -142,9 +142,9 @@ function firstPrice(entry: Record<string, unknown>, nested: readonly string[], f
  *
  * `none` is added to whatever it names, because that level is the thinking
  * block left out of the request and no model needs permission for that.
- * `minimal` is not added: it is a small fixed budget that an endpoint will take
- * without listing, so it is left to the user to put back by hand rather than
- * invented here.
+ * `minimal` is not added: it is a small fixed budget that an endpoint will
+ * take without listing, so the user puts it back by hand and nothing here
+ * invents it.
  *
  * A model that says it does not think takes `none` and nothing else. A model
  * with no `effort` block and no `thinking: false` has said nothing, so it comes
@@ -161,7 +161,7 @@ function readCapabilities(entry: Record<string, unknown>): Effort[] | undefined 
     .map(([name]) => name)
     .filter(isEffort)
   // These arrive in whatever order the endpoint wrote them, often alphabetical,
-  // so the scale is put back in order here rather than handed to the picker as
+  // so the scale is put back in order here, and the picker never gets
   // `high, low, max, medium`.
   return named.length === 0 ? undefined : sortEfforts(['none', ...named])
 }

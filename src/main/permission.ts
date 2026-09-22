@@ -39,7 +39,7 @@ export class PermissionBroker {
 
   /**
    * Nobody is left to answer, because the window went away. Every waiting tool
-   * is denied rather than left on a promise that cannot settle.
+   * is denied, and none is left on a promise that cannot settle.
    */
   cancelAll(): void {
     for (const [id, pending] of this.pending) {
@@ -56,7 +56,7 @@ export interface PromptingGateOptions {
   /**
    * Folders every session may read without being asked. There is exactly one:
    * NanoHarness's own source, so an agent asked about the harness can look
-   * instead of asking permission to answer a question about itself. Reading
+   * without asking permission to answer a question about itself. Reading
    * only: a write outside the workspace still stops the turn.
    */
   readable?: readonly string[]
@@ -81,7 +81,7 @@ export interface PromptingGateOptions {
   judge?: Judge
   /**
    * The user's own words this session, newest last, for the judge to read the
-   * action against. A function rather than a value because the gate outlives
+   * action against. A function and not a value because the gate outlives
    * several turns and the goals grow with them.
    */
   goals?: () => readonly string[]
@@ -117,7 +117,7 @@ export interface GateState {
   readonly deniedCommands: Set<string>
   shellAllowed: boolean
   /**
-   * How this session answers. It lives with the grants rather than with the
+   * How this session answers. It lives with the grants and not with the
    * provider settings, so switching it takes effect on the next tool call.
    */
   mode: PermissionMode
@@ -147,31 +147,31 @@ export function promptingGate({ root, sessionId, broker, readable = [], redact, 
   }
 
   /**
-   * Why a tool stopped. It says access was refused rather than that the user
+   * Why a tool stopped. It says access was refused and not that the user
    * refused, because a closed window refuses too, and it says the path is not
    * the thing to work around.
    */
   function refusal(path: string, intent: AccessIntent, again = false): string {
     const head = outsideMessage(root, path, intent)
     return again
-      ? `${head} — access there was refused earlier in this session, so nothing was run and nobody was asked again`
-      : `${head} — access was refused. Do not go looking for another way to the same place: each attempt stops the turn and puts a prompt in front of the user`
+      ? `${head}; access there was refused earlier in this session, so nothing was run and nobody was asked again`
+      : `${head}; access was refused. Do not go looking for another way to the same place: each attempt stops the turn and puts a prompt in front of the user`
   }
 
   function shellRefusal(command: string, again = false): string {
     const head = `the user did not approve this shell command, so it was not run`
     return again
-      ? `${head} — it was already refused earlier in this session, so nobody was asked again. Do not retry it`
+      ? `${head}; it was already refused earlier in this session, so nobody was asked again. Do not retry it`
       : `${head}: ${command}. Do not work around a refusal, and do not retry the same command`
   }
 
   /**
    * What the agent is told when auto mode refused something. It names the
-   * approval step rather than the user, who has not seen this, and it offers
+   * approval step and not the user, who has not seen this, and it offers
    * the one route onwards: stop and say so in words.
    */
   function autoRefusal(head: string, reason: string): string {
-    return `${head} — the approval step refused it: ${reason}. Nobody was asked. Do not retry it and do not look for another route to the same place: if you think it is genuinely needed, stop and say so in words, and the user will decide.`
+    return `${head}; the approval step refused it: ${reason}. Nobody was asked. Do not retry it and do not look for another route to the same place: if you think it is genuinely needed, stop and say so in words, and the user will decide.`
   }
 
   /**

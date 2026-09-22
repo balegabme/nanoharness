@@ -12,7 +12,7 @@ const SCHEME = 'app'
 const HOST = 'nanoharness'
 const ENTRY = `${SCHEME}://${HOST}/index.html`
 
-// The renderer is served over a registered standard scheme rather than file://,
+// The renderer is served over a registered standard scheme and not file://,
 // which gives the page a real origin. Without one, `default-src 'self'` means
 // nothing and ES modules do not load.
 protocol.registerSchemesAsPrivileged([

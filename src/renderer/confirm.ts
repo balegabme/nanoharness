@@ -34,7 +34,7 @@ export async function ask(request: ConfirmRequest): Promise<boolean> {
 
   dialog.showModal()
   // Esc and the backdrop both close a <dialog> without pressing a button, and
-  // that has to read as "no" rather than as an unanswered promise.
+  // that has to read as "no" and not as an unanswered promise.
   return new Promise<boolean>(resolve => {
     const finish = (answer: boolean): void => {
       yes.removeEventListener('click', onYes)

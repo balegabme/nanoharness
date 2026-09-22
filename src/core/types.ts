@@ -28,8 +28,8 @@ export interface ToolStats {
   /**
    * Calls the permission system stopped, whoever stopped them: the approval
    * model in auto mode, or the person at the dialog. Counted apart from
-   * `failed`, which is the work going wrong rather than the harness doing its
-   * job.
+   * `failed`: that one is the work going wrong, this one is the harness doing
+   * its job.
    */
   prevented: number
 }
@@ -68,7 +68,7 @@ export interface ToolResult {
 }
 
 /**
- * One MCP server as the window shows it. It lives here rather than in the MCP
+ * One MCP server as the window shows it. It lives here and not in the MCP
  * layer because an event carries it, and `AppEvent` is the one shape both the
  * main process and the renderer agree on.
  */
@@ -79,8 +79,8 @@ export interface McpServerStatus {
   /** Why it is not connected, in the words the user needs to fix it. */
   error?: string
   /**
-   * Read from the config rather than from a live connection: the session has
-   * not been built yet, so nothing has been dialled.
+   * Read from the config, since the session has not been built yet and
+   * nothing has been dialled.
    */
   pending?: boolean
 }
@@ -102,8 +102,7 @@ export function cacheHitRate(usage: TurnUsage): number | null {
 
 /**
  * A block of the model's own reasoning. Anthropic signs each one and requires
- * it back unmodified and in order, so the signature travels with the text
- * instead of being thrown away once it has been shown.
+ * it back unmodified and in order, so the signature travels with the text.
  */
 export type ThinkingBlock =
   | { kind: 'thinking'; text: string; signature?: string }
@@ -128,18 +127,17 @@ export type AppEvent =
   // rolls back to when the round has to be asked for again.
   | { type: 'round.started'; sessionId: string; turn: number; at: number }
   // The request failed and is being made again. Whatever this round had already
-  // streamed is gone: the window drops it, because the answer that arrives next
-  // starts from the top rather than carrying on.
+  // streamed is gone: the window drops it, since the answer that arrives next
+  // starts from the top.
   | { type: 'round.retry'; sessionId: string; turn: number; attempt: number; of: number; text: string; at: number }
   | { type: 'session.finished'; sessionId: string; turn: number; at: number }
   | { type: 'session.stopped'; sessionId: string; turn: number; at: number }
-  // Something about the run rather than about the conversation: a loop the
+  // Something about the run itself, not the conversation: a loop the
   // harness broke, a turn that ended without an answer, a background job that
   // reported back. A turn never ends without one of these or an answer.
   | { type: 'session.note'; sessionId: string; turn: number; text: string; at: number }
   // What the turn that just ended came to: its tool calls, the files it left
-  // different, and how long it ran. The window draws it under the answer,
-  // where a note is drawn in the flow.
+  // different, and how long it ran. The window draws it under the answer.
   | { type: 'session.summary'; sessionId: string; turn: number; text: string; prevented?: PreventedCall[]; at: number }
   // `problem` is set when auto mode was on and the approval model could not
   // answer. The prompt is the fallback and says so on its face.
@@ -196,7 +194,7 @@ export type ChatChunk =
   | { kind: 'tool'; tool: ToolCall }
   // `usageProblem` is set when the provider sent a usage report that could not
   // be read: the answer stands and this turn's cost is unknown.
-  // `usage` is a running total rather than a delta, so a request that breaks
+  // `usage` is a running total and not a delta, so a request that breaks
   // halfway can still say what it charged for.
   | { kind: 'usage'; usage: TurnUsage }
   | { kind: 'done'; usage: TurnUsage; usageProblem?: string }

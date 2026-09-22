@@ -101,8 +101,8 @@ const pkg = require('../../package.json') as { version: string }
 
 /**
  * Every event forwarded to the window, which is every event there is. A keyed
- * object rather than a list, so leaving one out stops the build instead of
- * silently forwarding nothing.
+ * object and not a list, so leaving one out stops the build. Nothing goes
+ * unforwarded in silence.
  */
 const FORWARDED: Record<AppEvent['type'], true> = {
   'session.started': true,
@@ -129,8 +129,8 @@ const EVENT_TYPES = Object.keys(FORWARDED) as AppEvent['type'][]
 
 /**
  * Where this build's own source is, when it is on disk to be read; a packaged
- * app without it says nothing rather than pointing at a folder that is not
- * there. The harness editor is the one role told where it is.
+ * app without it says nothing, and points at no folder that is not there.
+ * The harness editor is the one role told where it is.
  */
 function harnessFacts(): HarnessFacts | undefined {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -183,8 +183,8 @@ function subagentBus(sender: WebContents, parent: () => Session | undefined): (s
     // What the child has spent, as of the last usage event it emitted. A
     // subagent's usage event carries its own running total, so what the parent
     // is owed is the difference since the one before. Adding it round by round
-    // keeps the counter showing what is being spent right now, instead of
-    // jumping once when the subagent finishes.
+    // keeps the counter showing what is being spent right now, with no jump
+    // when the subagent finishes.
     let counted = emptyUsage()
     bus.on('usage', event => {
       if (event.sessionId !== slot.id) return
@@ -409,7 +409,7 @@ async function judgeFor(sessionId: string): Promise<Judge> {
   const judge = new Judge({
     endpoints: approvalEndpoints,
     rules: mergeRules(stored.approval?.rules),
-    // Derived from the session's rather than equal to it: the judge shares the
+    // Derived from the session's and never equal to it: the judge shares the
     // session's lifetime and nothing else, least of all its message history.
     conversationId: `${sessionId}-approval`,
     ...(stored.approval?.effort === undefined ? {} : { effort: stored.approval.effort }),
@@ -459,7 +459,7 @@ function recordApproval(sessionId: string, record: ApprovalRecord): void {
 
 /**
  * Why auto mode cannot be turned on, or nothing when it can. Read from the
- * stored settings each time rather than cached: a provider deleted in the
+ * stored settings each time and never cached: a provider deleted in the
  * settings screen should take the mode with it.
  */
 async function approvalGap(): Promise<string | undefined> {
@@ -711,8 +711,8 @@ let quitting = false
 /**
  * What happens to the subagents that are still working when the app goes away.
  * They die with the process, and the conversation has to carry the loss: the
- * next turn needs to know the work was never done, so it can ask for it again
- * instead of waiting for an answer that is gone.
+ * next turn needs to know the work was never done, so it asks for it again
+ * and waits on no answer that is gone.
  */
 async function abandonJobs(): Promise<void> {
   const why = 'the app closed while it was running'
@@ -726,8 +726,8 @@ async function abandonJobs(): Promise<void> {
     }
   }
   for (const [id, session] of touched) {
-    // A turn may still be in flight, and `deliver` queues rather than folds in
-    // that case. Nothing is coming that would drain the queue.
+    // A turn may still be in flight, and in that case `deliver` queues instead
+    // of folding in. Nothing is coming that would drain the queue.
     session.settle()
     await saveTranscript(id, session.transcript, session.notes).catch((err: unknown) => {
       process.stderr.write(`abandoned job: ${err instanceof Error ? err.message : String(err)}\n`)
@@ -751,7 +751,7 @@ app.whenReady().then(() => {
   serveRenderer()
   // Read the shell's PATH while the window is still being built. Nothing waits
   // on it, and doing it here means the agent's first command is as quick as its
-  // second rather than being the one that sources the profile.
+  // second, and is not the one that sources the profile.
   warmShell()
 
   ipcMain.handle(IPC_CHANNELS.ping, () => ({ ok: true, version: pkg.version }))
@@ -869,10 +869,10 @@ app.whenReady().then(() => {
   })
 
   /**
-   * The spend view, built here rather than in the window: the arithmetic is one
+   * The spend view, built here and not in the window: the arithmetic is one
    * copy in `usage-report.ts`, shared with `nh usage`, and the window is a
    * separate bundle that cannot import it. The names come from the index, so a
-   * row for a deleted session says so instead of showing a bare id.
+   * row for a deleted session says so and never shows a bare id.
    */
   ipcMain.handle(IPC_CHANNELS.usageReport, async (_event: IpcMainInvokeEvent, days: number | null): Promise<UsageReport> => {
     const log = await readUsage()
@@ -984,7 +984,7 @@ app.whenReady().then(() => {
     const built = promptSecrets.get(req.sessionId)
     if (built !== undefined && hasUnknownSecret(built, vault.names())) await retire(req.sessionId)
     const session = await sessionFor(event.sender, req.sessionId)
-    // Read before the turn rather than after it: a session deleted while it was
+    // Read before the turn and not after it: a session deleted while it was
     // running still spent what it spent, and by then the index no longer knows
     // which folder or which agent to file that line under.
     const identity = await sessionIdentity(req.sessionId)

@@ -40,7 +40,7 @@ export interface UsageRecord {
   /** The subagents' share of `costUsd`. */
   subagentCostUsd: number
   /**
-   * The harness's share, priced at the model that answered rather than the one
+   * The harness's share, priced at the model that answered and not at the one
    * the session is on. Recorded even when `costUsd` is null, because that call
    * was priced whether or not the conversation around it was.
    */
@@ -53,9 +53,9 @@ export interface UsageRecord {
  * Stamped on every line so a reader can tell which units the numbers are in:
  * the meaning of a field changes with the wire, and a line already on disk
  * cannot be repaired because it does not record which wire wrote it. A line
- * from any version but this one is therefore skipped rather than summed under
- * units it was not written in. The project is pre-1.0 and keeps no
- * compatibility path.
+ * from any version but this one is therefore skipped, never summed under units
+ * it was not written in. The project is pre-1.0 and keeps no compatibility
+ * path.
  */
 export const USAGE_SCHEMA = 3
 
@@ -74,8 +74,8 @@ export function usageLogPath(env?: NodeJS.ProcessEnv, platform?: string): string
   return join(userDataDir(env, platform), 'usage.jsonl')
 }
 
-// The version is stamped here rather than by the caller, so a new call site
-// cannot write an unversioned line.
+// The version is stamped here and not by the caller, so a new call site cannot
+// write an unversioned line.
 export async function appendUsage(record: Omit<UsageRecord, 'v'>, path = usageLogPath()): Promise<void> {
   await mkdir(dirname(path), { recursive: true })
   await appendFile(path, `${JSON.stringify({ v: USAGE_SCHEMA, ...record })}\n`, 'utf8')
@@ -136,7 +136,7 @@ function parseRecord(line: string): UsageRecord | null {
   const harness = parseUsage(value.harness)
   if (usage === null || subagent === null || harness === null) return null
 
-  // A cost of null is a reading — nobody priced the model — so it is told apart
+  // A cost of null is a reading (nobody priced the model), so it is told apart
   // from a field that is missing or is not a number at all.
   const costUsd = value.costUsd === null ? null : money(value.costUsd)
   const subagentCostUsd = money(value.subagentCostUsd)

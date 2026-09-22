@@ -51,7 +51,7 @@ interface Pending {
 
 /**
  * A tools-only MCP client: the handshake, the catalog, and calls. Resources,
- * prompts and sampling are out of scope for v1 (plan §7) — a coding harness
+ * prompts and sampling are out of scope for v1 (plan §7): a coding harness
  * that already reads files does not need a second way to read files.
  */
 export class McpClient {
@@ -84,7 +84,7 @@ export class McpClient {
       const entry = this.pending.get(message.id)
       // A response to a request we gave up on. A timed-out request is taken out
       // of `pending` before its cancellation goes out, so its late answer finds
-      // nothing here and is dropped — which is exactly what the spec asks the
+      // nothing here and is dropped, which is exactly what the spec asks the
       // sender of a cancellation to do.
       if (entry === undefined) return
       this.pending.delete(message.id)
@@ -125,8 +125,8 @@ export class McpClient {
         // Advisory, and the spec says so: the server may finish anyway. The
         // point is that this side stops waiting.
         //
-        // `initialize` is the exception the spec names outright — it may never
-        // be cancelled by the client — and a server that has not finished the
+        // `initialize` is the exception the spec names outright, and may never
+        // be cancelled by the client. A server that has not finished the
         // handshake has no session in which to read the notification anyway.
         if (method !== 'initialize') {
           void this.notify('notifications/cancelled', { requestId: id, reason: 'timeout' }).catch(() => undefined)
@@ -157,12 +157,12 @@ export class McpClient {
    * `initialize` is the first message on the wire and is never batched with
    * anything else. The client offers the newest version it knows; the server
    * answers with the version it will actually speak, and one this client cannot
-   * speak is a disconnect rather than a hopeful guess.
+   * speak is a disconnect and never a hopeful guess.
    */
   async connect(): Promise<void> {
     await this.transport.start()
-    // Past this point the transport owns something — a subprocess, a session on
-    // a remote server — and every exit from here has to give it back. A failed
+    // Past this point the transport owns something, a subprocess or a session
+    // on a remote server, and every exit from here gives it back. A failed
     // handshake that leaves the child running is a process nobody will ever
     // close, because the only reference to it was this rejected promise.
     try {
@@ -189,7 +189,7 @@ export class McpClient {
       const info = result.serverInfo
       if (isJsonObject(info) && typeof info.name === 'string') this.serverName = info.name
 
-      // From here on every request has to carry the version that was agreed —
+      // From here on every request has to carry the version that was agreed,
       // starting with the notification below, which is already a message after
       // initialization. The transport is what writes headers and has no way to
       // learn the version on its own.
@@ -203,7 +203,7 @@ export class McpClient {
 
   /**
    * The whole catalog, following `nextCursor` to the end. Cached until the
-   * server says it changed — a re-list on every turn would be a request per
+   * server says it changed: a re-list on every turn would be a request per
    * turn for a list that almost never moves.
    */
   async listTools(): Promise<McpTool[]> {

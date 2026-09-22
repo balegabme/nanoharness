@@ -109,15 +109,15 @@ describe('a model asking for the same thing over and over', () => {
 
     await s.run('look at that file')
 
-    // Two identical calls run; from the third the harness answers instead of
-    // the tool, so the model reads what it is doing rather than looping in
+    // Two identical calls run; from the third the harness answers in place of
+    // the tool, so the model reads what it is doing and stops looping in
     // silence.
     expect(counting.runs).toBe(2)
     const results = events.filter(event => event.type === 'tool_result')
     expect(results.at(2)).toMatchObject({ result: { ok: false } })
     expect(results.at(2)?.type === 'tool_result' ? results.at(2)?.result.content : '').toContain('identical arguments')
 
-    // And the turn stops rather than spinning: one note, on screen and in the
+    // And the turn stops spinning: one note, on screen and in the
     // session file, that says this is what happened.
     const stuck = said(s).at(-1)
     expect(stuck?.kind).toBe('note')
@@ -148,7 +148,7 @@ describe('a provider whose usage report cannot be read', () => {
     await rm(cwd, { recursive: true, force: true })
   })
 
-  it('leaves the cost off the turn line rather than printing a priced model as $0', async () => {
+  it('leaves the cost off the turn line and never prints a priced model as $0', async () => {
     const problem: ChatChunk = { kind: 'done', usage: emptyUsage(), usageProblem: 'usage arrived without prompt_tokens' }
     const provider = new RoundProvider(() => [{ kind: 'text', text: 'the answer' }, problem])
     const { session: s, cwd } = await session(provider, [], { input: 3, output: 15 })
@@ -192,7 +192,7 @@ describe('a model with a published output ceiling', () => {
 })
 
 describe('a turn that comes back with nothing', () => {
-  it('says so instead of ending on a blank window', async () => {
+  it('says so, and does not end on a blank window', async () => {
     const provider = new RoundProvider(() => [{ kind: 'done', usage: emptyUsage() }])
     const { session: s, cwd } = await session(provider, [BASH_TOOL])
 
@@ -342,10 +342,10 @@ describe('the line a turn ends on', () => {
     expect(summary?.prevented?.[0]).toMatchObject({ tool: 'write', target: '../escape.txt' })
     expect(summary?.prevented?.[0]?.reason).not.toBe('')
     // A mock provider answers in under a tick, which is the one duration that
-    // has to read as a time rather than as a stopped clock.
+    // has to read as a time and not as a stopped clock.
     expect(summary?.text.endsWith('· <1s')).toBe(true)
     // The summary sits after everything the turn wrote, so a re-opened session
-    // draws it under the answer rather than in the middle of the turn.
+    // draws it under the answer and not in the middle of the turn.
     expect(summary?.after).toBe(s.transcript.length)
 
     // The next turn counts itself, not the one before it.
@@ -381,7 +381,7 @@ describe('the notes a session keeps', () => {
 
 /**
  * How long the model spent generating, which is what the window divides output
- * tokens by. The session measures it rather than the renderer, because by the
+ * tokens by. The session measures it and not the renderer, because by the
  * time an event reaches the window the gap since the last one is mostly
  * whatever tool ran in between. `src/renderer/metrics.test.ts` has the arithmetic
  * on the other side of it.

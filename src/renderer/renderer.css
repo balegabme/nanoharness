@@ -88,7 +88,7 @@
   --nh-column: 780px;
   --nh-composer-max: calc(var(--nh-column) + 32px);
   --nh-composer-gutter: 24px;
-  /* 14 lines of the composer's own metrics, then it scrolls instead of growing. */
+  /* 14 lines of the composer's own metrics, then it scrolls and grows no further. */
   --nh-composer-cap: 336px;
 }
 
@@ -180,7 +180,7 @@ body {
   background: var(--nh-accent-wash);
 }
 
-/* Scrollbars carry the theme rather than the UA's. A surface picks its
+/* Scrollbars carry the theme and not the UA's. A surface picks its
    elevation by rebinding the pair on itself; everything nested reads it. */
 :root {
   --nh-thumb: var(--nh-scrollbar-l1);
@@ -234,8 +234,8 @@ body {
   grid-template-rows: 100%;
   height: 100%;
   overflow: hidden;
-  /* Collapse animates the track, so the conversation slides rather than
-     jumping a column width. */
+  /* Collapse animates the track, so the conversation slides and never jumps
+     a column width. */
   transition: grid-template-columns var(--nh-slow) var(--nh-ease);
 }
 
@@ -262,7 +262,7 @@ body {
 }
 
 /* The bars are a pointer affordance: transparent until the pointer is inside,
-   and transparent rather than hidden so revealing one never reflows a row. */
+   and transparent, not hidden, so revealing one never reflows a row. */
 .sidebar:not(:hover) {
   --nh-thumb: transparent;
   --nh-thumb-hover: transparent;
@@ -642,7 +642,7 @@ body {
 }
 
 /*
- * A subagent, opened. It takes the conversation's place rather than sitting
+ * A subagent, opened. It takes the conversation's place and does not sit
  * beside it: a subagent is an agent, and half a window is not enough to read
  * one in. The head says what it was asked and what it has spent; below it is
  * the same flow the main agent draws, from the same events.
@@ -763,7 +763,7 @@ body {
 }
 
 /* The two lines naming the file, and the ones counting off each hunk. They are
-   scaffolding rather than content, so they sit back. */
+   scaffolding and not content, so they sit back. */
 .diff-line.meta,
 .diff-line.hunk {
   color: var(--nh-label-caption);
@@ -799,8 +799,8 @@ body {
   background: var(--nh-hover);
 }
 
-/* A spawn card opens its subagent and an edit card opens its diff, rather than
-   folding open on arguments nobody reads. The whole head is the target, so
+/* A spawn card opens its subagent and an edit card opens its diff. Neither
+   folds open on arguments nobody reads. The whole head is the target, so
    neither carries a button of its own. */
 .block.tool[data-subagent] > summary,
 .block.tool[data-diff] > summary {
@@ -875,8 +875,8 @@ body {
   flex-wrap: wrap;
 }
 
-/* The total is short by whatever the unpriced turns came to, which is a
-   caveat on the figure above rather than a fault, so it is amber and quiet. */
+/* The total is short by whatever the unpriced turns came to. That is a caveat
+   on the figure above and not a fault, so it is amber and quiet. */
 .cost-floor {
   margin: var(--s3) 0 0;
   color: var(--nh-state-warn);
@@ -981,7 +981,7 @@ body {
   position: relative;
 }
 
-/* A row's share of the dearest row, behind the text rather than beside it, so
+/* A row's share of the dearest row, behind the text and not beside it, so
    the shape of a breakdown reads before any of the numbers do. */
 .cost-row > .cost-share {
   position: absolute;
@@ -1161,7 +1161,7 @@ body {
   animation: rise var(--nh-slow) var(--nh-ease);
 }
 
-/* Bottom clearance for the floating composer: a spacer element rather than
+/* Bottom clearance for the floating composer: a spacer element and not
    padding, because its height is written from the composer's measured one. */
 .stream-tail {
   height: var(--nh-composer-clearance, 128px);
@@ -1180,8 +1180,8 @@ body {
   pointer-events: none;
 }
 
-/* The flow dissolves into the ground behind the card instead of being cut by
-   a rule; the strip itself must not eat pointer events aimed at the flow. */
+/* The flow dissolves into the ground behind the card, with no rule cutting it
+   off; the strip itself must not eat pointer events aimed at the flow. */
 .composer-dock::before {
   content: "";
   position: absolute;
@@ -1328,7 +1328,7 @@ body {
 }
 
 /* The reader's own words: a card, so a long transcript scans as a dialogue
-   rather than one column of undifferentiated text. */
+   and not as one column of undifferentiated text. */
 .block.user .body {
   padding: var(--s2) var(--s3);
   border-radius: var(--nh-radius-card);
@@ -1349,7 +1349,7 @@ body {
 /*
  * The answer, as opposed to everything the turn said on its way to one. A turn
  * is mostly tool cards and half-sentences between them, so the answer gets a
- * card of its own rather than the same treatment as the commentary around it.
+ * card of its own and not the treatment the commentary around it gets.
  */
 .block.final .body {
   padding: var(--s3) var(--s4);
@@ -1371,7 +1371,7 @@ body {
   color: var(--nh-state-error);
 }
 
-/* A line about the run rather than about the conversation. */
+/* A line about the run itself, not about the conversation. */
 .block.note {
   display: flex;
   align-items: center;
@@ -1408,8 +1408,8 @@ body {
 
 /* A summary for a turn the permission system stopped something in. It is the
    same dim line, made openable: the count is in the text either way, and what
-   was stopped is behind one click rather than in the flow, where it would read
-   as another failure rather than as the harness working. */
+   was stopped is behind one click. In the flow it would read as another
+   failure, where it is the harness working. */
 .block.summary.prevented > summary {
   cursor: pointer;
   list-style: none;
@@ -1602,7 +1602,7 @@ details.block pre + pre {
   }
 }
 
-/* The turn indicator. It lives in the flow rather than in the topbar, because
+/* The turn indicator. It lives in the flow and not in the topbar, because
    the conversation is what the eye is already on. Nothing is drawn at all when
    no turn is running: a permanent "idle" is a light that says the fuse is not
    blown. */
@@ -1611,7 +1611,7 @@ details.block pre + pre {
   align-items: center;
   gap: var(--s2);
   /* The same column every message is in, so it reads as the turn being waited
-     for rather than as a stray line at the edge. */
+     for and not as a stray line at the edge. */
   width: 100%;
   max-width: var(--nh-column);
   margin: 0 auto;
@@ -1701,8 +1701,8 @@ details.block pre + pre {
   box-shadow: var(--nh-shadow-lv3);
 }
 
-/* No session to send to: the card is one big "start here" target instead of a
-   composer that would refuse the message. */
+/* No session to send to: the card is one big "start here" target, where a
+   composer would only refuse the message. */
 .composer.trigger {
   cursor: pointer;
   border-style: dashed;
@@ -1805,7 +1805,7 @@ details.block pre + pre {
 }
 
 /* How much of the output was written by agents this session started. It is an
-   aside about the pill beside it rather than a measure of its own, so it is
+   aside about the pill beside it and not a measure of its own, so it is
    quieter than either. */
 .metric.sub {
   color: var(--nh-label-caption);
@@ -1925,7 +1925,7 @@ button {
 }
 
 /* The delete button in a confirm sheet is the button that sheet exists for, so
-   it is filled like a primary rather than drawn as red text on nothing. Red
+   it is filled like a primary and not drawn as red text on nothing. Red
    text next to an outlined Cancel read as the weaker of the two, which is the
    opposite of what it does. Same red as the stop button: same meaning. */
 .btn.danger {
@@ -2523,7 +2523,7 @@ button.chip:hover:enabled,
   font-size: 12px;
 }
 
-/* One model per line rather than a grid of ids. A row carries what the model
+/* One model per line, in place of a grid of ids. A row carries what the model
    costs and which effort levels it takes, and those do not fit in a 240px
    column beside the id. */
 .model-list {
@@ -2544,7 +2544,7 @@ button.chip:hover:enabled,
   cursor: pointer;
 }
 
-/* Over the list rather than beside it: a list long enough to need finding
+/* Over the list and not beside it: a list long enough to need finding
    through is a list nobody wants to scroll to reach the box for. */
 .model-filter {
   width: 100%;
@@ -2601,14 +2601,14 @@ button.chip:hover:enabled,
   white-space: nowrap;
 }
 
-/* Nobody has said what this model takes or costs. Amber rather than red: it is
-   a gap the user can fill, and nothing is broken while it is open. */
+/* Nobody has said what this model takes or costs. Amber and not red: it is a
+   gap the user can fill, and nothing is broken while it is open. */
 .model-detail.unknown {
   color: var(--nh-state-warn);
 }
 
 /* The tick and the model's name. The cogwheel is the row's other half and sits
-   outside this, so that pressing it does not tick the box. */
+   outside this, so pressing it does not tick the box. */
 .model-pick {
   display: flex;
   align-items: center;
@@ -2619,7 +2619,7 @@ button.chip:hover:enabled,
 }
 
 /* The cogwheel that opens a model's own settings. The row is a line of text
-   rather than a bar of chrome, so it takes a smaller target than the rest. */
+   and not a bar of chrome, so it takes a smaller target than the rest. */
 .model-edit-open {
   width: 24px;
   height: 24px;
@@ -2711,7 +2711,7 @@ button.chip:hover:enabled,
 }
 
 /* A settings pane's list of things the user has added: the keys the vault
-   holds, the rungs of the approval ladder. Named for the shape rather than for
+   holds, the rungs of the approval ladder. Named for the shape and not for
    either one, because both panes draw the same row. */
 .entry-list {
   display: flex;
@@ -2783,7 +2783,7 @@ button.chip:hover:enabled,
   font: 400 12px var(--nh-font-sans);
 }
 
-/* A hint that is a warning rather than an aside. Used on the permission dialog
+/* A hint that is a warning and not an aside. Used on the permission dialog
    when auto mode could not decide and the question came here instead. */
 .hint.warn {
   color: var(--nh-state-warn);
@@ -2795,7 +2795,7 @@ button.chip:hover:enabled,
   gap: var(--s2);
 }
 
-/* The card is the row, and removing it is an action on the card rather than on
+/* The card is the row, and removing it is an action on the card and not on
    a button at the foot of the form. */
 .provider-row {
   position: relative;

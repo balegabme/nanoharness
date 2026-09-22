@@ -10,9 +10,9 @@ import type { UsageRecord } from './usage-log.js'
  * asked: by day, by folder, by session, by model, by agent, and by which part
  * of the harness spent it.
  *
- * The arithmetic is here rather than in the window because the window is a
- * separate bundle that cannot import this file at runtime, and a second copy
- * of it would be a second set of numbers to keep true. The main process builds
+ * The arithmetic is here and not in the window: the window is a separate
+ * bundle that cannot import this file at runtime, and a second copy would be a
+ * second set of numbers to keep true. The main process builds
  * the report and sends it over IPC; `nh usage` builds the same one and prints
  * it.
  */
@@ -25,8 +25,8 @@ export interface SpendTotals {
   costUsd: number
   /**
    * Turns whose model carried no prices. Their tokens are in `usage` and their
-   * money is not in `costUsd`, so a report with any of these is a floor rather
-   * than a bill.
+   * money is not in `costUsd`, so a report with any of these is a floor and
+   * not a bill.
    */
   unpriced: number
   /** Generating time, first chunk to last, with no tool time in it. */
@@ -176,7 +176,7 @@ function promptAndOutput(usage: TurnUsage): number {
 /**
  * The three spenders inside a turn. `conversation` is what is left when the
  * other two are taken out of the total, so a phase table always adds up to the
- * report's total rather than to something near it.
+ * report's total exactly.
  */
 function phaseRows(records: readonly UsageRecord[]): SpendRow[] {
   const labels: Record<Phase, string> = { conversation: 'Conversation', subagents: 'Subagents', approval: 'Approval checks' }
@@ -193,7 +193,7 @@ function phaseRows(records: readonly UsageRecord[]): SpendRow[] {
     // `unpriced` on the row is what says the column is short.
     const spent = record.costUsd === null ? 0 : record.costUsd - record.subagentCostUsd - record.harnessCostUsd
     // Turns are counted where the phase did something, so "3 turns" under
-    // Subagents means three turns delegated rather than three turns existed.
+    // Subagents means three turns that delegated, not three turns in all.
     note(rows.conversation, conversation, spent, record)
     note(rows.subagents, record.subagent, record.subagentCostUsd, record)
     note(rows.approval, record.harness, record.harnessCostUsd, record)

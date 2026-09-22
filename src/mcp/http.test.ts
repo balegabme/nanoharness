@@ -12,10 +12,10 @@ import type { McpServer } from './config.js'
 
 /**
  * A remote server over Streamable HTTP, against a real HTTP server on a real
- * port. What is being tested is what goes on the wire — the session header, the
- * negotiated protocol version, the bearer token, and the fact that a server may
- * answer a POST with either JSON or an SSE stream and the client must read
- * both — none of which a stubbed `fetch` would keep honest.
+ * port. What is being tested is what goes on the wire: the session header, the
+ * negotiated protocol version, the bearer token, and the fact that a server
+ * may answer a POST with either JSON or an SSE stream and the client must read
+ * both. A stubbed `fetch` would keep none of that honest.
  */
 
 interface Seen {

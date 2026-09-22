@@ -50,7 +50,7 @@ function blip(outcome: Outcome): void {
     osc.frequency.value = hz
     osc.connect(gain)
     const at = start + index * step
-    // Ramp rather than switch: a square edge on a gain node is an audible click.
+    // Ramped and never switched: a square edge on a gain node is an audible click.
     gain.gain.exponentialRampToValueAtTime(0.12, at + 0.02)
     gain.gain.exponentialRampToValueAtTime(0.0001, at + step - 0.01)
     osc.start(at)
@@ -95,7 +95,7 @@ function render(): void {
 
 /**
  * Announce the end of a turn. The notification is held back while the window
- * has focus — the person is already watching the answer arrive — but the blip
+ * has focus, since the person is already watching the answer arrive. The blip
  * plays either way, because a turn that ends off-screen still ends.
  */
 export function announce(outcome: Outcome, session = ''): void {

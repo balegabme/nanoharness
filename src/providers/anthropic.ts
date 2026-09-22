@@ -16,10 +16,10 @@ interface AnthropicOptions {
 }
 
 /**
- * The `anthropic-version` header every request must carry. It is not a "latest"
- * marker that drifts: it names the request/response format, and 2023-06-01 is
- * the one the Messages API documents today. Changing it changes the wire
- * contract, so it is pinned rather than derived.
+ * The `anthropic-version` header every request must carry. It is not a
+ * "latest" marker that drifts: it names the request/response format, and
+ * 2023-06-01 is the one the Messages API documents today. Changing it changes
+ * the wire contract, so it is pinned here.
  */
 const VERSION = '2023-06-01'
 
@@ -210,7 +210,7 @@ export function createAnthropicProvider(opts: AnthropicOptions): ChatProvider {
                 applyUsage(usage, event.message?.usage)
                 // The prompt's cost, known before a token of the answer has
                 // arrived. It is the part a retry pays for twice, so it goes
-                // out now rather than at the end the request may not reach.
+                // out now, at an end the request may never reach.
                 yield { kind: 'usage', usage: { ...usage } }
                 break
               case 'content_block_start': {
@@ -320,7 +320,7 @@ function toWireMessages(messages: readonly ChatMessage[]): WireMessage[] {
 /**
  * Tool arguments travel as a JSON string in the harness, but Anthropic wants the
  * parsed object back on replay. A call the model malformed still has to round
- * trip, so it goes back as an empty object rather than throwing mid-conversation.
+ * trip, so it goes back as an empty object and throws nothing mid-conversation.
  */
 function parseArgs(args: string): unknown {
   if (args.trim() === '') return {}

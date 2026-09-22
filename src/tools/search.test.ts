@@ -10,8 +10,8 @@ import type { ToolResult } from '../core/types.js'
 /**
  * Searching without a shell. These tests pin what the model is handed: the
  * `path:line:text` shape it reads matches back, which directories the walk
- * refuses to enter, and a bad pattern coming back as an error rather than as
- * an empty result that reads like an answer.
+ * refuses to enter, and a bad pattern coming back as an error instead of an
+ * empty result that reads like an answer.
  */
 
 function run(tool: typeof GREP_TOOL | typeof GLOB_TOOL, root: string, args: Record<string, unknown>): Promise<ToolResult> {
@@ -73,7 +73,7 @@ describe('grep', () => {
     await rm(root, { recursive: true, force: true })
   })
 
-  it('says a pattern is broken rather than answering no matches', async () => {
+  it('says a pattern is broken instead of answering no matches', async () => {
     const root = await tree()
 
     const result = await run(GREP_TOOL, root, { pattern: 'const (answer' })
@@ -172,8 +172,7 @@ describe('the file cap', () => {
 
   it('searches what it walked and names the cap, over the real limit', async () => {
     const root = await mkdtemp(join(tmpdir(), 'nh-capped-'))
-    // The match goes in first, so a walk that stops early still has it. The
-    // bug this pins answered "no matches" having read nothing at all.
+    // The match goes in first, so a walk that stops early still has it.
     await writeFile(join(root, 'aa-target.txt'), 'the answer\n', 'utf8')
     for (let i = 0; i <= MAX_FILES; i += 500) {
       const batch = []
@@ -265,8 +264,8 @@ describe('literalPrefix', () => {
 /**
  * What a pattern is measured against when `path` narrows the search. The
  * argument names where to look, so a pattern under it is written from there.
- * A model that scopes with `path` and writes a bare pattern was getting an
- * empty answer, which reads like the files are not there.
+ * A model that scopes with `path` and writes a bare pattern has to get the
+ * files, since an empty answer reads as though they are not there.
  */
 describe('a pattern under a path', () => {
   it('matches glob against the path below what was asked for', async () => {

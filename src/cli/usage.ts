@@ -58,7 +58,7 @@ function totalRows(totals: SpendTotals): string[] {
 }
 
 /**
- * One breakdown. Rows past the cut are summed into a last line rather than
+ * One breakdown. Rows past the cut are summed into a last line and never
  * dropped, so the column still adds up to the total above it.
  */
 function table(title: string, rows: readonly SpendRow[]): string[] {

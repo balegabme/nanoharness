@@ -26,13 +26,13 @@ function parseArgs(args: Record<string, unknown>): ArgsParse<ReadArgs> {
 }
 
 export const READ_TOOL = defineTool<ReadArgs>({
-  // Reading changes nothing, so a message that asks for several files can run
-  // them together (`executeTools` in src/core/session.ts).
+  // Reading changes nothing, so a message asking for several files runs them
+  // together (`executeTools` in src/core/session.ts).
   parallel: true,
   input: {
     name: 'read',
     description:
-      'Read a file with offset/limit. Each line is prefixed with its number, which is not part of the file: never copy a number into an edit. Lines are capped at 2000 chars. A file already read and unchanged comes back as a pointer to the lines already in this conversation, so read a wide window once rather than overlapping slices.',
+      'Read a file with offset/limit. Each line is prefixed with its number, which is not part of the file: never copy a number into an edit. Lines are capped at 2000 chars. A file already read and unchanged comes back as a pointer to the lines already in this conversation, so read one wide window instead of overlapping slices.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -50,7 +50,7 @@ export const READ_TOOL = defineTool<ReadArgs>({
     const limit = rawLimit === undefined ? MAX_LINES : Math.min(MAX_LINES, Math.max(1, Math.floor(rawLimit)))
 
     // Scope first: whether the file exists is none of the session's business
-    // until it is allowed to look there at all.
+    // until it may look there at all.
     const allowed = await access.check(rel, 'read')
     if (!allowed.ok) return { ok: false, summary: allowed.reason, content: allowed.reason, isError: true, prevented: true }
     const abs = allowed.path
@@ -66,9 +66,7 @@ export const READ_TOOL = defineTool<ReadArgs>({
 
     const text = await readFile(abs, 'utf8')
     const lines = text.split('\n')
-    // Asking past the end is a mistake worth naming. Answering with no lines
-    // reads as an empty file, and answering from the index reads as lines the
-    // model already has.
+    // Named as an error, since an empty answer reads as an empty file.
     if (offset >= lines.length) {
       const why = `read: ${rel}: offset ${offset} is past the end; the file has ${lines.length} lines`
       return { ok: false, summary: why, content: why, isError: true }
@@ -76,8 +74,7 @@ export const READ_TOOL = defineTool<ReadArgs>({
     const end = Math.min(lines.length, offset + limit)
     const span = { start: offset, end }
 
-    // Already in the conversation, and the file has not moved since. Sending
-    // the same bytes a second time buys nothing the model does not have.
+    // Already in the conversation, and the file has not moved since.
     const plan = reads.plan(abs, span, version)
     if (plan.kind === 'known') {
       const said = ReadIndex.knownText(rel, plan.spans)

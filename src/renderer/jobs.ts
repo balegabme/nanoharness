@@ -15,7 +15,7 @@ import type { NanoBridge } from '../ipc/contract.js'
 
 let jobs: JobView[] = []
 
-/** An event that belongs to one agent's stream rather than to the job list. */
+/** An event that belongs to one agent's stream and not to the job list. */
 export type StreamEvent = Extract<AppEvent, { sessionId: string }>
 
 export interface JobHandlers {
@@ -31,9 +31,9 @@ let handlers: JobHandlers | null = null
 
 /**
  * What each subagent has said, as the events that said it. Consecutive text or
- * thinking deltas are merged, so a long answer is one event rather than one per
- * token, which is what keeps a buffer the size of the answer instead of the
- * size of the stream.
+ * thinking deltas are merged, so a long answer is one event and not one per
+ * token. That keeps the buffer the size of the answer, where otherwise it
+ * would be the size of the stream.
  */
 const buffers = new Map<string, AppEvent[]>()
 
@@ -142,7 +142,7 @@ function buffer(event: StreamEvent): void {
 
 /**
  * A subagent's own stream. The caller has already established that the event
- * belongs to one of these rather than to the conversation on screen.
+ * belongs to one of these and not to the conversation on screen.
  */
 export function handleSubagentEvent(event: AppEvent): void {
   if (!('sessionId' in event)) return
@@ -171,8 +171,8 @@ export function handleJobEvent(event: AppEvent): void {
 
 /**
  * A background subagent outlives the turn that started it, so a reloaded window
- * asks the main process what is still running rather than starting empty and
- * missing a stream that is already in flight.
+ * asks the main process what is still running, so it does not start empty and
+ * miss a stream that is already in flight.
  */
 export async function initJobs(bridge: NanoBridge, next: JobHandlers): Promise<void> {
   handlers = next

@@ -90,7 +90,7 @@ async function received(log: string): Promise<Record<string, unknown>[]> {
 /**
  * The same log, read until it holds what the test is waiting for. The cancel
  * notification is sent without being awaited, on purpose: the request rejects
- * on its deadline rather than on the server's acknowledgement, so the reject
+ * on its deadline and not on the server's acknowledgement, so the reject
  * and the notification race. Reading the log once can land before the
  * notification is written.
  */

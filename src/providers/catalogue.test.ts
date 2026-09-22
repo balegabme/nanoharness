@@ -5,8 +5,8 @@ import type { ModelOffer } from '../core/config.js'
 /**
  * Reading the model catalogue. The payload below is the shape models.dev
  * actually returns, trimmed to four models of one provider: a tiered model on
- * its own wire, a plain one, one whose thinking is a toggle rather than a set
- * of levels, and one the harness has no wire for.
+ * its own wire, a plain one, one whose thinking is a toggle and not a set of
+ * levels, and one the harness has no wire for.
  */
 
 const BODY = {
@@ -112,7 +112,7 @@ describe('finding the address in the catalogue', () => {
     expect(readCatalogue(BODY, 'not a url')).toEqual({})
   })
 
-  it('comes back empty rather than throwing on a body it cannot read', () => {
+  it('comes back empty, and throws nothing, on a body it cannot read', () => {
     for (const bad of [null, 'text', 42, [], { 'opencode-go': 7 }]) expect(readCatalogue(bad, GO)).toEqual({})
   })
 })
