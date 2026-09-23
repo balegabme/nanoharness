@@ -11,8 +11,6 @@ import { warmShell } from '../env/shell.js'
 import { hostFacts } from '../env/probe.js'
 import { Hooks, hooksBlock, stopHooks } from '../hooks/hooks.js'
 import { hookPaths, readHookFile } from '../hooks/config.js'
-import type { HookFile } from '../hooks/config.js'
-import { HookTrust } from '../hooks/trust.js'
 import { READ_TOOL } from '../tools/read.js'
 import { GLOB_TOOL, GREP_TOOL } from '../tools/search.js'
 import { WRITE_TOOL } from '../tools/write.js'
@@ -22,6 +20,8 @@ import { SPAWN_TOOL, toolsText } from '../tools/spawn.js'
 import { JOB_UPDATE_TOOL } from '../tools/job-update.js'
 import { AGENTS, AGENT_ROLES, HARNESS_HANDOFF, agentPrompt, isAgentRole, roleContext } from '../core/agents.js'
 import { EventBus } from '../core/event-bus.js'
+import { ProjectTrust, projectTrustPath } from '../core/project-trust.js'
+import type { ProjectFile } from '../core/project-trust.js'
 import { JobRegistry } from '../core/jobs.js'
 import { cloneHistory, createSpawnHost } from '../core/spawn.js'
 import { McpHub, mcpBlock } from '../mcp/hub.js'
@@ -30,7 +30,7 @@ import { loadServers, mcpPaths } from '../mcp/config.js'
 import { hasUnknownSecret, secretsBlock } from '../core/secrets.js'
 import { flushSecrets, forgetSecret, secretList, secretVault } from './secret-store.js'
 import { Session } from '../core/session.js'
-import { appendUsage, clearUsage, readUsage, userDataDir } from '../core/usage-log.js'
+import { appendUsage, clearUsage, readUsage } from '../core/usage-log.js'
 import { buildReport } from '../core/usage-report.js'
 import type { UsageReport } from '../core/usage-report.js'
 import { Judge, approvalProblem, goalsFrom, mergeRules } from '../core/approval.js'
@@ -93,7 +93,7 @@ import type { JobView } from '../core/jobs.js'
 import type { PromptEnvironment } from '../core/prompt.js'
 import type { SubagentSetup, SubagentSlot } from '../core/spawn.js'
 import type { Tool } from '../core/session.js'
-import type { AppEvent, McpServerStatus } from '../core/types.js'
+import type { AppEvent, McpServerStatus, ProjectFileKind } from '../core/types.js'
 import type {
   ActiveSetRequest,
   AgentSummary,
@@ -140,7 +140,7 @@ const FORWARDED: Record<AppEvent['type'], true> = {
   'context.compacting': true,
   'context.compacted': true,
   'permission.request': true,
-  'hooks.trust': true,
+  'project.trust': true,
   'mcp.status': true,
   'job.started': true,
   'job.update': true,
@@ -436,47 +436,22 @@ async function judgeFor(sessionId: string): Promise<Judge> {
   return judge
 }
 
-/** The project hook files the user has approved, and the ones refused this run. */
-const hookTrust = new HookTrust(join(userDataDir(), 'hook-trust.json'))
+/** The project files the user has approved, and the ones refused this run. */
+const projectTrust = new ProjectTrust(projectTrustPath())
 
 /** Trust questions waiting on the window, by the id their event carried. */
 const trustAnswers = new Map<string, (allow: boolean) => void>()
 
 /**
- * Trust questions in flight, by root and file hash, so two sessions opening
- * in one folder at the same moment ask the user once.
+ * Whether a project's hooks or MCP servers may run. The session build waits on
+ * the window for the answer, which `ProjectTrust` asks for only when the file
+ * is not already approved as it reads now.
  */
-const trustAsks = new Map<string, Promise<boolean>>()
-
-/**
- * Whether a project's hooks may run: approved before in exactly this form, or
- * approved now. The session build waits on the window for the answer. A
- * refusal holds until the app restarts or the file changes.
- */
-function projectHooksTrusted(sender: WebContents, sessionId: string, root: string, file: HookFile): Promise<boolean> {
-  const key = `${root}\u0000${file.hash}`
-  const pending = trustAsks.get(key)
-  if (pending !== undefined) return pending
-  const asked = (async () => {
-    if (await hookTrust.approved(root, file.hash)) return true
-    if (hookTrust.refusedThisRun(root, file.hash)) return false
-    const allow = await askTrust(sender, sessionId, file)
-    if (!allow) {
-      hookTrust.refuse(root, file.hash)
-      return false
-    }
-    // An approval that cannot be written still holds for this run. The next
-    // launch asks again, which is the safe way for it to fail.
-    await hookTrust.approve(root, file.hash).catch((err: unknown) => {
-      process.stderr.write(`hook trust: ${err instanceof Error ? err.message : String(err)}\n`)
-    })
-    return true
-  })().finally(() => trustAsks.delete(key))
-  trustAsks.set(key, asked)
-  return asked
+function projectTrusted(sender: WebContents, sessionId: string, kind: ProjectFileKind, file: ProjectFile): Promise<boolean> {
+  return projectTrust.check(file, () => askTrust(sender, sessionId, kind, file))
 }
 
-function askTrust(sender: WebContents, sessionId: string, file: HookFile): Promise<boolean> {
+function askTrust(sender: WebContents, sessionId: string, kind: ProjectFileKind, file: ProjectFile): Promise<boolean> {
   if (sender.isDestroyed()) return Promise.resolve(false)
   const id = randomUUID()
   return new Promise<boolean>(resolve => {
@@ -489,7 +464,7 @@ function askTrust(sender: WebContents, sessionId: string, file: HookFile): Promi
     }
     trustAnswers.set(id, settle)
     sender.once('destroyed', gone)
-    sender.send(IPC_CHANNELS.sessionEvent, { type: 'hooks.trust', sessionId, id, path: file.path, text: file.text, at: Date.now() } satisfies AppEvent)
+    sender.send(IPC_CHANNELS.sessionEvent, { type: 'project.trust', sessionId, id, kind, path: file.path, text: file.text, at: Date.now() } satisfies AppEvent)
   })
 }
 
@@ -509,7 +484,7 @@ async function loadHooks(sender: WebContents, sessionId: string, root: string): 
     const project = await readHookFile(paths.project)
     if (project.hooks.length === 0) {
       problems.push(...project.problems)
-    } else if (await projectHooksTrusted(sender, sessionId, root, project)) {
+    } else if (await projectTrusted(sender, sessionId, 'hooks', project)) {
       specs.push(...project.hooks)
       problems.push(...project.problems)
     } else {
@@ -610,10 +585,11 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
   // are part of the cached prefix. Discovering either mid-session would move
   // bytes the provider has already cached and cost the whole prefix.
   const skills = await loadSkills(root)
-  // Before anything is spawned, because the first time a project's hooks are
-  // met this waits on the user.
+  // Before anything is spawned, because the first time a project's hooks or
+  // servers are met, each of these waits on the user.
   const { hooks, problems: hookProblems } = await loadHooks(sender, sessionId, root)
-  const hub = await McpHub.connect(root)
+  const servers = await loadServers(root, { trust: file => projectTrusted(sender, sessionId, 'mcp', file) })
+  const hub = await McpHub.connect(root, servers.servers, servers.problems)
   if (epochOf(sessionId) !== mine) {
     await hub.close()
     throw new Error('the settings changed while this session was opening; send that again')
@@ -1136,7 +1112,7 @@ app.whenReady().then(() => {
     return configStatus()
   })
 
-  ipcMain.handle(IPC_CHANNELS.hooksTrustRespond, (_event: IpcMainInvokeEvent, req: { id: string; allow: boolean }) => {
+  ipcMain.handle(IPC_CHANNELS.projectTrustRespond, (_event: IpcMainInvokeEvent, req: { id: string; allow: boolean }) => {
     trustAnswers.get(req.id)?.(req.allow === true)
   })
 

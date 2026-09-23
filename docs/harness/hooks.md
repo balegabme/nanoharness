@@ -8,7 +8,7 @@ the model. Plan §10.
 Files:
 - src/hooks/config.ts: the two hook files, their format, and the parser
 - src/hooks/hooks.ts: running a hook, reading what it said, and the prompt lines about hooks
-- src/hooks/trust.ts: which project hook files the user has approved
+- src/core/project-trust.ts: which project hook and MCP files the user has approved
 
 `examples/hooks.json` has one hook per event, ready to copy.
 
@@ -145,26 +145,39 @@ tool calls touch the same files. It runs neither `SessionStart` nor `Stop`. Its
 session start is the parent's, and its answer goes back to the parent, which is
 where a Stop hook already stands between the work and the user.
 
-## Trusting a project's hooks
+## Trusting a project's files
 
-A project's hooks file is a list of commands that run on the user's machine,
-and it arrives with the repository. Cloning a project and opening it must not
-be enough to run them.
+Two files in a project make the harness run something on the user's machine:
+`.nanoharness/hooks.json` lists commands, and `.nanoharness/mcp.json` lists MCP
+servers to start or connect to, with the environment variables each one is
+handed. Both arrive with the repository, and so does anything the agent wrote
+into them. Cloning a project and opening it must not be enough to run either.
 
-So a project file with hooks in it asks first. The window shows the whole file
-and asks whether to run it. Yes is recorded against the file's SHA-256 in
-`hook-trust.json` in the app's data folder, keyed by the workspace root. The
-approval covers that text and nothing else: an edit to the file, including one
-a pull brought in, asks again. A refusal holds until the app restarts or the
-file changes, and the session runs without the project's hooks, with a note
-saying so.
+So each asks first, in the same way. The window shows the whole file and asks
+whether to use it. Yes is recorded against the file's path and SHA-256 in
+`project-trust.json` in the app's data folder. The approval covers that text
+and nothing else: an edit to the file, including one a pull brought in, asks
+again, and approving one of the two files approves nothing about the other. A
+refusal holds until the app restarts or the file changes, and the session runs
+without that file, with a note saying so.
 
-The session build waits on the answer, and it asks before any MCP server is
-spawned. Two sessions opening in one folder at once share one question. A
-window closed with the question still up has answered no.
+The approval covers the file and not the scripts it names. A hook or a server
+whose command runs a script from the repository runs that script as it reads
+at the time, and a pull that changes only the script asks nothing.
 
-The global file never asks. It is in the user's home folder, and only the user
-put it there.
+A hooks file asks when it holds a hook. An `mcp.json` asks when it would start
+or reach a server of its own; one that only switches global servers off starts
+nothing and is used without a question (`mcp.md` has the layering).
 
-An approval that cannot be written to disk still holds for the run, and the
-next launch asks again.
+The session build waits on the answers, the hooks file first, and both are
+asked before any MCP server is spawned. Two sessions opening in one folder at
+once share one question. A window closed with the question still up has
+answered no.
+
+The global files never ask. They are in the user's home folder, and only the
+user put them there. `nh mcp check` never asks either, because it has nobody to
+show the file to: it starts a project's servers only once the app has approved
+the file as it reads now (`cli.md`).
+
+An approval that cannot be written to disk still holds for the rest of the run,
+and the next launch asks again.

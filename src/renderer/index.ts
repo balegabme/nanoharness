@@ -38,7 +38,7 @@ import {
 import type { AgentSummary, ConfigStatus, NanoBridge, PermissionModeView } from '../ipc/contract.js'
 import type { DiffOpen } from './chat.js'
 import type { JobView } from '../core/jobs.js'
-import type { AppEvent, ContextLedger, McpServerStatus, ToolStats } from '../core/types.js'
+import type { AppEvent, ContextLedger, McpServerStatus, ProjectFileKind, ToolStats } from '../core/types.js'
 import type { AgentRole } from '../core/agents.js'
 import type { Effort } from '../core/config.js'
 
@@ -1001,8 +1001,8 @@ nh.onEvent(event => {
     const outcome = event.type === 'session.finished' ? 'finished' : event.type === 'session.stopped' ? 'stopped' : 'error'
     announce(outcome, sessionById(event.sessionId)?.title ?? 'Session')
   }
-  if (event.type === 'hooks.trust') {
-    void trustHooks(event)
+  if (event.type === 'project.trust') {
+    void trustProject(event)
     return
   }
   if (event.type === 'permission.request') {
@@ -1016,19 +1016,34 @@ nh.onEvent(event => {
 })
 
 /**
- * A project's hooks, shown whole before they may run. The approval covers the
- * file as it reads now, so the file is what the user reads. Asked whichever
- * session is on screen: the answer is about the folder, and every session in
- * it shares the answer.
+ * A project's hooks or MCP servers, shown whole before they may run. The
+ * approval covers the file as it reads now, so the file is what the user reads.
+ * Asked whichever session is on screen: the answer is about the folder, and
+ * every session in it shares the answer.
  */
-async function trustHooks(event: Extract<AppEvent, { type: 'hooks.trust' }>): Promise<void> {
+async function trustProject(event: Extract<AppEvent, { type: 'project.trust' }>): Promise<void> {
+  const question = TRUST_QUESTIONS[event.kind]
   const allow = await ask({
-    title: 'Run this project\'s hooks?',
-    detail: `${event.path} runs these commands on your machine, around the agent's work. Approve them only if you trust whoever wrote this project. Any change to the file asks again.`,
+    title: question.title,
+    detail: `${event.path} ${question.does} Approve the file only if you trust whoever wrote this project. Any change to the file asks again.`,
     code: event.text,
-    confirmLabel: 'Run them',
+    confirmLabel: question.confirm,
   })
-  await nh.answerHookTrust(event.id, allow).catch((err: unknown) => chat.errorBlock(message(err)))
+  await nh.answerProjectTrust(event.id, allow).catch((err: unknown) => chat.errorBlock(message(err)))
+}
+
+/** What each kind of project file does on the user's machine, in the words the question uses. */
+const TRUST_QUESTIONS: Record<ProjectFileKind, { title: string; does: string; confirm: string }> = {
+  hooks: {
+    title: 'Run this project\'s hooks?',
+    does: 'runs these commands on your machine, around the agent\'s work.',
+    confirm: 'Run them',
+  },
+  mcp: {
+    title: 'Start this project\'s MCP servers?',
+    does: 'starts these servers on your machine, or connects to them, and hands each one the environment variables it names.',
+    confirm: 'Start them',
+  },
 }
 
 async function boot(): Promise<void> {

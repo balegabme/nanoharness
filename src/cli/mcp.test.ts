@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runMcp } from './mcp.js'
+import { ProjectTrust, hashText, projectTrustPath } from '../core/project-trust.js'
 
 /**
  * `nh mcp`, run the way an agent runs it. The point of the command is that
@@ -49,7 +50,11 @@ function handle(message) {
 let home: string
 let project: string
 let script: string
+let data: string
 const home_key = 'NANOHARNESS_HOME'
+// The app's data folder, where `check` reads what the app has approved.
+const data_keys = ['APPDATA', 'XDG_DATA_HOME'] as const
+const originals = data_keys.map(name => process.env[name])
 
 /** Everything the command printed, so a test reads what the agent would read. */
 function captured(): { out: () => string; err: () => string } {
@@ -71,7 +76,9 @@ beforeAll(async () => {
   project = await mkdtemp(join(tmpdir(), 'nh-cli-project-'))
   script = join(project, 'server.mjs')
   await writeFile(script, SERVER, 'utf8')
+  data = await mkdtemp(join(tmpdir(), 'nh-cli-data-'))
   process.env[home_key] = home
+  for (const name of data_keys) process.env[name] = data
 })
 
 afterEach(() => {
@@ -80,9 +87,22 @@ afterEach(() => {
 
 afterAll(async () => {
   delete process.env[home_key]
+  data_keys.forEach((name, index) => {
+    const original = originals[index]
+    if (original === undefined) delete process.env[name]
+    else process.env[name] = original
+  })
+  await rm(data, { recursive: true, force: true })
   await rm(home, { recursive: true, force: true })
   await rm(project, { recursive: true, force: true })
 })
+
+/** The project file as it reads now, approved the way the app records a yes. */
+async function approve(): Promise<void> {
+  const path = join(project, '.nanoharness', 'mcp.json')
+  const text = await readFile(path, 'utf8')
+  await new ProjectTrust(projectTrustPath()).check({ path, text, hash: hashText(text) }, () => Promise.resolve(true))
+}
 
 async function entries(path: string): Promise<Record<string, unknown>> {
   const parsed = JSON.parse(await readFile(path, 'utf8')) as { mcpServers?: Record<string, unknown> }
@@ -100,6 +120,7 @@ describe('nh mcp add', () => {
     // A restart is what makes it live, and the command says so. Otherwise the
     // agent reports a server the running session has not got.
     expect(printed.out()).toContain('restart the app')
+    expect(printed.out()).toContain('asks the user to approve it')
   })
 
   it('names a token and writes none', async () => {
@@ -152,11 +173,22 @@ describe('nh mcp list', () => {
     expect(out).toContain('this workspace connects to:')
     expect(out).toContain('probe  stdio')
     expect(out).toContain('tickets  http')
+    expect(out).toContain(`the servers in ${join(project, '.nanoharness', 'mcp.json')} start once the app has approved the file`)
   })
 })
 
 describe('nh mcp check', () => {
+  it('starts nothing from a project file the app has not approved', async () => {
+    const printed = captured()
+    const code = await runMcp(['check', 'probe', '--dir', project])
+
+    expect(code).toBe(1)
+    expect(printed.err()).toContain('not approved')
+    expect(printed.out()).toContain('no server called probe')
+  })
+
   it('connects for real and reports the catalog it found', async () => {
+    await approve()
     const printed = captured()
     const code = await runMcp(['check', 'probe', '--dir', project])
 
@@ -205,6 +237,7 @@ describe('nh mcp check', () => {
   it('fails loudly on a server that will not start', async () => {
     captured()
     await runMcp(['add', 'broken', '--dir', project, '--command', join(project, 'no-such-binary')])
+    await approve()
     const printed = captured()
     const code = await runMcp(['check', 'broken', '--dir', project])
 

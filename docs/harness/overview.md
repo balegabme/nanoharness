@@ -125,8 +125,8 @@ first message names it.
 Two of those events flow the other way in spirit. `permission.request` is
 emitted when a tool reaches outside the session folder or wants to run a shell
 command, and the turn stays parked until the renderer answers it over
-`permission:respond`. `hooks.trust` is emitted when a project's hooks file has
-not been approved, and the session build waits for the answer over
-`hooks:trust-respond`. There is no HTTP listener in v1, and a session can still
-be driven headlessly without a window, though a gate with nobody to ask refuses
-the shell.
+`permission:respond`. `project.trust` is emitted when a project's hooks file or
+`mcp.json` has not been approved, and the session build waits for the answer
+over `project:trust-respond`. There is no HTTP listener in v1, and a session
+can still be driven headlessly without a window, though a gate with nobody to
+ask refuses the shell.

@@ -190,6 +190,15 @@ field by field, since a half-overridden command line is a server nobody
 configured. `"enabled": false` is how a project switches a global server off
 without editing the file every other workspace reads.
 
+The project file asks before it is used. It starts commands and hands out
+environment variables for whoever wrote the project, and the agent can write it
+too. So a session that finds servers of its own in a file not yet approved as
+it reads now shows the user the whole file and waits. A refused file is left out
+whole and the session's MCP status says why; the global servers still start.
+A project file that only switches global servers off starts nothing and never
+asks. The approval is the one a project's hooks file gets, and `hooks.md`
+describes it.
+
 Secret-free by schema (plan §16) as far as the schema reaches: a *bearer* token
 is named, never written. There is no field one could land in. stdio servers get
 named variables passed through from the harness's environment; HTTP servers get
@@ -255,7 +264,8 @@ configuration, not an install, and the MCP block says so in as many words to the
 one role that does the configuring.
 
 The block also says what the agent cannot do: a server added during a turn is
-connected the next time the session is built, not inside that turn. The tool
+connected the next time the session is built, not inside that turn, and one
+added to the workspace file waits for the user to approve the file. The tool
 definitions sit in the cached prefix, so a tool list that grew mid-conversation
 would cost the whole prefix. See the lifetime section below.
 

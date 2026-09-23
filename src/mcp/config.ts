@@ -3,6 +3,8 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { isJsonObject } from './protocol.js'
+import { hashText } from '../core/project-trust.js'
+import type { ProjectFile } from '../core/project-trust.js'
 
 /**
  * Which servers a session talks to, from two files: `~/.nanoharness/mcp.json`
@@ -106,21 +108,29 @@ export function parseMcpConfig(parsed: unknown): McpServer[] {
 export interface ServerList {
   servers: McpServer[]
   /**
-   * Why a config file was ignored, if one was. A broken file is not a reason to
-   * lose the session, but it is a reason to say so: starting with no MCP
-   * tools after a stray comma looks exactly like a harness that never
-   * supported them, and the user has no way to tell the two apart.
+   * Why a config file was left out, if one was: it would not parse, or it was
+   * not approved. Neither is a reason to lose the session, but both are
+   * reasons to say so. Starting with no MCP tools after a stray comma looks
+   * exactly like a harness that never supported them, and the user has no way
+   * to tell the two apart.
    */
   problems: string[]
 }
 
-async function readConfig(path: string): Promise<{ servers: McpServer[]; problem?: string }> {
-  const raw = await readFile(path, 'utf8').catch(() => null)
-  if (raw === null) return { servers: [] }
+/** One `mcp.json`, read. A missing file is an empty one, with empty text. */
+interface ConfigFile extends ProjectFile {
+  servers: McpServer[]
+  problem?: string
+}
+
+async function readConfig(path: string): Promise<ConfigFile> {
+  const text = await readFile(path, 'utf8').catch(() => null)
+  if (text === null) return { path, text: '', hash: '', servers: [] }
+  const file = { path, text, hash: hashText(text) }
   try {
-    return { servers: parseMcpConfig(JSON.parse(raw)) }
+    return { ...file, servers: parseMcpConfig(JSON.parse(text)) }
   } catch (err) {
-    return { servers: [], problem: `${path} could not be read: ${err instanceof Error ? err.message : String(err)}` }
+    return { ...file, servers: [], problem: `${path} could not be read: ${err instanceof Error ? err.message : String(err)}` }
   }
 }
 
@@ -164,20 +174,48 @@ async function save(path: string, entries: Record<string, unknown>): Promise<voi
   await writeFile(path, `${JSON.stringify({ mcpServers: entries }, null, 2)}\n`, 'utf8')
 }
 
+export interface LoadOptions {
+  env?: NodeJS.ProcessEnv
+  /**
+   * Asked before the project file's servers are used, with the file as it
+   * reads now. The project file starts commands and hands out environment
+   * variables on behalf of whoever wrote the project. A session passes the
+   * user's answer here and `nh mcp check` passes the stored approval. Without
+   * it the file is read as written, which suits a caller that only lists the
+   * servers and starts none of them.
+   */
+  trust?: (file: ProjectFile) => Promise<boolean>
+}
+
 /**
  * The servers a session in `cwd` should connect to: the global file, then the
  * project's own on top of it. A project entry with the same name replaces the
  * global one outright and never merges field by field, since a half-overridden
  * command line is a server nobody configured. `"enabled": false` is how a
  * project turns a global server off without touching the global file.
+ *
+ * `trust` is asked only when the project file would start or reach a server of
+ * its own. A file that only switches global servers off starts nothing, and a
+ * refused file is left out whole.
  */
-export async function loadServers(cwd: string, env: NodeJS.ProcessEnv = process.env): Promise<ServerList> {
-  const paths = mcpPaths(cwd, env)
-  const [global, project] = await Promise.all([readConfig(paths.global), readConfig(paths.project)])
+export async function loadServers(cwd: string, options: LoadOptions = {}): Promise<ServerList> {
+  const paths = mcpPaths(cwd, options.env)
+  const global = await readConfig(paths.global)
+  // A workspace opened at the home folder finds one file in both places, and
+  // it is the global one.
+  let project = paths.project === paths.global ? undefined : await readConfig(paths.project)
+  const problems = global.problem === undefined ? [] : [global.problem]
+  if (project?.problem !== undefined) problems.push(project.problem)
+
+  if (options.trust !== undefined && project?.servers.some(server => server.enabled) === true && !(await options.trust(project))) {
+    // No closing period: whatever shows a problem ends the sentence itself.
+    problems.push(
+      `The servers in ${project.path} are off because the file is not approved as it reads now. A session in the app asks about it once per run, and again whenever the file changes`,
+    )
+    project = undefined
+  }
 
   const byName = new Map<string, McpServer>()
-  for (const server of [...global.servers, ...project.servers]) byName.set(server.name, server)
-
-  const problems = [global.problem, project.problem].filter((problem): problem is string => problem !== undefined)
+  for (const server of [...global.servers, ...(project?.servers ?? [])]) byName.set(server.name, server)
   return { servers: [...byName.values()].filter(server => server.enabled), problems }
 }

@@ -108,4 +108,13 @@ why that one writes a live credential to disk.
 
 A session builds its tool list once, at startup, so a server added now is
 connected the next time the app starts or a session is opened. The command says
-so, so no agent reports a tool the running session has not got.
+so, so no agent reports a tool the running session has not got. A server added
+to the workspace file also waits for the user: the file has changed, and that
+session asks them to approve it first.
+
+`check` never asks. It has nobody to show the file to, since the agent runs it
+as often as a person does, and a shell approval shows the command line and not
+the file it reads. So it starts a server from the workspace file only once the
+app has approved that file as it reads now, and otherwise says the file is not
+approved. `list` starts nothing, so it lists every entry and names a workspace
+file that still needs approving. `hooks.md` describes the approval.

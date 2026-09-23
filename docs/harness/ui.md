@@ -6,7 +6,7 @@ its own, which is why the window can be rebuilt without touching the core.
 
 Files:
 - src/main/window.ts: BrowserWindow, the `app://` scheme, navigation lockdown
-- src/main/preload.ts: the context bridge, with ping, send, workspaces, sessions, rename, transcript paths, role, jobs, one subagent's stored conversation, agents, MCP status, secrets, config, permission answers, hook trust answers, the usage report and clearing it, external links, onEvent
+- src/main/preload.ts: the context bridge, with ping, send, workspaces, sessions, rename, transcript paths, role, jobs, one subagent's stored conversation, agents, MCP status, secrets, config, permission answers, project trust answers, the usage report and clearing it, external links, onEvent
 - src/renderer/index.ts: the shell, which session is open, the agent, model and effort chips, and the diff and spend panes
 - src/renderer/composer.ts: the composer in its two seats, the height the flow clears, and the pictures attached to the draft
 - src/renderer/images.ts: a pasted or dropped file read as a picture to send, shrunk first when the switch is on
@@ -412,8 +412,8 @@ apply and the popup is the platform's, because the whole block sits behind an
 `@supports`.
 
 A question can carry a file, drawn whole in a box of its own under the text.
-The hooks question uses it, because the approval covers exactly that file
-(`hooks.md`). Questions come one at a time: one that arrives from the main
+The question about a project's hooks or MCP servers uses it, because the
+approval covers exactly that file (`hooks.md`). Questions come one at a time: one that arrives from the main
 process while another is on screen waits until the first is answered.
 
 The general pane holds the settings that are a switch: whether hooks run, and

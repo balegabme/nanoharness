@@ -32,7 +32,7 @@ export const IPC_CHANNELS = {
   sessionRename: 'session:rename',
   sessionTranscriptPath: 'session:transcript-path',
   permissionRespond: 'permission:respond',
-  hooksTrustRespond: 'hooks:trust-respond',
+  projectTrustRespond: 'project:trust-respond',
   permissionMode: 'permission:mode',
   permissionSetMode: 'permission:set-mode',
   configSaveApproval: 'config:save-approval',
@@ -412,8 +412,8 @@ export interface NanoBridge {
   setContextLimit(limit: number | null): Promise<ConfigStatus>
   /** Turn one of the on-or-off settings on or off. Live sessions take it when they are next built. */
   setSwitch(name: SwitchName, on: boolean): Promise<ConfigStatus>
-  /** Answer a `hooks.trust` event: run that project's hooks, or leave them off. */
-  answerHookTrust(id: string, allow: boolean): Promise<void>
+  /** Answer a `project.trust` event: use that project's file, or leave it off. */
+  answerProjectTrust(id: string, allow: boolean): Promise<void>
   probeProvider(request: ConfigProbeRequest): Promise<ConfigProbeResult>
   /**
    * What has been spent, grouped for the spend view. `days` counts back from

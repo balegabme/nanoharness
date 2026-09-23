@@ -1,13 +1,12 @@
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { Session } from '../core/session.js'
 import { emptyUsage } from '../core/types.js'
 import { warmShell } from '../env/shell.js'
-import { hookPaths, parseHooks, readHookFile } from './config.js'
+import { parseHooks } from './config.js'
 import { Hooks } from './hooks.js'
-import { HookTrust } from './trust.js'
 import type { Tool } from '../core/session.js'
 import type { ChatInput, ChatProvider } from '../core/provider.js'
 import type { AppEvent, ChatChunk, ToolResult } from '../core/types.js'
@@ -208,38 +207,6 @@ describe('a hook that goes wrong', () => {
 
     expect(Date.now() - started).toBeLessThan(3_500)
     expect(provider.seen[1]?.messages.at(-1)?.content).toBe('made a.txt\n\n[PostToolUse hook]\nstarted')
-  })
-})
-
-describe('a project hooks file', () => {
-  it('stays approved until its text changes, and a refusal lasts one run', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'nh-trust-'))
-    dirs.push(dir)
-    const root = join(dir, 'project')
-    const other = join(dir, 'other')
-    const store = join(dir, 'hook-trust.json')
-    const path = hookPaths(root).project
-    await mkdir(dirname(path), { recursive: true })
-    await writeFile(path, JSON.stringify({ Stop: [{ command: 'true' }] }))
-    const first = await readHookFile(path)
-    const trust = new HookTrust(store)
-
-    expect(await trust.approved(root, first.hash)).toBe(false)
-    // Two approvals written at once both reach the file.
-    await Promise.all([trust.approve(root, first.hash), trust.approve(other, first.hash)])
-
-    // The next launch reads them back.
-    const later = new HookTrust(store)
-    expect(await later.approved(root, first.hash)).toBe(true)
-    expect(await later.approved(other, first.hash)).toBe(true)
-
-    await writeFile(path, JSON.stringify({ Stop: [{ command: 'exit 2' }] }))
-    const edited = await readHookFile(path)
-    expect(await later.approved(root, edited.hash)).toBe(false)
-
-    later.refuse(root, edited.hash)
-    expect(later.refusedThisRun(root, edited.hash)).toBe(true)
-    expect(new HookTrust(store).refusedThisRun(root, edited.hash)).toBe(false)
   })
 })
 

@@ -1,6 +1,7 @@
 // doc: docs/harness/cli.md
 import { loadServers, mcpPaths, parseServer, readEntries, removeEntry, writeEntry } from '../mcp/config.js'
 import { McpHub } from '../mcp/hub.js'
+import { ProjectTrust, projectTrustPath } from '../core/project-trust.js'
 import type { McpServer } from '../mcp/config.js'
 
 /** `nh mcp`: manage MCP servers. */
@@ -13,6 +14,9 @@ export const MCP_HELP = `nh mcp: the MCP servers this harness will connect to
   nh mcp remove <name>              take one entry out (the file stays)
   nh mcp check [name]               actually connect, and say what happened
   nh mcp check <name> --call <tool> [--args JSON]   make one real call
+
+check starts a server from this folder's file only once the app has approved
+that file as it reads now. A session in the app asks.
 
   --global   the file every workspace reads (~/.nanoharness/mcp.json)
              default is this folder's own .nanoharness/mcp.json
@@ -158,7 +162,16 @@ function describe(server: McpServer): string {
 }
 
 async function list(flags: Flags, paths: { global: string; project: string }): Promise<number> {
-  const loaded = await loadServers(flags.dir)
+  // Listed as configured, whatever the approval says, since a list starts
+  // nothing. A project file the app has not approved is named below the list.
+  const store = new ProjectTrust(projectTrustPath())
+  let unapproved: string | undefined
+  const loaded = await loadServers(flags.dir, {
+    trust: async file => {
+      if (!(await store.approved(file))) unapproved = file.path
+      return true
+    },
+  })
   if (flags.json) {
     process.stdout.write(`${JSON.stringify({ paths, ...loaded }, null, 2)}\n`)
     return loaded.problems.length === 0 ? 0 : 1
@@ -180,6 +193,9 @@ async function list(flags: Flags, paths: { global: string; project: string }): P
   // up: a project entry replaces the global one under the same name.
   process.stdout.write(loaded.servers.length === 0 ? '\nthis workspace connects to nothing\n' : '\nthis workspace connects to:\n')
   for (const server of loaded.servers) process.stdout.write(`  ${describe(server)}\n`)
+  if (unapproved !== undefined) {
+    process.stdout.write(`the servers in ${unapproved} start once the app has approved the file as it reads now\n`)
+  }
   for (const problem of loaded.problems) process.stderr.write(`nh mcp: ${problem}\n`)
   return loaded.problems.length === 0 ? 0 : 1
 }
@@ -208,6 +224,7 @@ async function add(flags: Flags, path: string): Promise<number> {
   const server = await writeEntry(path, name, entry)
   process.stdout.write(`wrote ${path}\n  ${describe(server)}\n`)
   process.stdout.write('a session connects to it the next time it is built: restart the app, or open a new session.\n')
+  if (!flags.global) process.stdout.write('the file changed, so that session asks the user to approve it before the server starts.\n')
   return 0
 }
 
@@ -258,7 +275,11 @@ async function probe(hub: McpHub, servers: readonly McpServer[], flags: Flags): 
  */
 async function check(flags: Flags): Promise<number> {
   const wanted = flags.rest[0]
-  const loaded = await loadServers(flags.dir)
+  // A project's servers start here only once the app has approved the file.
+  // This command has nobody to show the file to: the agent runs it too, and a
+  // shell approval shows the command line and never the file it reads.
+  const store = new ProjectTrust(projectTrustPath())
+  const loaded = await loadServers(flags.dir, { trust: file => store.approved(file) })
   for (const problem of loaded.problems) process.stderr.write(`nh mcp: ${problem}\n`)
 
   const servers = wanted === undefined ? loaded.servers : loaded.servers.filter(server => server.name === wanted)

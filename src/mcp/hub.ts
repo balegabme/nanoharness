@@ -1,7 +1,6 @@
 // doc: docs/harness/mcp.md
 import { McpClient } from './client.js'
 import { HttpTransport, StdioTransport } from './transport.js'
-import { loadServers } from './config.js'
 import { narrowInputSchema, toolName } from './schema.js'
 import { McpProtocolError } from './protocol.js'
 import type { McpCallResult } from './client.js'
@@ -36,20 +35,22 @@ export class McpHub {
     private readonly byServer: Map<string, McpClient>,
   ) {}
 
-  static async connect(cwd: string, servers?: readonly McpServer[]): Promise<McpHub> {
-    const loaded = servers === undefined ? await loadServers(cwd) : { servers, problems: [] }
-    const list = loaded.servers
+  /**
+   * Connect to `servers`. `problems` are the reasons `loadServers` left a
+   * config file out, reported the same way an unreachable server is.
+   */
+  static async connect(cwd: string, servers: readonly McpServer[], problems: readonly string[] = []): Promise<McpHub> {
     const clients: McpClient[] = []
     const tools: Tool[] = []
     const status: ServerStatus[] = []
     const byServer = new Map<string, McpClient>()
-    // An unreadable config is reported the same way an unreachable server is,
-    // so whatever shows status has one list to show and nothing to special-case.
-    for (const problem of loaded.problems) status.push({ name: 'mcp.json', connected: false, toolCount: 0, error: problem })
+    // A problem sits in the status list beside the servers, so whatever shows
+    // status has one list to show and nothing to special-case.
+    for (const problem of problems) status.push({ name: 'mcp.json', connected: false, toolCount: 0, error: problem })
 
     // Sequential on purpose: an `npx -y` on a cold cache downloads a package,
     // and four of those at once on a laptop is worse than four in a row.
-    for (const server of list) {
+    for (const server of servers) {
       // Held outside the `try` so a failure *after* the server started still has
       // something to close. Without it, a server that connects and then fails
       // its catalog leaves a subprocess running for the life of the app: the
@@ -163,7 +164,7 @@ export function mcpBlock(
     `  ${options.cli} mcp remove <name> [--global] --dir ${options.root}      take one entry out; the file stays`,
     `Without \`--global\` the target is the workspace file, and \`--dir\` says which workspace. Pass it, because your own folder may not be the one the user meant. \`${options.cli} mcp --help\` prints this list.`,
     'An entry the command refuses is one a session would have ignored.',
-    'The new server is connected the next time a session is built, not inside this turn, and the user needs to be told that.',
+    'The new server is connected the next time a session is built, not inside this turn, and the user needs to be told that. Neither a session nor check starts a server from the workspace file until the user has approved the file as it reads now, which a session asks them to do.',
   )
   return lines
 }

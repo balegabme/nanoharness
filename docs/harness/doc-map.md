@@ -44,7 +44,7 @@ pnpm doc-check
 - `skills.md`: the skill format and the list injected into the prompt
 - `secrets.md`: pasted keys, placeholders, and the substitution boundary
 - `approval.md`: auto mode, its rules, its ladder, and what a verdict costs
-- `hooks.md`: the user's commands around a session, and trusting a project's
+- `hooks.md`: the user's commands around a session, and trusting a project's hooks and MCP servers
 - `env-detection.md`: the shell, its PATH, and the machine facts in the prompt
 - `improvements.md`: the flaw and improvement ledger (living doc)
 - `doc-map.md`: this page

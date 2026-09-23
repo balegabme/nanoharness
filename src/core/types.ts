@@ -94,6 +94,9 @@ export interface McpServerStatus {
   pending?: boolean
 }
 
+/** A file in a project that asks before it is used: `hooks.json` or `mcp.json`. */
+export type ProjectFileKind = 'hooks' | 'mcp'
+
 export function emptyUsage(): TurnUsage {
   return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0 }
 }
@@ -220,10 +223,11 @@ export type AppEvent =
   // `problem` is set when auto mode was on and the approval model could not
   // answer. The prompt is the fallback and says so on its face.
   | { type: 'permission.request'; sessionId: string; id: string; intent: 'read' | 'write' | 'run'; paths: string[]; command?: string; root: string; problem?: string; at: number }
-  // A project hooks file the user has not approved as it now reads, found while
-  // a session was being built. The build waits for the answer. `text` is the
-  // whole file, because the approval covers exactly that text.
-  | { type: 'hooks.trust'; sessionId: string; id: string; path: string; text: string; at: number }
+  // A project file the user has not approved as it now reads, found while a
+  // session was being built: its hooks, or the MCP servers it starts. The build
+  // waits for the answer. `text` is the whole file, because the approval covers
+  // exactly that text.
+  | { type: 'project.trust'; sessionId: string; id: string; kind: ProjectFileKind; path: string; text: string; at: number }
   // Which MCP servers this session ended up with, once its hub has finished
   // dialling. The window asks for the same thing when a session is opened; this
   // is the push for the case where the answer arrives after the question.

@@ -216,6 +216,10 @@ backoff); then surface final `isError`.
 with built-in tools or across servers, and the prefix is stable so tool-set bytes stay
 cache-safe.
 
+**Project config:** a project's `mcp.json` starts or reaches nothing until the user approves
+it, pinned to the file's hash, the same way a project's hooks are (§10). The global file
+never asks.
+
 ---
 
 ## 8. Skills

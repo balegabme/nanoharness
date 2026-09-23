@@ -1,8 +1,9 @@
 // doc: docs/harness/hooks.md
-import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { hashText } from '../core/project-trust.js'
+import type { ProjectFile } from '../core/project-trust.js'
 
 /**
  * The points in a session where the user's own commands can run. The order is
@@ -37,13 +38,8 @@ export interface HookSpec {
   source: string
 }
 
-/** One `hooks.json`, read. A missing file is an empty one. */
-export interface HookFile {
-  path: string
-  /** The file's text, for showing a person what they are asked to trust. Empty when it is missing. */
-  text: string
-  /** SHA-256 of the text, in hex. What a trust record pins. */
-  hash: string
+/** One `hooks.json`, read. A missing file is an empty one, with empty text. */
+export interface HookFile extends ProjectFile {
   hooks: HookSpec[]
   /** Entries that were skipped, each with what is wrong with it. */
   problems: string[]
@@ -57,10 +53,6 @@ export interface HookFile {
 export function hookPaths(root: string, env: NodeJS.ProcessEnv = process.env): { global: string; project: string } {
   const home = env.NANOHARNESS_HOME ?? homedir()
   return { global: join(home, '.nanoharness', 'hooks.json'), project: join(root, '.nanoharness', 'hooks.json') }
-}
-
-function hashText(text: string): string {
-  return createHash('sha256').update(text).digest('hex')
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

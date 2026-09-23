@@ -39,7 +39,7 @@ afterAll(async () => {
 describe('a workspace with nothing configured', () => {
   it('connects to nothing, whatever is in the environment', async () => {
     const empty = await mkdtemp(join(tmpdir(), 'nh-empty-'))
-    const loaded = await loadServers(empty, { NANOHARNESS_HOME: empty, TAVILY_API_KEY: 'set' })
+    const loaded = await loadServers(empty, { env: { NANOHARNESS_HOME: empty, TAVILY_API_KEY: 'set' } })
     expect(loaded).toEqual({ servers: [], problems: [] })
     await rm(empty, { recursive: true, force: true })
   })
@@ -48,7 +48,7 @@ describe('a workspace with nothing configured', () => {
 describe('the global file and the project file', () => {
   it('reads a server configured once for every workspace', async () => {
     await config(home, { search: { command: 'npx', args: ['-y', 'some-search-mcp'], envPassthrough: ['SEARCH_KEY'] } })
-    const loaded = await loadServers(project, env())
+    const loaded = await loadServers(project, { env: env() })
     expect(loaded.servers).toEqual([
       { name: 'search', transport: 'stdio', command: 'npx', args: ['-y', 'some-search-mcp'], envPassthrough: ['SEARCH_KEY'], enabled: true },
     ])
@@ -59,7 +59,7 @@ describe('the global file and the project file', () => {
       search: { command: 'uvx', args: ['project-search'] },
       tickets: { url: 'https://mcp.example.com/mcp', tokenEnv: 'TICKETS_TOKEN' },
     })
-    const loaded = await loadServers(project, env())
+    const loaded = await loadServers(project, { env: env() })
     const search = loaded.servers.find(server => server.name === 'search')
     // Replaced, not merged: the global args are gone and never half-applied.
     expect(search).toEqual({ name: 'search', transport: 'stdio', command: 'uvx', args: ['project-search'], envPassthrough: [], enabled: true })
@@ -74,7 +74,7 @@ describe('the global file and the project file', () => {
 
   it('lets a project switch a global server off without editing the global file', async () => {
     await config(project, { search: { command: 'npx', args: ['-y', 'some-search-mcp'], enabled: false } })
-    const loaded = await loadServers(project, env())
+    const loaded = await loadServers(project, { env: env() })
     expect(loaded.servers).toEqual([])
     expect(loaded.problems).toEqual([])
   })
@@ -84,7 +84,7 @@ describe('a config file that will not parse', () => {
   it('is reported by name, and the other file still loads', async () => {
     await mkdir(join(project, '.nanoharness'), { recursive: true })
     await writeFile(join(project, '.nanoharness', 'mcp.json'), '{ "mcpServers": { "oops": }', 'utf8')
-    const loaded = await loadServers(project, env())
+    const loaded = await loadServers(project, { env: env() })
     // The global server survives a broken project file.
     expect(loaded.servers.map(server => server.name)).toEqual(['search'])
     expect(loaded.problems).toHaveLength(1)
