@@ -1,10 +1,12 @@
 // doc: docs/harness/ui.md
 import { ChatView } from './chat.js'
 import { autoGrow, initComposer, seat, showDock } from './composer.js'
+import { ContextMeter } from './context-meter.js'
 import { initCost, refreshCost } from './cost.js'
 import { el, message, must, relativeTime } from './dom.js'
 import {
   bufferOf,
+  contextOf,
   forget,
   handleJobEvent,
   handleSubagentEvent,
@@ -18,6 +20,7 @@ import {
 } from './jobs.js'
 import { announce, initNotify } from './notify.js'
 import { enqueue, initPermission } from './permission.js'
+import { closePopover, Popover } from './popover.js'
 import { applyConfig, initSettings, latestConfig, openSettings, refreshConfig } from './settings.js'
 import { clampEffort, EFFORT_LABEL, EFFORTS, factGaps, resolveFacts, WARN } from './facts.js'
 import {
@@ -34,7 +37,7 @@ import {
 import type { AgentSummary, ConfigStatus, NanoBridge, PermissionModeView } from '../ipc/contract.js'
 import type { DiffOpen } from './chat.js'
 import type { JobView } from '../core/jobs.js'
-import type { McpServerStatus, ToolStats } from '../core/types.js'
+import type { ContextLedger, McpServerStatus, ToolStats } from '../core/types.js'
 import type { AgentRole } from '../core/agents.js'
 import type { Effort } from '../core/config.js'
 
@@ -69,7 +72,6 @@ const titleLabel = must<HTMLElement>('session-title')
 const scopeChip = must<HTMLElement>('scope-chip')
 const settingsButton = must<HTMLButtonElement>('settings')
 const spendButton = must<HTMLButtonElement>('spend')
-const usageLine = must<HTMLElement>('usage-line')
 const costView = must<HTMLElement>('cost-view')
 const mcpChip = must<HTMLElement>('mcp-chip')
 const mcpOk = must<HTMLElement>('mcp-ok')
@@ -101,6 +103,33 @@ let showing: DiffOpen | null = null
 let onSpend = false
 
 /**
+ * The last ledger each session in the main process has sent this launch. A
+ * session that has one is live, and its ledger is newer than the one stored
+ * with it, which is as of the last turn it finished.
+ */
+const liveContexts = new Map<string, ContextLedger>()
+
+/** The session's context ring. The panel behind it can compact and switch automatic compaction. */
+const meter = new ContextMeter(
+  must<HTMLButtonElement>('context'),
+  must<HTMLElement>('context-panel'),
+  'As the session was left. The figures go live with the next message.',
+  {
+    compact: () => void compactNow(),
+    auto: () => latestConfig()?.autoCompact ?? true,
+    setAuto: on => void setAutoCompact(on),
+    limit: () => latestConfig()?.contextLimit ?? null,
+    setLimit: limit => void setContextLimit(limit),
+  },
+)
+
+/** A subagent's ring. It compacts on its own rules and the panel only reports. */
+const subMeter = new ContextMeter(must<HTMLButtonElement>('sub-context'), must<HTMLElement>('sub-context-panel'), 'As the subagent ended.')
+
+const tokensPopover = new Popover(must<HTMLElement>('tokens'), must<HTMLElement>('tokens-panel'))
+new Popover(must<HTMLElement>('sub-tokens'), must<HTMLElement>('sub-tokens-panel'))
+
+/**
  * The conversation, and the subagent the user opened. Two views of the same
  * kind, because a subagent is an agent: it thinks, calls tools and answers.
  */
@@ -108,7 +137,13 @@ const chat = new ChatView({
   stream,
   tail: must<HTMLElement>('stream-tail'),
   mark: must<HTMLElement>('stream-mark'),
-  usageLine,
+  usage: {
+    rate: must<HTMLElement>('rate'),
+    button: must<HTMLElement>('tokens'),
+    pills: must<HTMLElement>('tokens-pills'),
+    note: must<HTMLElement>('tokens-note'),
+  },
+  meter,
   openSubagent: id => void openSubagent(id),
   openDiff,
 })
@@ -116,7 +151,13 @@ const chat = new ChatView({
 const sub = new ChatView({
   stream: must<HTMLElement>('sub-stream'),
   tail: must<HTMLElement>('sub-tail'),
-  usageLine: must<HTMLElement>('sub-usage'),
+  usage: {
+    rate: must<HTMLElement>('sub-rate'),
+    button: must<HTMLElement>('sub-tokens'),
+    pills: must<HTMLElement>('sub-tokens-pills'),
+    note: must<HTMLElement>('sub-tokens-note'),
+  },
+  meter: subMeter,
   openDiff,
 })
 
@@ -307,7 +348,9 @@ async function openSubagent(id: string): Promise<void> {
     // rebuilds the window but not the whole count. The total comes from the
     // usage events the window kept for this job, and the rate starts over
     // instead of dividing out whatever part of the stream survived the cap.
-    sub.showStoredUsage(spendingOf(id))
+    sub.showStoredUsage({ usage: spendingOf(id) })
+    // Ledgers are kept apart from the buffer, so the replay did not draw one.
+    subMeter.show(contextOf(id), true)
     sub.setActivity(live.state === 'running')
     drawSubHead(live)
     renderShell()
@@ -323,7 +366,8 @@ async function openSubagent(id: string): Promise<void> {
   }
   viewing = id
   sub.renderTranscript(stored.messages, stored.notes)
-  sub.showStoredUsage(stored.usage)
+  sub.showStoredUsage({ usage: stored.usage })
+  subMeter.show(stored.context ?? null, false)
   sub.setActivity(false)
   drawSubHead({ ...stored, endedAt: stored.endedAt })
   renderShell()
@@ -334,7 +378,10 @@ function closeSubagent(): void {
   // A subagent that finished while it was on screen was held back from being
   // forgotten so it would not vanish under the reader. It can go now: opening
   // it again reads its transcript.
-  if (viewing !== null) forget(viewing)
+  if (viewing !== null) {
+    forget(viewing)
+    closePopover()
+  }
   viewing = null
   subHead = null
   if (subClock !== null) {
@@ -659,6 +706,7 @@ async function switchAgent(): Promise<void> {
 function setBusy(next: boolean): void {
   busy = next
   chat.setActivity(next)
+  meter.setRunning(next)
   renderShell()
   if (!next) input.focus()
 }
@@ -678,6 +726,7 @@ function stop(): void {
 async function openSession(id: string): Promise<void> {
   try {
     const opened = await nh.openSession(id)
+    if (id !== activeSessionId) closePopover()
     activeSessionId = id
     select(id)
     // A subagent and a diff both belong to the session that started them, so
@@ -689,7 +738,11 @@ async function openSession(id: string): Promise<void> {
     void refreshMcp(id)
     // What this session has already spent. Without it a re-opened session reads
     // as one that has cost nothing.
-    chat.showStoredUsage(opened.session.usage, opened.session.subagentUsage, opened.session.harnessUsage, opened.session.harnessCostUsd)
+    chat.showStoredUsage(opened.session)
+    // A session the main process is running has sent a newer ledger than the
+    // one stored with it.
+    const live = liveContexts.get(id)
+    meter.show(live ?? opened.session.context ?? null, live !== undefined)
     renderShell()
     input.focus()
   } catch (err) {
@@ -724,6 +777,51 @@ async function switchActive(): Promise<void> {
     chat.errorBlock(message(err))
     await refreshConfig()
   }
+}
+
+/**
+ * Summarise the older part of the conversation now. It runs between turns and
+ * holds the session the way a turn does: the composer waits, and Stop ends it.
+ * The transcript is drawn again afterwards, so what went into the summary is
+ * dimmed the way it is when the session is reopened.
+ */
+async function compactNow(): Promise<void> {
+  const sessionId = activeSessionId
+  if (sessionId === null || busy) return
+  setBusy(true)
+  meter.setCompacting(true)
+  try {
+    const result = await nh.compact(sessionId)
+    setStatus(await nh.workspaces())
+    if (result.compacted && activeSessionId === sessionId) await openSession(sessionId)
+  } catch (err) {
+    chat.errorBlock(message(err))
+  } finally {
+    meter.setCompacting(false)
+    setBusy(false)
+  }
+}
+
+/** One setting for every session. The live ones pick it up at once. */
+async function setAutoCompact(on: boolean): Promise<void> {
+  try {
+    applyConfig(await nh.setAutoCompact(on))
+  } catch (err) {
+    chat.errorBlock(message(err))
+    await refreshConfig()
+  }
+  meter.refresh()
+}
+
+/** The user's limit on the context, for every session. The live ones take it at once. */
+async function setContextLimit(limit: number | null): Promise<void> {
+  try {
+    applyConfig(await nh.setContextLimit(limit))
+  } catch (err) {
+    chat.errorBlock(message(err))
+    await refreshConfig()
+  }
+  meter.refresh()
 }
 
 async function send(): Promise<void> {
@@ -833,12 +931,9 @@ subCopy.addEventListener('click', () => {
 })
 spendButton.addEventListener('click', openSpend)
 // The session's own total is also the way into every session's.
-usageLine.addEventListener('click', openSpend)
-usageLine.addEventListener('keydown', event => {
-  if (event.key === 'Enter' || event.key === ' ') {
-    event.preventDefault()
-    openSpend()
-  }
+must<HTMLButtonElement>('tokens-spend').addEventListener('click', () => {
+  tokensPopover.close()
+  openSpend()
 })
 settingsButton.addEventListener('click', () => openSettings('providers'))
 heroSettings.addEventListener('click', () => openSettings('providers'))
@@ -886,6 +981,7 @@ nh.onEvent(event => {
     handleSubagentEvent(event)
     return
   }
+  if (event.type === 'context') liveContexts.set(event.sessionId, event.ledger)
   if (event.type === 'session.finished' || event.type === 'session.stopped' || event.type === 'session.error') {
     const outcome = event.type === 'session.finished' ? 'finished' : event.type === 'session.stopped' ? 'stopped' : 'error'
     announce(outcome, sessionById(event.sessionId)?.title ?? 'Session')

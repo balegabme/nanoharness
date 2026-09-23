@@ -51,6 +51,8 @@ export function resolveFacts(provider: Described | undefined, model: string): Mo
   if (tiers !== undefined && tiers.length > 0) merged.tiers = tiers.map(tier => ({ ...tier }))
   const maxOutput = typed.maxOutput ?? reported.maxOutput
   if (maxOutput !== undefined) merged.maxOutput = maxOutput
+  const context = typed.context ?? reported.context
+  if (context !== undefined) merged.context = context
   const vision = typed.vision ?? reported.vision
   if (vision !== undefined) merged.vision = vision
   const wire = typed.wire ?? reported.wire

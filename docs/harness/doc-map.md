@@ -38,6 +38,7 @@ pnpm doc-check
 - `cost.md`: the usage report, and the spend view drawn from it
 - `ui.md`: the desktop window, the context bridge, the renderer
 - `sessions.md`: folders, sessions, transcripts, and the scope rule
+- `context.md`: measuring the context, and compacting it before it outgrows the window
 - `agents.md`: the three roles, spawn modes, and background jobs
 - `mcp.md`: the MCP client, its transports, and the two config files
 - `skills.md`: the skill format and the list injected into the prompt

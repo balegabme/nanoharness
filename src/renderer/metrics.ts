@@ -1,5 +1,5 @@
 // doc: docs/harness/ui.md
-import type { TurnUsage } from '../core/types.js'
+import type { TurnRate, TurnUsage } from '../core/types.js'
 
 /**
  * The two numbers in the corner of the window, kept in one place where they can
@@ -32,6 +32,24 @@ export function hitRate(usage: TurnUsage): number | null {
 export function hitText(usage: TurnUsage): string {
   const rate = hitRate(usage)
   return rate === null ? 'n/a' : `${(rate * 100).toFixed(0)}%`
+}
+
+/**
+ * A token count short enough for a button: 950, 1.2k, 152k, 1.2M. One decimal
+ * below ten of a unit, where it still says something, and none above it.
+ */
+export function shortTokens(tokens: number): string {
+  const n = Math.max(0, Math.round(tokens))
+  if (n < 1000) return String(n)
+  const [size, unit] = n < 1_000_000 ? [n / 1000, 'k'] : [n / 1_000_000, 'M']
+  // 999,950 rounds to 1000k, which is a million written the long way.
+  if (unit === 'k' && size >= 999.5) return '1M'
+  return `${size < 10 ? size.toFixed(1).replace(/\.0$/, '') : Math.round(size)}${unit}`
+}
+
+/** Everything a session has been billed for, read and written, as one count. */
+export function totalTokens(usage: TurnUsage): number {
+  return usage.input + usage.output + usage.cacheRead + usage.cacheWrite
 }
 
 /**
@@ -87,13 +105,15 @@ export class Throughput {
   }
 
   /**
-   * What a session had already spent before this window saw it. Nothing here
-   * was timed, so there is no rate; the total is remembered only so the first
-   * round of the next turn reports what it produced and not the whole
-   * history.
+   * What a session had already spent before this window saw it. The total is
+   * remembered so the first round of the next turn reports what it produced
+   * and not the whole history. `rate` is the last turn as the session stored
+   * it, shown until the next turn starts, on the same floor as a live one.
    */
-  seed(output: number): void {
+  seed(output: number, rate?: TurnRate): void {
     this.startTurn()
     this.lastOutput = output
+    if (rate === undefined || rate.output <= 0 || rate.streamMs < Throughput.FLOOR_MS) return
+    this.answer = rate.output / (rate.streamMs / 1000)
   }
 }

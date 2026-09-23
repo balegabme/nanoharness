@@ -69,7 +69,13 @@ describe('the rate in the corner of the window', () => {
     expect(rate.value).toBeCloseTo(200, 5)
   })
 
-  it('has no rate for a session it is only reading back', () => {
+  it('shows the stored rate of a session it is reading back, and none where nothing was stored', () => {
+    const stored = new Throughput()
+    stored.seed(9000, { output: 600, streamMs: 4000 })
+    expect(stored.value).toBeCloseTo(150, 5)
+    stored.seed(9000, { output: 5, streamMs: 100 })
+    expect(stored.value).toBeNull()
+
     const rate = new Throughput()
     rate.seed(9000)
     expect(rate.value).toBeNull()

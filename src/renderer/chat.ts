@@ -1,9 +1,10 @@
 // doc: docs/harness/ui.md
 import { el, pretty } from './dom.js'
 import { costOf, moneyText } from './facts.js'
-import { hitText, promptTokens, Throughput } from './metrics.js'
+import { hitText, promptTokens, shortTokens, Throughput, totalTokens } from './metrics.js'
+import type { ContextMeter } from './context-meter.js'
 import type { TranscriptMessage } from '../ipc/contract.js'
-import type { AppEvent, PreventedCall, SessionNote, TurnUsage } from '../core/types.js'
+import type { AppEvent, PreventedCall, SessionNote, TurnRate, TurnUsage } from '../core/types.js'
 import type { ModelFacts } from '../core/config.js'
 
 /**
@@ -25,7 +26,9 @@ export interface ChatHost {
   /** The watermark behind an empty flow, where the view has one. */
   mark?: HTMLElement
   /** Where the running totals are drawn. */
-  usageLine: HTMLElement
+  usage: UsageSlots
+  /** The context ring above the flow, where the view has one. */
+  meter?: ContextMeter
   /**
    * Open the subagent a tool call or a note names. Absent in a subagent's own
    * view: a subagent cannot spawn, so nothing in it is ever a link.
@@ -36,6 +39,31 @@ export interface ChatHost {
    * where there is nowhere to put it.
    */
   openDiff?(diff: DiffOpen): void
+}
+
+/**
+ * The running total, split the way the bar above the flow shows it: the
+ * throughput on its own, and a button with the short total that opens the
+ * whole breakdown in a panel.
+ */
+export interface UsageSlots {
+  /** Output tokens per second, as plain text. */
+  rate: HTMLElement
+  /** The button that shows the short total. Hidden while nothing has been spent. */
+  button: HTMLElement
+  /** The pills inside the panel the button opens. */
+  pills: HTMLElement
+  /** The lines under them saying what the total counts. */
+  note: HTMLElement
+}
+
+/** What a stored session or subagent had spent, as the index kept it. */
+export interface StoredSpend {
+  usage?: TurnUsage | undefined
+  subagentUsage?: TurnUsage | undefined
+  harnessUsage?: TurnUsage | undefined
+  harnessCostUsd?: number | undefined
+  rate?: TurnRate | undefined
 }
 
 /** A diff a tool result carried: the file it changed, and the unified text. */
@@ -90,11 +118,12 @@ function withoutDiff(text: string): string {
   return text.replace(DIFF_FENCE, '').trimEnd()
 }
 
-export function usageText(usage: TurnUsage): string {
-  const written = usage.cacheWrite > 0 ? ` · written ${usage.cacheWrite}` : ''
-  const reasoning = usage.reasoning > 0 ? ` · reasoning ${usage.reasoning}` : ''
-  return `in ${usage.input} · out ${usage.output} · cached ${usage.cacheRead}${written} · hit ${hitText(usage)}${reasoning}`
-}
+/**
+ * What a shortened tool result looks like to the model. `core/compaction.ts`
+ * does the cutting and these are its two lengths.
+ */
+const PRUNED_TITLE =
+  'The model now gets the first 4,096 and the last 1,024 characters of this output. The whole of it is kept here.'
 
 /**
  * One running total minus a share of it, so the remainder can be priced on its
@@ -203,9 +232,10 @@ export class ChatView {
   /**
    * The one moving thing in the view while a turn runs, and nothing at all when
    * one is not: three dots and the elapsed time, at the end of the flow where
-   * the next answer will appear.
+   * the next answer will appear. The word says what the wait is for, which is
+   * the model working or the conversation being compacted.
    */
-  setActivity(on: boolean): void {
+  setActivity(on: boolean, word = 'working'): void {
     if (this.activityClock !== null) {
       clearInterval(this.activityClock)
       this.activityClock = null
@@ -218,7 +248,7 @@ export class ChatView {
     const dots = el('span', 'activity-dots')
     dots.append(el('i'), el('i'), el('i'))
     const clock = el('span', 'activity-time', '0:00')
-    row.append(dots, el('span', 'activity-word', 'working'), clock)
+    row.append(dots, el('span', 'activity-word', word), clock)
     this.host.stream.insertBefore(row, this.host.tail)
     this.activity = row
     this.host.stream.scrollTop = this.host.stream.scrollHeight
@@ -230,17 +260,31 @@ export class ChatView {
     }, 1000)
   }
 
+  /** Change what the activity row says without restarting its clock. */
+  private activityWord(word: string): void {
+    const label = this.activity?.querySelector('.activity-word')
+    if (label instanceof HTMLElement) label.textContent = word
+  }
+
   /**
-   * The running total, as a row of small pills. It is one line of numbers in a
-   * corner, so the name of each is dim and the number is not; the two worth
-   * noticing, cache hit and throughput, carry the accent.
+   * The running total. The bar shows the throughput and the short total; the
+   * panel behind the total has the pills. The name of each pill is dim and the
+   * number is not, and the one worth noticing, the cache hit, carries the
+   * accent.
    */
   setUsage(usage: TurnUsage | null): void {
     this.lastUsage = usage
-    const line = this.host.usageLine
+    const { rate, button, pills: line, note } = this.host.usage
+    const tps = this.throughput.value
+    rate.hidden = tps === null
+    if (tps !== null) rate.replaceChildren(el('b', undefined, tps.toFixed(tps < 10 ? 1 : 0)), el('span', undefined, 'tok/s'))
     line.replaceChildren()
-    line.hidden = usage === null
-    if (usage === null) return
+    button.hidden = usage === null
+    if (usage === null) {
+      note.textContent = ''
+      return
+    }
+    button.replaceChildren(el('b', undefined, shortTokens(totalTokens(usage))), el('span', undefined, 'tokens'))
 
     line.append(metric('in', String(usage.input)), metric('out', String(usage.output)), metric('cached', String(usage.cacheRead)))
     // Whose output it was. A turn that hands its work to three agents pays
@@ -248,13 +292,13 @@ export class ChatView {
     // having written a paragraph.
     const byAgents = this.subagentSpend?.output ?? 0
     if (byAgents > 0) line.append(metric('by agents', String(byAgents), 'sub'))
-    // The harness spending on its own behalf: an approval check, and whatever
-    // else later joins it. In the total because it is billed, named apart
-    // because it is not the model answering the question that was asked.
+    // The harness spending on its own behalf: approval checks and compaction
+    // summaries. In the total because it is billed, named apart because it is
+    // not the model answering the question that was asked.
     const byHarness = (this.harnessSpend?.input ?? 0) + (this.harnessSpend?.output ?? 0)
     if (byHarness > 0) line.append(metric('harness', String(byHarness), 'sub'))
-    // Only Anthropic ever reports a cache write, and a row of pills reading 0
-    // on every other provider is a column of noise.
+    // Only the Anthropic-compatible wire reports a cache write, and a pill
+    // reading 0 on every other one is noise.
     if (usage.cacheWrite > 0) line.append(metric('written', String(usage.cacheWrite)))
     // The conversation's own tokens are what the session's model priced, so the
     // harness's share comes out before the multiplication and its dollars go
@@ -265,19 +309,16 @@ export class ChatView {
     if (spent !== null) line.append(metric('spent', moneyText(spent), 'cost'))
     if (promptTokens(usage) > 0) line.append(metric('hit', hitText(usage), 'hit'))
     if (usage.reasoning > 0) line.append(metric('reasoning', String(usage.reasoning)))
-    const rate = this.throughput.value
-    if (rate !== null) line.append(metric('tok/s', rate.toFixed(rate < 10 ? 1 : 0), 'rate'))
-    const share = byAgents > 0 ? `
-${byAgents} of the output was written by subagents this session started.` : ''
-    const harness = byHarness > 0 ? `
-${byHarness} were spent by the harness itself, on approval checks, priced at that model's own rate.` : ''
+    const lines = ['Every turn added up, subagents included.']
+    if (byAgents > 0) lines.push(`${byAgents} of the output was written by subagents this session started.`)
+    if (byHarness > 0) {
+      lines.push(`${byHarness} were spent by the harness itself, on approval checks and compaction summaries, priced at the rate of the model that ran each one.`)
+    }
     // The per-turn figure under each answer is priced by the model that ran
     // that turn. This one prices every token at what the model selected now
     // charges, so a session that changed models reads as an estimate.
-    const note = spent === null ? '' : `
-Priced at the rate of the model selected now.`
-    line.title = `${usageText(usage)}
-Every turn added up, subagents included.${share}${harness}${note}`
+    if (spent !== null) lines.push('Priced at the rate of the model selected now.')
+    note.textContent = lines.join('\n')
   }
 
   /**
@@ -304,12 +345,13 @@ Every turn added up, subagents included.${share}${harness}${note}`
     if (this.lastUsage !== null) this.setUsage(this.lastUsage)
   }
 
-  /** What a re-opened session has already spent. Nothing was timed, so no rate. */
-  showStoredUsage(usage: TurnUsage | undefined, subagent?: TurnUsage, harness?: TurnUsage, harnessCostUsd?: number): void {
-    this.throughput.seed(usage?.output ?? 0)
-    this.subagentSpend = subagent ?? null
-    this.harnessSpend = harness ?? null
-    this.harnessCostUsd = harnessCostUsd ?? 0
+  /** What a re-opened session has already spent, and the rate of its last turn where one was stored. */
+  showStoredUsage(stored: StoredSpend): void {
+    const usage = stored.usage
+    this.throughput.seed(usage?.output ?? 0, stored.rate)
+    this.subagentSpend = stored.subagentUsage ?? null
+    this.harnessSpend = stored.harnessUsage ?? null
+    this.harnessCostUsd = stored.harnessCostUsd ?? 0
     this.setUsage(usage ?? null)
   }
 
@@ -374,6 +416,28 @@ Every turn added up, subagents included.${share}${harness}${note}`
     }
     card.append(head, list)
     this.append(card)
+  }
+
+  /**
+   * Where a compaction took effect: a rule across the flow, and the summary the
+   * model wrote folded under it. What came before the rule is still drawn,
+   * because the transcript keeps it; the model gets the summary in its place.
+   */
+  compactionBlock(summary: string): void {
+    const block = el('div', 'block compaction')
+    const card = el('details', 'compaction-summary')
+    card.append(el('summary', undefined, 'summary of the conversation so far'), el('pre', undefined, summary))
+    block.append(el('div', 'compaction-rule'), card)
+    this.append(block)
+  }
+
+  /** Say on a tool card that its output now goes to the model shortened. */
+  private markPruned(card: HTMLDetailsElement): void {
+    const summary = card.querySelector('summary')
+    if (!(summary instanceof HTMLElement) || summary.querySelector('.pruned') !== null) return
+    const chip = el('span', 'chip pruned', 'shortened')
+    chip.title = PRUNED_TITLE
+    summary.append(chip)
   }
 
   /** A line about the run itself, not about the conversation. */
@@ -493,6 +557,7 @@ Every turn added up, subagents included.${share}${harness}${note}`
     this.subagentSpend = null
     this.throughput.seed(0)
     this.setUsage(null)
+    this.host.meter?.clear()
   }
 
   /** A new turn starts fresh: the previous turn's blocks are done growing. */
@@ -505,8 +570,11 @@ Every turn added up, subagents included.${share}${harness}${note}`
     this.throughput.startTurn()
   }
 
-  private toolCard(name: string, args: string): HTMLDetailsElement {
+  private toolCard(id: string, name: string, args: string): HTMLDetailsElement {
     const card = el('details', 'block tool')
+    // A compaction names the results it shortened by call id, and the calls it
+    // names can be turns old, long gone from `toolCards`.
+    card.dataset.callId = id
     const summary = el('summary')
     summary.append(el('span', 'tool-name', name), el('span', 'tool-arg', argHint(args)))
     summary.dataset.state = 'running'
@@ -583,10 +651,10 @@ Every turn added up, subagents included.${share}${harness}${note}`
    */
   renderTranscript(messages: TranscriptMessage[], notes: readonly SessionNote[] = []): void {
     this.clear()
-    const results = new Map<string, { text: string; failed: boolean }>()
+    const results = new Map<string, { text: string; failed: boolean; pruned: boolean }>()
     for (const message of messages) {
       if (message.role === 'tool' && message.callId !== undefined) {
-        results.set(message.callId, { text: message.text, failed: message.failed === true })
+        results.set(message.callId, { text: message.text, failed: message.failed === true, pruned: message.compacted === 'pruned' })
       }
     }
 
@@ -608,27 +676,41 @@ Every turn added up, subagents included.${share}${harness}${note}`
 
     for (const [index, message] of messages.entries()) {
       drawNotes(index)
-      if (message.role === 'tool') continue
-      if (message.role === 'user') {
-        this.userBlock(message.text)
-        continue
-      }
-      if (message.thinking !== undefined && message.thinking !== '') this.thinkingBlock(message.thinking)
-      if (message.text.trim() !== '') {
-        const pair = this.blockPair('assistant', 'assistant')
-        pair.body.textContent = message.text.trim()
-        // An assistant message with text and no tool calls is where a turn
-        // stopped, which is the same rule the live path uses: the loop runs
-        // until the model asks for nothing more.
-        if ((message.tools ?? []).length === 0) this.markFinal(pair.wrapper)
-      }
-      for (const call of message.tools ?? []) {
-        const card = this.toolCard(call.name, call.args)
-        const output = results.get(call.id)
-        if (output !== undefined) this.finishToolCard(card, output.text, !output.failed)
-      }
+      const from = this.roundNodes.length
+      this.drawMessage(message, results)
+      // What went into a summary is drawn dimmer. It is still the conversation
+      // the user had, and no longer what the model is sent.
+      if (message.compacted === 'compacted') for (const node of this.roundNodes.slice(from)) node.classList.add('folded')
     }
     drawNotes(messages.length)
+  }
+
+  private drawMessage(message: TranscriptMessage, results: ReadonlyMap<string, { text: string; failed: boolean; pruned: boolean }>): void {
+    if (message.role === 'tool') return
+    if (message.summary === true) {
+      this.compactionBlock(message.text)
+      return
+    }
+    if (message.role === 'user') {
+      this.userBlock(message.text)
+      return
+    }
+    if (message.thinking !== undefined && message.thinking !== '') this.thinkingBlock(message.thinking)
+    if (message.text.trim() !== '') {
+      const pair = this.blockPair('assistant', 'assistant')
+      pair.body.textContent = message.text.trim()
+      // An assistant message with text and no tool calls is where a turn
+      // stopped, which is the same rule the live path uses: the loop runs
+      // until the model asks for nothing more.
+      if ((message.tools ?? []).length === 0) this.markFinal(pair.wrapper)
+    }
+    for (const call of message.tools ?? []) {
+      const card = this.toolCard(call.id, call.name, call.args)
+      const output = results.get(call.id)
+      if (output === undefined) continue
+      this.finishToolCard(card, output.text, !output.failed)
+      if (output.pruned) this.markPruned(card)
+    }
   }
 
   /** One live event, for whichever agent this view is showing. */
@@ -660,7 +742,7 @@ Every turn added up, subagents included.${share}${harness}${note}`
       }
       case 'tool_call':
         // Text followed by a tool call was commentary, not the answer.
-        this.toolCards.set(event.call.id, this.toolCard(event.call.name, event.call.args))
+        this.toolCards.set(event.call.id, this.toolCard(event.call.id, event.call.name, event.call.args))
         this.sealAssistant()
         break
       case 'tool_result': {
@@ -674,16 +756,39 @@ Every turn added up, subagents included.${share}${harness}${note}`
         this.noteUsage(event.usage, event.streamMs, event.subagent, event.harness, event.harnessCostUsd)
         break
       case 'round.started':
+        // A compaction that wrote no summary ends without an event of its own,
+        // and the round after it is what says it is over.
         this.startRound()
+        this.activityWord('working')
+        this.host.meter?.setCompacting(false)
         break
+      case 'context':
+        this.host.meter?.show(event.ledger, true)
+        break
+      case 'context.compacting':
+        this.activityWord('compacting')
+        this.host.meter?.setCompacting(true)
+        break
+      case 'context.compacted': {
+        if (event.summary !== undefined) this.compactionBlock(event.summary)
+        for (const id of event.pruned) {
+          const card = this.host.stream.querySelector<HTMLDetailsElement>(`details.block.tool[data-call-id="${CSS.escape(id)}"]`)
+          if (card !== null) this.markPruned(card)
+        }
+        this.host.meter?.setCompacting(false)
+        this.activityWord('working')
+        break
+      }
       case 'round.retry':
         this.rollbackRound()
         this.noteBlock(event.text)
         break
       case 'session.error':
+        this.host.meter?.setCompacting(false)
         this.errorBlock(event.message)
         break
       case 'session.stopped':
+        this.host.meter?.setCompacting(false)
         if (this.thinkingCard !== null) this.thinkingCard.open = false
         // A stopped turn has no answer, only however far it got.
         this.noteBlock('Stopped.')

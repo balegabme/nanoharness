@@ -100,6 +100,17 @@ export class ReadIndex {
   }
 
   /**
+   * Forget which spans are in the conversation and keep the versions. After a
+   * compaction the lines a file was read at may have gone into a summary or
+   * been shortened, so `read` serves the bytes again. The versions stay: the
+   * file was still read at that version, and the freshness rule for `edit`
+   * and `write` compares against the disk.
+   */
+  dropSpans(): void {
+    for (const record of this.seen.values()) record.spans = []
+  }
+
+  /**
    * May a tool rewrite this file? Creating one is always allowed. Replacing
    * content nobody looked at, or content that has changed since, is refused:
    * both would write against a view of the file that is out of date.

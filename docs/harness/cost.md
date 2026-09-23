@@ -42,7 +42,9 @@ from here. Every figure in this report is dollars charged.
 
 The one thing an unpriced turn still contributes is `harnessCostUsd`. The
 approval model is priced at its own rates whatever the session's model is
-(`approval.md`), so that dollar is known and is counted.
+(`approval.md`), so that dollar is known and is counted. A compaction summary
+runs on the session's own model, so on an unpriced turn it adds tokens and no
+dollars.
 
 ## Where it went
 
@@ -53,8 +55,15 @@ total exactly.
 
 - Conversation: the session's own model, on the session's own thread.
 - Subagents: what the agents this turn started spent (`agents.md`).
-- Approval checks: the second model answering permission questions in auto
-  mode.
+- Harness: the second model answering permission questions in auto mode, and
+  the summary requests a compaction makes on the session's own model
+  (`context.md`).
+
+A compaction started from the context panel runs between turns and has no turn
+to belong to. It gets a usage line of its own, stamped with the number of the
+turn it followed and marked `betweenTurns`, and its whole spend is the harness
+share. The line adds to the tokens and the money and to no count of turns, so
+the harness row can show spend beside a count of nought turns.
 
 A phase with nothing in it is left out and never printed as a nought.
 
@@ -83,13 +92,13 @@ breakdown stop adding up to the total above it.
 ## The view
 
 The spend view is drawn where the conversation is, opened from the Spend item
-in the sidebar foot or from the session's own usage line in the topbar, and the
+in the sidebar foot or from the session's tokens panel in the topbar, and the
 back button returns to whatever was open behind it. It belongs to the window
 and not to a session: the tables are every session the log has seen, which
 is why it is not scoped to the one on screen.
 
 The headline is the window and the money, then the turns, cache hit rate,
-tokens each way and throughput as the same pills the topbar uses.
+tokens each way and throughput as the same pills the tokens panel uses.
 
 Under it is a bar per day with the cache hit rate drawn over it. The two share
 a chart because they answer each other: a day the bars jump while the line

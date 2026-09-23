@@ -398,8 +398,10 @@ markdown, syntax highlighting); tool-call cards (one-line collapsed, expand for 
 timestamp + model); thinking block (streams live → collapses to one-line chip, expandable);
 todo widget; permission modal (**Yes / Yes-don't-ask-again / No** + `Tab` comment field);
 diff view (inline word/line + dedicated per-turn/file viewer); slash-command menu;
-status footer (model, folder, git branch, cost, context-% with green/yellow/red
-thresholds, **live tps while streaming**); spinner; `[Image #N]` attachment chips with
+topbar figures (**live tps while streaming**, a tokens button that opens the session's
+spend, and a context ring that fills against the window less the answer's reserve,
+green/amber/red at 60% and 80%, the point where automatic compaction runs; see
+`docs/harness/context.md`); spinner; `[Image #N]` attachment chips with
 thumbnail navigation; snippet picker + composer chips (§9); background job cards; usage
 chips per turn (tokens, cost, cache-hit, tps). Tps = completion tokens ÷ streaming span
 (first delta → last delta), derived renderer-side from existing `text_delta`/`usage`
@@ -467,10 +469,12 @@ The report's **top-10, adopted as build priority**:
 | 10 | Compaction-exempt whitelist + eval-gated rollout: never compact: pinned plan/todos, recent file reads, error state; validate every technique on our task mix | Prevents the state-loss failures that negate items 1-9 |
 
 **Supporting specifics:**
-- Full compaction: **v1 defers it entirely**; escape hatches are context headroom,
-  microcompaction, and transcript resumability (restart with summary). v2 decides between
-  Anthropic-native `context_management` compaction and our own tiers (micro → zero-cost
-  session-memory → API-billed full; preserve system prompt + recent N + pinned). Academic
+- Full compaction: built, and described in `docs/harness/context.md`. It runs at 80% of
+  the window less the answer's reserve, summarises through the session's own model with
+  the cached prefix intact, and keeps the newest 16% of the window verbatim. It prunes
+  long tool results and summarises a flattened history after a provider refuses a
+  request as too long, or when the context is already past the usable space. Microcompaction (item 8) and the exempt whitelist (item 10) are
+  not built. The defaults are borrowed from deepseek-harness and opencode. Academic
   validation band: 20-55% context reduction without accuracy loss (ACON, SWE-Pruner,
   Focus, TACO), but only trust numbers from our own eval mix.
 - Images: Anthropic `(w×h)/750` after ≤1568px fit (halving dims = 25% cost); OpenAI tiles

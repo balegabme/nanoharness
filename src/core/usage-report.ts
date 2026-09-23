@@ -44,7 +44,7 @@ export interface SpendRow extends SpendTotals {
 }
 
 /** Which part of the harness spent it. The three add up to the total. */
-export type Phase = 'conversation' | 'subagents' | 'approval'
+export type Phase = 'conversation' | 'subagents' | 'harness'
 
 export interface UsageReport {
   /** How many days back the window runs, or null for everything recorded. */
@@ -122,14 +122,17 @@ function totalsOf(records: readonly UsageRecord[]): SpendTotals {
 }
 
 function addTurn(totals: SpendTotals, record: UsageRecord): void {
-  totals.turns += 1
   addInto(totals.usage, record.usage)
-  // An unpriced turn still ran the approval model, which is priced at its own
-  // rate: that dollar was spent and is named here. The rest of the turn is not
-  // guessed at, and `unpriced` is what says the figure is short.
+  // An unpriced turn still ran the harness's own requests, which are priced at
+  // their model's rate: that dollar was spent and is named here. The rest of
+  // the turn is not guessed at, and `unpriced` is what says the figure is short.
   totals.costUsd += record.costUsd ?? record.harnessCostUsd
-  if (record.costUsd === null) totals.unpriced += 1
   totals.streamMs += record.streamMs
+  // Spend between turns is in the money and the tokens and in no count of
+  // turns, priced or not.
+  if (record.betweenTurns === true) return
+  totals.turns += 1
+  if (record.costUsd === null) totals.unpriced += 1
 }
 
 /**
@@ -179,11 +182,11 @@ function promptAndOutput(usage: TurnUsage): number {
  * report's total exactly.
  */
 function phaseRows(records: readonly UsageRecord[]): SpendRow[] {
-  const labels: Record<Phase, string> = { conversation: 'Conversation', subagents: 'Subagents', approval: 'Approval checks' }
+  const labels: Record<Phase, string> = { conversation: 'Conversation', subagents: 'Subagents', harness: 'Harness' }
   const rows: Record<Phase, SpendRow> = {
     conversation: blankRow('conversation', labels.conversation),
     subagents: blankRow('subagents', labels.subagents),
-    approval: blankRow('approval', labels.approval),
+    harness: blankRow('harness', labels.harness),
   }
 
   for (const record of records) {
@@ -196,10 +199,11 @@ function phaseRows(records: readonly UsageRecord[]): SpendRow[] {
     // Subagents means three turns that delegated, not three turns in all.
     note(rows.conversation, conversation, spent, record)
     note(rows.subagents, record.subagent, record.subagentCostUsd, record)
-    note(rows.approval, record.harness, record.harnessCostUsd, record)
+    note(rows.harness, record.harness, record.harnessCostUsd, record)
   }
 
-  return [rows.conversation, rows.subagents, rows.approval].filter(row => row.turns > 0)
+  // A harness row can hold nothing but compactions, which are no turns.
+  return [rows.conversation, rows.subagents, rows.harness].filter(row => row.turns > 0 || promptAndOutput(row.usage) > 0)
 }
 
 function blankRow(id: string, label: string): SpendRow {
@@ -208,11 +212,12 @@ function blankRow(id: string, label: string): SpendRow {
 
 function note(row: SpendRow, usage: TurnUsage, costUsd: number, record: UsageRecord): void {
   if (promptAndOutput(usage) === 0 && costUsd === 0) return
-  row.turns += 1
   addInto(row.usage, usage)
   row.costUsd += costUsd
-  if (record.costUsd === null) row.unpriced += 1
   row.at = Math.max(row.at, record.at)
+  if (record.betweenTurns === true) return
+  row.turns += 1
+  if (record.costUsd === null) row.unpriced += 1
 }
 
 /**

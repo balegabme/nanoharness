@@ -11,13 +11,15 @@ Files:
 - src/renderer/composer.ts: the composer in its two seats, and the height the flow clears
 - src/renderer/jobs.ts: the running subagents and the buffered stream of each one
 - src/renderer/sidebar.ts: folders and their sessions, search, add and delete
-- src/renderer/metrics.ts: tokens per second and the cache hit rate, kept away from the DOM so both can be tested
+- src/renderer/metrics.ts: tokens per second, the cache hit rate and short token counts, kept away from the DOM so they can be tested
 - src/renderer/facts.ts: the effort scale, what a model takes and what it costs; a copy of what src/core/config.ts and src/core/cost.ts define, held against them by src/providers/model-facts.test.ts
 - src/renderer/chat.ts: the message flow, drawn the same for the main agent and for an opened subagent, with streamed text, thinking, tool rows, notes and replayed transcripts
 - src/renderer/settings.ts: the settings sheet, with the provider list, form, probe and model ticking
 - src/renderer/permission.ts: the modal a tool waits on when it reaches outside its folder
 - src/renderer/confirm.ts: the app's own yes/no and one-line-of-text sheets, in place of the browser's `confirm()` and `prompt()`
 - src/renderer/menu.ts: the right-click menu, one at a time, placed near the pointer, closed by the next thing the user does
+- src/renderer/popover.ts: the panel a topbar button opens, placed under it and closed by Escape or a click elsewhere
+- src/renderer/context-meter.ts: the context ring and its panel, with the parts, the compactions and the controls
 - src/renderer/notify.ts: the blip and desktop notification when a turn ends or asks for approval
 - src/renderer/match.ts: whether a model id is what somebody typing into the filter box meant to find
 - src/renderer/dom.ts: the small DOM helpers the rest share
@@ -35,7 +37,7 @@ half-written message and the caret survive the move.
 
 ```
 +- sidebar ----------+- session ------------------------------+
-| mark            [|]| title . folder    in/out/cached . hit  |
+| mark            [|]| title . folder   tok/s  tokens  (66%) |
 | [ + New session ]  +----------------------------------------+
 | [ search        ]  | you                                    |
 | FOLDERS         +  | thinking >                             |
@@ -78,42 +80,83 @@ will land, and it goes the moment anything is appended. A session that has been
 started but not answered yet is otherwise a blank rectangle with a composer
 under it, which reads as broken instead of ready.
 
-The running total sits in the topbar, to the right of the title, as a row of
-small pills: in, out, cached, what it has spent, hit rate, and tokens per
-second, plus reasoning and cache-written where there are any. The spend appears
-only once a model has a price, and it is the session's whole total put through
-the rate of the model selected now, so a session that switched models is an
-estimate; the tooltip says as much. The exact figure for one turn is on that
-turn's own summary line, priced by the model that ran it. A turn that delegates
-gets one more, **by agents**, which is how much of the output was written by
-subagents this session started. A session can read fifty thousand out while
-having written a paragraph itself, and the single total cannot say which of
-those happened. The pill is quieter than the ones beside it, because it is an
-aside about `out` and not a measure of its own. It is stored with the session's
-total, so a session re-opened a week later still shows the split and never
-folds it back into one number. Each pill is a bright number and a
-dim name, so the row reads as numbers first and labels second. Everything the
-hit rate divides by is on the row, so the percentage can be checked against the
-numbers beside it.
+The topbar carries three figures to the right of the title. The first is the
+rate, tokens per second, as plain text while a stream runs and for the last
+turn after it. The other two are buttons, one for what the session has spent
+and one for how full its context is, and each opens a panel with the detail.
 
-Neither number is taken off the clock in the window. The `usage` event carries
-the running total and `streamMs`, the time the model actually spent generating
-that round, because by the time an event arrives the gap since the last one is
-mostly whatever tool ran in between: a turn with one slow bash call in it used
-to report the model at a fraction of its real speed. Tokens and generating-time
-accumulate across the turn, and a turn that has generated for under 0.4s shows
-no rate at all, where a noisy one would be worse. A subagent's usage carries no
-`streamMs`, so it adds to the counters and stays out of the rate. Re-opening a
-session shows its stored totals without a rate, because nothing has been timed
-yet. `metrics.ts` has both, away from the DOM so both are tested.
+Neither the rate nor its tokens are taken off the clock in the window. The
+`usage` event carries the running total and `streamMs`, the time the model
+actually spent generating that round, because by the time an event arrives the
+gap since the last one is mostly whatever tool ran in between, and a turn with
+one slow bash call in it would report the model at a fraction of its real
+speed. Tokens and generating-time accumulate across the turn, and a turn that
+has generated for under 0.4s shows no rate at all, where a noisy one would be
+worse. A subagent's usage carries no `streamMs`, so it adds to the counters and
+stays out of the rate. A finished turn that generated anything stores its output
+and generating time on the session record, so a session opened from the list shows the rate of its
+last turn, on the same 0.4s floor. A subagent opened from the list shows none.
+`metrics.ts` has the arithmetic, away from the DOM so it is tested.
 
-The topbar is where that row belongs. It is a fact about the session, like the
-title and the folder beside it, and not a control. On the control row the chips
-squeezed it out, and a line of its own under them was worse still: it landed on
-the card's rounded bottom corner next to the send button and read as hanging
-outside the card. The total is stored with the session, so re-opening one shows
-what it has already cost instead of starting the count at zero, and the rebuilt
-session picks the total back up and carries on adding to it.
+The tokens button is the session's whole spend in one short count, such as
+`669k tokens`. Its panel holds the breakdown as a row of pills: in, out,
+cached, what it has spent and hit rate, plus reasoning and cache-written where
+there are any. The spend appears only once a model has a price, and it is the
+session's whole total put through the rate of the model selected now, so a
+session that switched models is an estimate, and the note under the pills says
+so. The exact figure for one turn is on that turn's own summary line, priced by
+the model that ran it. A turn that delegates gets one more pill, **by agents**,
+which is how much of the output was written by subagents this session started.
+A session can read fifty thousand out while having written a paragraph itself,
+and the single total cannot say which of those happened. The pill is quieter
+than the ones beside it, because it is an aside about `out` and not a measure
+of its own. Harness spend, the approval checks and compaction summaries, is
+counted the same way. Both are stored with the session's total, so a session
+re-opened a week later still shows the split. Each pill is a bright number and a
+dim name, so the row reads as numbers first and labels second, and everything
+the hit rate divides by is on the row so the percentage can be checked. A link
+at the bottom opens the spend view.
+
+The context button is a ring and a percentage: the next request against the
+usable space, the window (or the user's limit, where that is smaller) less the
+room kept for the answer. `context.md` has
+how the figure is measured. The ring is green below 60%, amber below the
+automatic threshold and red from it, so red means the harness is about to step
+in. With no usable space known, because neither the window nor a limit is
+known or the reserve fills it, the ring stays empty and the label is the size in tokens. The ring pulses while a compaction runs.
+
+Its panel shows the size against the usable space, then the window, the limit
+where it is the smaller, the reserve and the usable space on one line. Under that is a bar of the request's parts
+with a tick at the automatic threshold, so the gap between the end of the bar
+and the tick is the room left, and a table of the parts in tokens and as shares.
+A line says how much of the total the provider counted and how much is
+estimated since. A warning follows where no window is known or automatic
+compaction is off, then the compactions so far, newest first, and the controls:
+**Compact now** and the automatic toggle, then a field for the limit on the
+context in tokens. The toggle and the limit are each one setting for every
+session. An empty field clears the limit, and anything that is not a whole
+number above nought puts the old value back. The panel is not redrawn while the
+field has focus, since a running turn sends a new ledger every round and would
+wipe what is being typed. A draw held back that way waits, when the field loses
+focus, for the click that took the focus away, so the control being clicked is
+not replaced under it. **Compact now** is disabled while a turn runs, because the turn checks
+before every request on its own. A session opened from the list shows the
+ledger it was left with, and a line saying so, until the next message makes it
+live.
+
+The topbar is where these belong. They are facts about the session, like the
+title and the folder beside it. On the control row the chips squeezed them out,
+and a line under the chips landed on the card's rounded bottom corner next to
+the send button. The totals and the ledger are stored with the session, so
+re-opening one shows what it has cost and how full it was, and the rebuilt
+session carries on from there.
+
+A panel opens under its button (`popover.ts`) and only one is open at a time.
+It closes on Escape, on a click outside it, and when the view moves to another
+session or out of a subagent, where it would describe something no longer on
+screen. It lives at the end of `<body>` with fixed coordinates, because the
+topbar clips what overflows it. Escape is caught before the composer sees it,
+where it would also stop the running turn.
 
 The control row is measured against the composer card, never the window,
 because the same card is narrow with the rail open and wide with it collapsed.
@@ -189,6 +232,18 @@ paragraph, the thinking and the tool cards that belong to an answer which no
 longer exists, and then writes the note saying which attempt is coming. The
 alternative is leaving the reader to work out which half of two interleaved
 answers is the real one. `providers.md` has what counts as worth asking again.
+
+A compaction is drawn where it happened: a rule across the flow in the accent
+colour, the summary under it folded away like thinking, and the note saying
+what was summarised and shortened. While it runs the activity line reads
+`compacting`. The messages that went into a summary stay on screen at half
+strength. They are still the conversation the user had, and the model no longer
+sees them. A tool card whose output now goes to the model shortened gets a
+`shortened` chip, with a tooltip saying how much of it the model still gets;
+the card keeps the whole output. The dimming is drawn from the stored markers
+when the transcript is drawn, so an automatic compaction in the middle of a
+turn dims its blocks the next time the session is opened. A compaction by hand
+redraws the session at once.
 
 Re-opening a session replays its stored messages and tool calls, refusals
 included: a tool that was denied comes back marked failed and never dressed up
@@ -458,6 +513,12 @@ prompt, tools and history, a `distinct` one starts from its task and nothing
 else. Reading what a subagent said without knowing which it was is reading half
 of it.
 
+The head also has the topbar's three figures, drawn from the child's own
+events: its rate, its tokens and its context ring. The context panel there has
+no controls. A subagent compacts on the same setting as everything else, and
+there is nothing to do about its context from outside it. A finished one shows
+the ledger it ended with.
+
 Only running subagents are held in memory. `jobs.ts` keeps the facts and the
 buffer of each one that is in flight, and drops both when it finishes, because
 by then the child's whole conversation is on disk and opening it afterwards
@@ -491,8 +552,8 @@ next week opens its diffs the same way it opens its subagents.
 
 The third thing drawn where the conversation is, after a subagent and a diff,
 and the only one of them that is not a session's: what every session has spent,
-opened from the Spend item in the sidebar foot or from the topbar usage line,
-and left by the same back button. It covers whatever was open instead of
+opened from the Spend item in the sidebar foot or from the tokens panel, and
+left by the same back button. It covers whatever was open instead of
 closing it, so back returns to the diff or the subagent that was there.
 
 The renderer does no arithmetic on it. The main process sends a finished report
@@ -574,7 +635,8 @@ the model never sees the value.
    drawn in), `--nh-accent-*` terracotta, and green/red/amber for state. Raw
    colour, never touched by a component.
 2. alias: `--nh-bg-*`, `--nh-border-*`, `--nh-label-*`, `--nh-button-*`,
-   `--nh-state-*`. What a colour is *for*. The only layer that names intent.
+   `--nh-state-*`, and `--nh-part-*` for the parts of the context. What a
+   colour is *for*. The only layer that names intent.
 3. components: read alias tokens and nothing else.
 
 There is one set of alias values, because the app is dark and only dark (plan

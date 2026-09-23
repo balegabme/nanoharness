@@ -91,7 +91,7 @@ function draw(report: UsageReport): void {
   const page = document.createDocumentFragment()
   page.append(headline(report))
 
-  if (report.totals.turns === 0) {
+  if (ranNothing(report.totals)) {
     page.append(el('p', 'cost-empty', report.skipped > 0 ? skippedText(report.skipped) : 'Nothing spent in this window.'))
     body.replaceChildren(page)
     return
@@ -353,7 +353,15 @@ function throughput(totals: SpendTotals): number | null {
 
 function dayDetail(row: SpendRow): string {
   const spent = `${dayText(row.id)} · ${moneyText(row.costUsd)}`
-  return row.turns === 0 ? `${spent} · nothing ran` : `${spent} · ${turnsText(row.turns)} · cache hit ${hitText(row.usage)}`
+  return ranNothing(row) ? `${spent} · nothing ran` : `${spent} · ${turnsText(row.turns)} · cache hit ${hitText(row.usage)}`
+}
+
+/**
+ * Whether anything was sent at all. A count of turns is not enough to tell: a
+ * compaction started by hand spends tokens between turns and counts as none.
+ */
+function ranNothing(row: SpendTotals | SpendRow): boolean {
+  return promptTokens(row.usage) + row.usage.output === 0
 }
 
 /** `YYYY-MM-DD` as the axis says it. Built from the parts, so it stays local. */

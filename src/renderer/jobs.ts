@@ -1,5 +1,5 @@
 // doc: docs/harness/ui.md
-import type { AppEvent, ToolStats, TurnUsage } from '../core/types.js'
+import type { AppEvent, ContextLedger, ToolStats, TurnUsage } from '../core/types.js'
 import type { JobView } from '../core/jobs.js'
 import type { NanoBridge } from '../ipc/contract.js'
 
@@ -42,6 +42,13 @@ const BUFFER_KEEP = 3000
 
 /** What each subagent has spent, from its own usage events as they arrive. */
 const spending = new Map<string, TurnUsage>()
+
+/**
+ * Each subagent's context as of its last ledger. Kept apart from the buffer,
+ * because a ledger arrives with every message and only the newest one means
+ * anything.
+ */
+const contexts = new Map<string, ContextLedger>()
 
 const LABEL: Record<JobView['state'], string> = {
   running: 'running',
@@ -101,6 +108,11 @@ export function spendingOf(id: string): TurnUsage {
   return spending.get(id) ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0 }
 }
 
+/** One subagent's context, or null before its first ledger. */
+export function contextOf(id: string): ContextLedger | null {
+  return contexts.get(id) ?? null
+}
+
 /**
  * Drop a finished subagent. Its transcript is on disk by the time it finishes,
  * so nothing is lost: the next time it is opened it is read from there.
@@ -112,6 +124,7 @@ export function forget(id: string): void {
   jobs = jobs.filter(entry => entry.id !== id)
   buffers.delete(id)
   spending.delete(id)
+  contexts.delete(id)
 }
 
 /**
@@ -147,7 +160,8 @@ function buffer(event: StreamEvent): void {
 export function handleSubagentEvent(event: AppEvent): void {
   if (!('sessionId' in event)) return
   if (event.type === 'usage') spending.set(event.sessionId, event.usage)
-  buffer(event)
+  if (event.type === 'context') contexts.set(event.sessionId, event.ledger)
+  else buffer(event)
   handlers?.event(event)
 }
 

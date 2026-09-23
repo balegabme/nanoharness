@@ -9,7 +9,7 @@ import { emptyUsage } from '../core/types.js'
 import type { AgentRole } from '../core/agents.js'
 import type { JobState } from '../core/jobs.js'
 import type { SpawnMode } from '../core/spawn.js'
-import type { ChatMessage, SessionNote, ToolStats, TurnUsage } from '../core/types.js'
+import type { ChatMessage, CompactionRecord, ContextLedger, SessionNote, ToolStats, TurnRate, TurnUsage } from '../core/types.js'
 import type { UsageNames } from '../core/usage-report.js'
 import type { SessionView, TranscriptMessage, WorkspaceStatus, WorkspaceView } from '../ipc/contract.js'
 
@@ -40,10 +40,18 @@ interface StoredSession {
   usage?: TurnUsage
   /** The subagents' share of `usage`, so a re-opened session keeps the split. */
   subagentUsage?: TurnUsage
-  /** The harness's own share of `usage`: approval checks and anything like them. */
+  /** The harness's own share of `usage`: approval checks and compaction summaries. */
   harnessUsage?: TurnUsage
   /** What that share cost, summed at the prices of the models that ran it. */
   harnessCostUsd?: number
+  /**
+   * The context as it stood when the session last stopped, so the meter has
+   * something to show before the session is built again. The live session
+   * measures its own from its first request.
+   */
+  context?: ContextLedger
+  /** The last turn's rate, for the topbar of a re-opened session. */
+  rate?: TurnRate
 }
 
 interface WorkspaceState {
@@ -99,6 +107,8 @@ export interface StoredSubagent {
   endedAt: number
   messages: ChatMessage[]
   notes: SessionNote[]
+  /** Its context when it ended. Absent when the stored one cannot be read. */
+  context?: ContextLedger
 }
 
 export async function saveSubagent(record: StoredSubagent): Promise<string> {
@@ -119,6 +129,7 @@ export async function loadSubagent(sessionId: string, jobId: string): Promise<St
     // The window draws whatever is here, so a field that is not three numbers
     // is dropped, and never handed on to be read as a count.
     if (!isToolStats(parsed.tools)) delete parsed.tools
+    if (!isLedger(parsed.context)) delete parsed.context
     return parsed
   } catch {
     return null
@@ -149,7 +160,7 @@ export function parseState(parsed: unknown): WorkspaceState {
   if (Array.isArray(raw.sessions)) {
     for (const entry of raw.sessions) {
       if (typeof entry !== 'object' || entry === null) continue
-      const { id, workspaceId, title, role, createdAt, updatedAt, usage, subagentUsage, harnessUsage, harnessCostUsd } = entry as Record<string, unknown>
+      const { id, workspaceId, title, role, createdAt, updatedAt, usage, subagentUsage, harnessUsage, harnessCostUsd, context, rate } = entry as Record<string, unknown>
       const [i, w] = [str(id), str(workspaceId)]
       if (i === null || w === null) continue
       // A session whose workspace is gone would be unreachable in the sidebar.
@@ -171,6 +182,8 @@ export function parseState(parsed: unknown): WorkspaceState {
         ...(isUsage(subagentUsage) ? { subagentUsage } : {}),
         ...(isUsage(harnessUsage) ? { harnessUsage } : {}),
         ...(typeof harnessCostUsd === 'number' && Number.isFinite(harnessCostUsd) && harnessCostUsd >= 0 ? { harnessCostUsd } : {}),
+        ...(isLedger(context) ? { context } : {}),
+        ...(isRate(rate) ? { rate } : {}),
       })
     }
   }
@@ -180,10 +193,47 @@ export function parseState(parsed: unknown): WorkspaceState {
 
 const USAGE_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite', 'reasoning'] as const
 
+function isRate(value: unknown): value is TurnRate {
+  if (typeof value !== 'object' || value === null) return false
+  const raw = value as Record<string, unknown>
+  return isCount(raw.output) && isCount(raw.streamMs)
+}
+
 function isUsage(value: unknown): value is TurnUsage {
   if (typeof value !== 'object' || value === null) return false
   const raw = value as Record<string, unknown>
   return USAGE_KEYS.every(key => typeof raw[key] === 'number')
+}
+
+const PART_KEYS = ['system', 'tools', 'user', 'assistant', 'thinking', 'toolResults', 'summary'] as const
+const REASONS: readonly unknown[] = ['auto', 'manual', 'overflow']
+
+function isCount(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+}
+
+/**
+ * A stored ledger is drawn as it is, so every field the meter reads has to be
+ * the kind of value it expects. One that is not is dropped whole, and the meter
+ * waits for the session to measure again.
+ */
+function isLedger(value: unknown): value is ContextLedger {
+  if (typeof value !== 'object' || value === null) return false
+  const raw = value as Record<string, unknown>
+  const counts = [raw.tokens, raw.estimated, raw.reserve, raw.at].every(isCount)
+  const optional = [raw.measured, raw.window, raw.limit, raw.room, raw.usable, raw.threshold].every(field => field === null || isCount(field))
+  if (!counts || !optional || typeof raw.auto !== 'boolean') return false
+  if (typeof raw.calibration !== 'number' || !(raw.calibration > 0) || typeof raw.model !== 'string') return false
+  if (typeof raw.parts !== 'object' || raw.parts === null) return false
+  const parts = raw.parts as Record<string, unknown>
+  if (!PART_KEYS.every(key => isCount(parts[key]))) return false
+  return Array.isArray(raw.compactions) && raw.compactions.every(isCompaction)
+}
+
+function isCompaction(value: unknown): value is CompactionRecord {
+  if (typeof value !== 'object' || value === null) return false
+  const raw = value as Record<string, unknown>
+  return REASONS.includes(raw.reason) && [raw.at, raw.before, raw.after].every(isCount)
 }
 
 function isToolStats(value: unknown): value is ToolStats {
@@ -298,6 +348,12 @@ export async function setSessionRole(id: string, role: AgentRole): Promise<Sessi
   return session
 }
 
+/** The context a session was left with, for the compactions and the calibration of the session rebuilt from it. */
+export async function sessionContext(id: string): Promise<ContextLedger | null> {
+  const state = await readState()
+  return state.sessions.find(s => s.id === id)?.context ?? null
+}
+
 /** What a session has spent so far, for seeding it when it is rebuilt. */
 export async function sessionUsage(id: string): Promise<SessionSpend | null> {
   const state = await readState()
@@ -321,22 +377,39 @@ export interface SessionSpend {
   harnessCostUsd: number
 }
 
+/** What the index keeps about a live session between launches. */
+export interface SessionState {
+  spend: SessionSpend
+  context: ContextLedger
+  /** Present after a turn. A write between turns leaves the stored rate as it was. */
+  rate?: TurnRate
+}
+
 /**
- * Write a session's running total without touching anything else about it.
+ * Write a session's running total and its context without touching anything
+ * else about it.
  *
  * A background subagent finishes after the turn that started it, so its tokens
- * land on the parent's counter with no turn left to store them: without this
- * the window and the file disagree until the next message is sent.
+ * land on the parent's counter with no turn left to store them, and a
+ * compaction the user asked for runs between turns. Without this the window
+ * and the file disagree until the next message is sent.
  */
-export async function setSessionUsage(id: string, spend: SessionSpend): Promise<void> {
+export async function setSessionState(id: string, update: SessionState): Promise<SessionView | null> {
   const state = await readState()
   const session = state.sessions.find(s => s.id === id)
-  if (session === undefined) return
-  session.usage = spend.total
-  session.subagentUsage = spend.subagents
-  session.harnessUsage = spend.harness
-  session.harnessCostUsd = spend.harnessCostUsd
+  if (session === undefined) return null
+  apply(session, update)
   await writeState(state)
+  return session
+}
+
+function apply(session: StoredSession, update: SessionState): void {
+  session.usage = update.spend.total
+  session.subagentUsage = update.spend.subagents
+  session.harnessUsage = update.spend.harness
+  session.harnessCostUsd = update.spend.harnessCostUsd
+  session.context = update.context
+  if (update.rate !== undefined) session.rate = update.rate
 }
 
 /** Which agent a session is talking to, or null once the session is gone. */
@@ -382,19 +455,14 @@ export async function sessionRoot(id: string): Promise<string | null> {
  * A session is named after the first thing asked of it, which is what the user
  * will recognise in the sidebar. Later messages only move it up the list.
  */
-export async function noteTurn(id: string, firstText: string, spend?: SessionSpend): Promise<SessionView | null> {
+export async function noteTurn(id: string, firstText: string, update?: SessionState): Promise<SessionView | null> {
   const state = await readState()
   const session = state.sessions.find(s => s.id === id)
   if (session === undefined) return null
   session.updatedAt = Date.now()
-  // The session's own running total, so re-opening it shows what it has cost
-  // and does not start the count at zero.
-  if (spend !== undefined) {
-    session.usage = spend.total
-    session.subagentUsage = spend.subagents
-    session.harnessUsage = spend.harness
-    session.harnessCostUsd = spend.harnessCostUsd
-  }
+  // The session's own running total and context, so re-opening it shows what
+  // it has cost and how full it is, and does not start either at zero.
+  if (update !== undefined) apply(session, update)
   if (session.title === 'New session') {
     const line = firstText.trim().replace(/\s+/g, ' ')
     if (line !== '') session.title = line.length > TITLE_MAX ? `${line.slice(0, TITLE_MAX - 1)}…` : line
@@ -461,11 +529,14 @@ export function toTranscriptView(messages: ChatMessage[]): TranscriptMessage[] {
         text: message.content,
         callId: message.toolCallId,
         ...(message.failed === true ? { failed: true } : {}),
+        ...(message.compacted === undefined ? {} : { compacted: message.compacted }),
       })
       continue
     }
     if (message.role === 'system') continue
     const view: TranscriptMessage = { role: message.role, text: message.content }
+    if (message.compacted !== undefined) view.compacted = message.compacted
+    if (message.summary === true) view.summary = true
     // Signed or not, the thinking is what explains the turn, so a re-opened
     // session shows it. Whether it goes back on the wire is the provider's
     // business, not the transcript's.

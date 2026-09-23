@@ -4,7 +4,8 @@
  *
  *   1. ramp    --nh-warm-*, --nh-accent-*, --nh-green/red/amber-*
  *              Raw colour. Never referenced by a component.
- *   2. alias   --nh-bg-*, --nh-border-*, --nh-label-*, --nh-button-*, --nh-state-*
+ *   2. alias   --nh-bg-*, --nh-border-*, --nh-label-*, --nh-button-*, --nh-state-*,
+ *              --nh-part-*
  *              What a colour is FOR. The only layer a theme redefines.
  *   3. component
  *              Reads alias tokens only.
@@ -134,6 +135,17 @@
   --nh-state-ok: var(--nh-green-300);
   --nh-state-error: var(--nh-red-300);
   --nh-state-warn: var(--nh-amber-400);
+
+  /* The parts of the context, in the bar and the table under it. The fixed
+     parts are neutral and the conversation is shades of the accent, so the
+     green, amber and red of the ring keep meaning how full it is. */
+  --nh-part-system: var(--nh-warm-600);
+  --nh-part-tools: var(--nh-warm-500);
+  --nh-part-summary: var(--nh-accent-200);
+  --nh-part-user: var(--nh-accent-300);
+  --nh-part-assistant: var(--nh-accent-500);
+  --nh-part-thinking: var(--nh-accent-700);
+  --nh-part-results: var(--nh-warm-300);
 
   --nh-scrollbar-l1: rgb(255 255 255 / 12%);
   --nh-scrollbar-l1-hover: rgb(255 255 255 / 20%);
@@ -1040,11 +1052,6 @@ body {
   font-size: 12px;
 }
 
-/* The session's own total is also the way into every session's. */
-.usage-line.link {
-  cursor: pointer;
-}
-
 .side-foot {
   display: flex;
   align-items: center;
@@ -1524,6 +1531,64 @@ details.block pre + pre {
   border-radius: 0 0 var(--nh-radius-card) var(--nh-radius-card);
 }
 
+/* Where a compaction took effect. The rule is the accent because it is the
+   harness acting on the conversation, and the summary under it is folded like
+   thinking, since it is context and not something anyone said. */
+.block.compaction {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.compaction-rule {
+  height: 1px;
+  background: var(--nh-accent-line);
+}
+
+.compaction-summary {
+  border: 1px dashed var(--nh-border-l2);
+  border-radius: var(--nh-radius-card);
+}
+
+.compaction-summary > summary {
+  padding: 6px var(--s3);
+  color: var(--nh-accent);
+  font: 500 12px var(--nh-font-sans);
+  cursor: pointer;
+  list-style: none;
+}
+
+.compaction-summary > summary::-webkit-details-marker {
+  display: none;
+}
+
+.compaction-summary pre {
+  margin: 0;
+  padding: var(--s2) var(--s3);
+  max-height: 420px;
+  overflow: auto;
+  border-top: 1px solid var(--nh-border-l1);
+  color: var(--nh-label-tertiary);
+  font: 400 12px/1.55 var(--nh-font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* What went into a summary. Still the conversation the user had, and dimmed
+   because the model no longer sees it. */
+.block.folded {
+  opacity: 0.5;
+}
+
+/* On a tool card whose output now goes to the model shortened. */
+.chip.pruned {
+  height: 18px;
+  padding: 0 6px;
+  background: var(--nh-accent-wash);
+  color: var(--nh-accent);
+  font-size: 10.5px;
+}
+
 /* Thinking is context, not the answer: present, and quieter than everything
    else on screen. */
 .block.thinking {
@@ -1755,8 +1820,7 @@ details.block pre + pre {
   min-width: 0;
 }
 
-/* In the topbar, not on the composer: the control row squeezes it out, and the
-   card's bottom corner is where it collided with the send button. */
+/* A row of metric pills, as the spend view's headline draws them. */
 .usage-line {
   display: flex;
   align-items: center;
@@ -2659,6 +2723,7 @@ button.chip:hover:enabled,
 
 .model-efforts,
 .model-costs,
+.model-window,
 .model-vision {
   display: flex;
   flex-wrap: wrap;
@@ -2687,7 +2752,7 @@ button.chip:hover:enabled,
 }
 
 .price-field input {
-  width: 84px;
+  width: 96px;
   padding: 2px var(--s2);
   border: 1px solid var(--nh-border-l2);
   border-radius: var(--nh-radius-chip);
@@ -2865,6 +2930,261 @@ button.chip:hover:enabled,
 .provider-row:hover .provider-remove,
 .provider-remove:focus-visible {
   opacity: 1;
+}
+
+/* ── 12. topbar buttons and their panels ─────────────────────────────── */
+
+/* The tokens and context buttons. They read like the metric pills they
+   replaced and are buttons because each opens a panel. */
+.topbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  height: 26px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--nh-radius-chip);
+  background: transparent;
+  color: var(--nh-label-caption);
+  font: 400 10.5px/1 var(--nh-font-sans);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--nh-fast) var(--nh-ease);
+}
+
+.topbar-btn:hover,
+.topbar-btn[aria-expanded="true"] {
+  background: var(--nh-hover);
+}
+
+.topbar-btn b,
+.meter-label {
+  color: var(--nh-label-secondary);
+  font: 500 11.5px/1 var(--nh-font-sans);
+  font-variant-numeric: tabular-nums;
+}
+
+.meter-ring circle {
+  fill: none;
+  stroke-width: 2.5;
+}
+
+.meter-track {
+  stroke: var(--nh-border-l3);
+}
+
+.meter-fill {
+  stroke: var(--nh-state-ok);
+  stroke-linecap: round;
+  transition: stroke-dasharray var(--nh-base) var(--nh-ease);
+}
+
+.meter[data-level="warn"] .meter-fill {
+  stroke: var(--nh-state-warn);
+}
+
+.meter[data-level="high"] .meter-fill {
+  stroke: var(--nh-state-error);
+}
+
+.meter[data-level="high"] .meter-label {
+  color: var(--nh-state-error);
+}
+
+/* While a compaction runs the ring breathes, the pulse a busy chip has. */
+.meter.compacting .meter-ring {
+  animation: pulse 0.9s var(--nh-ease) infinite alternate;
+}
+
+/* The panel. The surface the right-click menu is drawn on, wider, and
+   scrolled when the window is short. */
+.popover {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  width: 340px;
+  max-width: calc(100vw - 16px);
+  padding: var(--s3);
+  overflow-y: auto;
+  border: 1px solid var(--nh-border-l2);
+  border-radius: var(--nh-radius-card);
+  background: var(--nh-bg-layer-2);
+  box-shadow: var(--nh-shadow-lv2);
+  color: var(--nh-label-secondary);
+  font: 400 12px/1.5 var(--nh-font-sans);
+  animation: rise var(--nh-fast) var(--nh-ease) backwards;
+}
+
+.pop-title {
+  color: var(--nh-label-tertiary);
+  font: 500 10.5px var(--nh-font-sans);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.pop-figure {
+  color: var(--nh-label-primary);
+  font: 600 18px/1.2 var(--nh-font-sans);
+  font-variant-numeric: tabular-nums;
+}
+
+.pop-line,
+.pop-note {
+  margin: 0;
+  color: var(--nh-label-caption);
+  font-size: 11.5px;
+  white-space: pre-line;
+}
+
+.pop-note.warn {
+  color: var(--nh-state-warn);
+}
+
+.pop-sub {
+  color: var(--nh-label-tertiary);
+  font-weight: 500;
+}
+
+.pop-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+}
+
+.pop-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding-top: var(--s1);
+}
+
+.pop-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--nh-label-secondary);
+  cursor: pointer;
+}
+
+.pop-toggle input {
+  margin: 0;
+  accent-color: var(--nh-accent);
+}
+
+/* The parts of the next request against the usable space. The tick is where
+   automatic compaction runs. */
+.ctx-bar {
+  position: relative;
+  display: flex;
+  height: 8px;
+  border-radius: var(--nh-radius-pill);
+  background: var(--nh-bg-layer-1);
+}
+
+.ctx-seg {
+  height: 100%;
+}
+
+.ctx-seg:first-child {
+  border-radius: var(--nh-radius-pill) 0 0 var(--nh-radius-pill);
+}
+
+.ctx-tick {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--nh-label-tertiary);
+}
+
+.ctx-parts {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: 3px var(--s2);
+  align-items: center;
+}
+
+.ctx-row {
+  display: contents;
+}
+
+.ctx-row b {
+  color: var(--nh-label-secondary);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.ctx-share {
+  min-width: 3ch;
+  color: var(--nh-label-caption);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.ctx-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.ctx-seg,
+.ctx-swatch {
+  background: var(--part);
+}
+
+.part-system {
+  --part: var(--nh-part-system);
+}
+
+.part-tools {
+  --part: var(--nh-part-tools);
+}
+
+.part-summary {
+  --part: var(--nh-part-summary);
+}
+
+.part-user {
+  --part: var(--nh-part-user);
+}
+
+.part-assistant {
+  --part: var(--nh-part-assistant);
+}
+
+.part-thinking {
+  --part: var(--nh-part-thinking);
+}
+
+.part-toolResults {
+  --part: var(--nh-part-results);
+}
+
+.ctx-history {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: var(--s1);
+  border-top: 1px solid var(--nh-border-l1);
+}
+
+.ctx-compaction {
+  display: flex;
+  gap: var(--s2);
+  color: var(--nh-label-caption);
+}
+
+.ctx-freed {
+  flex: 1;
+  color: var(--nh-label-secondary);
+  font-variant-numeric: tabular-nums;
 }
 
 /* ── 13. about ───────────────────────────────────────────────────────── */

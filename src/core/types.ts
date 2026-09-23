@@ -10,6 +10,15 @@ export interface TurnUsage {
   reasoning: number
 }
 
+/**
+ * What the model generated in a turn's own rounds and how long it spent
+ * generating it, tools excluded. Output over time is the rate the topbar shows.
+ */
+export interface TurnRate {
+  output: number
+  streamMs: number
+}
+
 export interface ToolCall {
   id: string
   name: string
@@ -101,6 +110,75 @@ export function cacheHitRate(usage: TurnUsage): number | null {
 }
 
 /**
+ * Where the next request's tokens go, part by part. Estimated per part and
+ * scaled so the parts add up to `ContextLedger.tokens`.
+ */
+export interface ContextParts {
+  system: number
+  tools: number
+  user: number
+  /** The model's own words and the arguments of its tool calls. */
+  assistant: number
+  /** Thinking that goes back on the wire. Thinking a wire drops is not counted. */
+  thinking: number
+  toolResults: number
+  summary: number
+}
+
+/** Why a compaction ran. */
+export type CompactionReason = 'auto' | 'manual' | 'overflow'
+
+/** One compaction, as the context panel lists it. */
+export interface CompactionRecord {
+  at: number
+  reason: CompactionReason
+  /** The context in tokens before and after, as the ledger had them. */
+  before: number
+  after: number
+}
+
+/**
+ * How big the next request is and how close it is to the model's window. See
+ * `docs/harness/context.md` for how each figure is arrived at.
+ */
+export interface ContextLedger {
+  /** The size of the next request as sent, in tokens. */
+  tokens: number
+  /**
+   * What the provider reported for the last request's prompt, when that request
+   * still describes what goes out. Null before the first response, and after a
+   * compaction until the next one.
+   */
+  measured: number | null
+  /** The estimated part of `tokens`: everything since the measured request, or all of it. */
+  estimated: number
+  /** The model's window. Null where nobody has said. */
+  window: number | null
+  /** The most the user lets a context grow to, from settings. Null for no limit. */
+  limit: number | null
+  /** The window compaction works against: the smaller of the two. Null when neither is known. */
+  room: number | null
+  /** Tokens kept free for the answer. */
+  reserve: number
+  /** Room minus reserve. Null with no room, or when the reserve fills it. */
+  usable: number | null
+  /** The size at which automatic compaction runs. Null with no usable space. */
+  threshold: number | null
+  /**
+   * Provider tokens per estimated token when the ledger was taken, so a
+   * session rebuilt from it estimates with the correction it had measured.
+   */
+  calibration: number
+  /** The model `calibration` was measured on. Another model has another tokenizer. */
+  model: string
+  parts: ContextParts
+  /** Whether automatic compaction is on. */
+  auto: boolean
+  compactions: CompactionRecord[]
+  at: number
+}
+
+/**
  * A block of the model's own reasoning. Anthropic signs each one and requires
  * it back unmodified and in order, so the signature travels with the text.
  */
@@ -146,6 +224,27 @@ export type AppEvent =
   // dialling. The window asks for the same thing when a session is opened; this
   // is the push for the case where the answer arrives after the question.
   | { type: 'mcp.status'; sessionId: string; servers: McpServerStatus[]; live: boolean; at: number }
+  // The context ledger changed: a response measured it, a message grew it, a
+  // compaction shrank it, or the model's window was edited.
+  | { type: 'context'; sessionId: string; ledger: ContextLedger; at: number }
+  // A compaction is under way. The summary is a request of its own and can take
+  // as long as a round does, so the window says what the wait is for.
+  | { type: 'context.compacting'; sessionId: string; reason: CompactionReason; at: number }
+  // A compaction finished. `compacted` is how many messages went into the
+  // summary, and `pruned` names the tool calls whose results now go out
+  // shortened, so the window can mark their cards. `summary` is the checkpoint
+  // the model wrote, absent when only tool results were pruned.
+  | {
+      type: 'context.compacted'
+      sessionId: string
+      reason: CompactionReason
+      before: number
+      after: number
+      compacted: number
+      pruned: string[]
+      summary?: string
+      at: number
+    }
   // A subagent, background or foreground. Its own stream events are the ones
   // above, emitted under `sessionId` = the job's id, so the window can show a
   // subagent working with the same blocks it draws the main agent with.
@@ -180,9 +279,24 @@ export interface SessionNote {
   prevented?: PreventedCall[]
 }
 
+/**
+ * What compaction did to a message. `compacted` is folded into a summary and
+ * no longer sent; `pruned` is a tool result sent in a shortened form. The
+ * message itself is kept whole, so the window can still show it.
+ */
+export type CompactionMark = 'compacted' | 'pruned'
+
 export type ChatMessage =
-  | { role: 'system' | 'user' | 'assistant'; content: string; toolCalls?: ToolCall[]; thinking?: ThinkingBlock[] }
-  | { role: 'tool'; content: string; toolCallId: string; failed?: boolean }
+  | {
+      role: 'system' | 'user' | 'assistant'
+      content: string
+      toolCalls?: ToolCall[]
+      thinking?: ThinkingBlock[]
+      compacted?: CompactionMark
+      /** A compaction summary, written by the model and sent in place of what it summarises. */
+      summary?: true
+    }
+  | { role: 'tool'; content: string; toolCallId: string; failed?: boolean; compacted?: CompactionMark }
 
 export type ChatChunk =
   | { kind: 'text'; text: string }

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { readStored, saveProvider } from './config-store.js'
+import { autoCompact, contextLimit, readStored, saveProvider, setAutoCompact, setContextLimit } from './config-store.js'
 import type { ProviderSaveRequest } from '../ipc/contract.js'
 
 /**
@@ -138,5 +138,23 @@ describe('a settings write against the live sessions', () => {
     const a = await idOf('A')
     expect(await saveProvider(provider('A', { id: a, models: ['m1'], facts: {} }))).toBe(false)
     expect((await readStored()).providers.find(p => p.id === a)?.facts).toBeUndefined()
+  })
+})
+
+describe('the context settings', () => {
+  it('keeps the limit through a read and through a write of the other setting, and clears it on null', async () => {
+    await setContextLimit(150_000)
+    await setAutoCompact(false)
+    expect(await contextLimit()).toBe(150_000)
+
+    await setContextLimit(null)
+    expect(await contextLimit()).toBeUndefined()
+    expect(await autoCompact()).toBe(false)
+  })
+
+  it('refuses a limit that is not a whole number of tokens and keeps the one it had', async () => {
+    await setContextLimit(80_000)
+    for (const bad of [0, -5, 1.5, Number.NaN]) await expect(setContextLimit(bad)).rejects.toThrow('whole number of tokens')
+    expect(await contextLimit()).toBe(80_000)
   })
 })

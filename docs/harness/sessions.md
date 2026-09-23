@@ -111,7 +111,8 @@ is the only automatic rename; later messages just move it up the list.
 
 Transcripts are written after a turn completes, and never while it streams. A
 half-finished answer is not a message, and a crash mid-turn leaves the session
-exactly as it was before the message was sent.
+exactly as it was before the message was sent. A compaction started from the
+context panel runs between turns and writes the transcript when it finishes.
 
 The file holds two things, `{ messages, notes }`, because what the window showed
 is more than the conversation. The messages are what the model sees: user text,
@@ -130,6 +131,20 @@ back between the same two blocks the user saw it between. A file written before
 notes existed, or one
 whose notes are unreadable, opens as a conversation with no notes and no error.
 
+A compaction keeps every message and marks it. A message that went into a
+summary carries `compacted: "compacted"`, a tool result that now goes out
+shortened carries `compacted: "pruned"`, and the summary itself is a user
+message with `summary: true`. The markers are stored, so a re-opened session
+sends the model exactly what it sent before the restart, and the window still
+draws the whole conversation (`context.md`).
+
+The index entry keeps, beside the running totals, the context ledger the
+session was left with, and the output and generating time of its last turn. The
+context button shows the ledger for a session opened from the list before
+anything has been sent, and the topbar shows the last turn's rate. The rebuilt
+session carries the compaction history on and, on the same model, starts its
+estimator from the ledger's calibration.
+
 A subagent keeps its own transcript, referenced from the parent's. The parent's
 history holds the subagent's final answer as a tool result and nothing more, so
 without a transcript of its own there is no evidence anywhere about what went
@@ -143,7 +158,8 @@ It is written for the case where something has already gone wrong, so it is
 written even when the subagent throws.
 
 Stored with that transcript is the subagent's tool count: how many calls it
-made, how many worked and how many came back an error. It travels out of a
+made, how many worked and how many came back an error, and the context ledger
+it ended with. It travels out of a
 failure as well as a success, so a job that made forty calls before it broke is
 not filed as one that made none. A file written before the count existed has
 none, and the line is left out where a zero would read as a claim (see

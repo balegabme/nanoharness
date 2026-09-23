@@ -42,6 +42,8 @@ export function readFacts(entry: Record<string, unknown>): ModelFacts {
   const published = entry.max_tokens
   const ceiling = typeof published === 'number' && Number.isFinite(published) ? Math.floor(published) : 0
   if (ceiling > 0) facts.maxOutput = ceiling
+  const window = readWindow(entry)
+  if (window !== undefined) facts.context = window
 
   const input = firstPrice(entry, ['prompt', 'input'], ['input_cost_per_token', 'prompt_cost_per_token'])
   const output = firstPrice(entry, ['completion', 'output'], ['output_cost_per_token', 'completion_cost_per_token'])
@@ -83,6 +85,35 @@ function readVision(entry: Record<string, unknown>): boolean | undefined {
 
   const flag = entry.supports_vision ?? object(entry.model_info)?.supports_vision
   return typeof flag === 'boolean' ? flag : undefined
+}
+
+/**
+ * The context window, in the spellings endpoints have been seen to use: a flat
+ * `context_length`, `context_window` or `max_context_length` on the entry, a
+ * `max_input_tokens` beside the prices of a gateway that lists them flat, the
+ * same `context_length` inside a `top_provider` block on an aggregator that
+ * routes one model to several upstreams, and `limit.context` on a server that
+ * groups its ceilings under one key.
+ *
+ * `max_input_tokens` is the prompt alone where the others are prompt and answer
+ * together. It is read anyway, because a window sized a little small makes
+ * compaction run a little early and nothing worse.
+ */
+function readWindow(entry: Record<string, unknown>): number | undefined {
+  const info = object(entry.model_info)
+  const candidates = [
+    entry.context_length,
+    entry.context_window,
+    entry.max_context_length,
+    entry.max_input_tokens,
+    info?.max_input_tokens,
+    object(entry.top_provider)?.context_length,
+    object(entry.limit)?.context,
+  ]
+  for (const value of candidates) {
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) return Math.floor(value)
+  }
+  return undefined
 }
 
 const PER_MILLION = 1_000_000

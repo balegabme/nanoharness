@@ -5,9 +5,9 @@ import { USER_AGENT } from './headers.js'
 
 /**
  * What an endpoint does not say about its own models, read from the public
- * catalogue at `models.dev`: prices, effort levels, output ceilings, whether a
- * model reads images, and the wire it answers on. Entries are keyed by the same
- * base URL the user pastes into settings.
+ * catalogue at `models.dev`: prices, effort levels, output ceilings, context
+ * windows, whether a model reads images, and the wire it answers on. Entries
+ * are keyed by the same base URL the user pastes into settings.
  *
  * Fetched when the model list is asked for and kept nowhere. The request
  * carries no key, no address and no model id. `providers.md` has why it is
@@ -34,7 +34,7 @@ interface CatalogueCost {
 
 interface CatalogueModel {
   cost?: CatalogueCost
-  limit?: { output?: number }
+  limit?: { output?: number; context?: number }
   modalities?: { input?: string[] }
   reasoning_options?: { type?: string; values?: (string | null)[] }[]
   provider?: { npm?: string }
@@ -61,8 +61,8 @@ export function readCatalogue(body: unknown, baseURL: string): Record<string, Mo
   const address = addressOf(baseURL)
   if (address === undefined || !isObject(body)) return {}
   // Longest match wins. One host can front several endpoints that differ only
-  // by path, and `https://opencode.ai/zen/v1` is a prefix of nothing under
-  // `/zen/go/v1`, so the deeper address is the one that answers for itself.
+  // by path, and `https://host/api/v1` is a prefix of nothing under
+  // `/api/team/v1`, so the deeper address is the one that answers for itself.
   let best: CatalogueProvider | undefined
   let reach = 0
   for (const entry of Object.values(body)) {
@@ -95,6 +95,7 @@ function readModel(model: CatalogueModel, providerNpm: string | undefined): Mode
   const tiers = readTiers(cost?.tiers)
   if (tiers.length > 0) facts.tiers = tiers
   if (typeof model.limit?.output === 'number' && model.limit.output > 0) facts.maxOutput = Math.floor(model.limit.output)
+  if (typeof model.limit?.context === 'number' && model.limit.context > 0) facts.context = Math.floor(model.limit.context)
   if (model.modalities?.input?.includes('image') === true) facts.vision = true
   const efforts = readEfforts(model.reasoning_options)
   if (efforts.length > 0) facts.efforts = efforts

@@ -59,12 +59,13 @@ const BODY = {
 const GO = 'https://opencode.ai/zen/go/v1'
 
 describe('what the catalogue says about a model', () => {
-  it('reads the prices, the ceiling, the levels and whether it takes images', () => {
+  it('reads the prices, the ceiling, the window, the levels and whether it takes images', () => {
     expect(readCatalogue(BODY, GO)['kimi-k3']).toEqual({
       input: 3,
       output: 15,
       cacheRead: 0.3,
       maxOutput: 131072,
+      context: 1048576,
       efforts: ['max'],
       vision: true,
       wire: 'openai',

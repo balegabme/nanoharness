@@ -41,7 +41,7 @@ development history is in the git log; none of the three is repeated here.
 - What a turn cost, from the model's prices and the tokens it used. Input,
   output and both halves of the cache are charged at their own rate; reasoning
   tokens are not charged again, because the output count already holds them. The
-  figure ends the turn's summary line, and the running total in the topbar
+  figure ends the turn's summary line, and the tokens panel in the topbar
   carries what the session has spent.
 - An Anthropic request is built inside the model's own output ceiling, so the
   two highest effort levels no longer ask a smaller model for more tokens than
@@ -107,6 +107,29 @@ development history is in the git log; none of the three is repeated here.
   in the conversation has seen. Creating a file is unaffected, a session may
   keep editing what it wrote itself, and a session resumed from a stored
   transcript is not held to the rule for files it read before the resume.
+- The session measures its context: the prompt the provider reported for the
+  last request, plus an estimate of what has been added since, corrected for
+  the tokenizer in use by comparing the two on every response. Each model
+  carries its context window, read from the endpoint's `/models` answer or typed
+  into settings.
+- Automatic compaction. Before every request, a context past 80% of the window
+  less the answer's reserve is summarised by the session's own model, in a
+  request that repeats the cached prefix, and the newest part of the
+  conversation is kept verbatim. A provider refusing a request as too long gets
+  one more try, with long tool results shortened and the older history
+  summarised as plain text. Subagents compact on the same rules. Compaction
+  deletes nothing: messages are marked, and the transcript keeps them all.
+- A compaction can be started by hand from the context panel, and automatic
+  compaction turned off there for every session. Summaries are billed as
+  harness spend, and the spend view's approval row is now its Harness row. A
+  compaction by hand gets a usage line of its own, which adds to the spend and
+  counts as no turn.
+- A limit on the context, set in the context panel for every session.
+  Compaction works against it where it is smaller than the model's window, or
+  where the window is unknown.
+- A reopened session on the same model estimates its context with the
+  tokenizer correction it had last measured. Before, it started again from 1
+  and could read well low on code-heavy history until its first request.
 
 **Permissions**
 - Auto-approve mode, for the run nobody is watching: a task that goes for an
@@ -222,10 +245,21 @@ development history is in the git log; none of the three is repeated here.
 - First run asks for a provider. The key is encrypted by the OS and the settings
   file has no field to put one in.
 - Model and effort pickers in the header.
-- Running usage in the topbar, stored with the session: in, out, cached, cache
-  hit rate and tokens per second, plus reasoning and cache-written where the
-  provider reports any. The rate counts the time the model spent generating, so
-  a tool call in the middle of a turn does not drag it down.
+- Tokens per second in the topbar. The rate counts the time the model spent
+  generating, so a tool call in the middle of a turn does not drag it down. The
+  last turn's rate is stored with the session and shown again when it is
+  reopened.
+- A tokens button beside it with the session's whole spend, stored with the
+  session. Its panel has in, out, cached, cache hit rate and cost, plus
+  reasoning and cache-written where the provider reports any, and a link to the
+  spend view.
+- A context button: a ring that fills against the usable window and turns amber
+  at 60% and red at 80%, where automatic compaction runs. Its panel breaks the
+  next request into its parts and lists the compactions so far. The subagent
+  view has the same three figures for the child.
+- A compaction is drawn where it happened, with its summary folded under a
+  rule. Messages that went into a summary are dimmed, and a tool result the
+  model now gets shortened carries a chip saying so.
 - End-of-turn blip and a desktop notification when the window is not in front,
   both silenced by the `alerts` bell.
 - A finished tool call is marked with a check or a cross where it used to say

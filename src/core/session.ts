@@ -1,15 +1,33 @@
 // doc: docs/harness/overview.md
 import { EventBus } from './event-bus.js'
-import { ProviderError, backoffFor, isRetryable, sleep } from './provider.js'
-import type { ChatProvider } from './provider.js'
+import { ProviderError, backoffFor, isContextOverflow, isRetryable, sleep } from './provider.js'
+import type { ChatInput, ChatProvider } from './provider.js'
 import type { Effort, ModelFacts } from './config.js'
 import { costOf, moneyText } from './cost.js'
+import { Calibration, KEEP_RATIO, buildLedger, estimateParts, partsTotal, reserveFor, toolTokens } from './context.js'
+import type { Anchor } from './context.js'
+import { FLAT_SYSTEM, SUMMARY_INSTRUCTION, flatInstruction, flatten, planCut, prunable, prunedText, wrapSummary } from './compaction.js'
+import type { Cut } from './compaction.js'
 import { workspaceGate } from './scope.js'
 import type { AccessGate } from './scope.js'
 import { emptyToolStats, emptyUsage } from './types.js'
 import { ReadIndex } from './read-index.js'
 import { SecretVault } from './secrets.js'
-import type { ChatMessage, PreventedCall, SessionNote, ThinkingBlock, ToolCall, ToolInput, ToolResult, ToolStats, TurnUsage } from './types.js'
+import type {
+  ChatMessage,
+  CompactionReason,
+  CompactionRecord,
+  ContextLedger,
+  PreventedCall,
+  SessionNote,
+  ThinkingBlock,
+  ToolCall,
+  ToolInput,
+  ToolResult,
+  ToolStats,
+  TurnRate,
+  TurnUsage,
+} from './types.js'
 import type { SpawnHost } from './spawn.js'
 import type { JobRegistry } from './jobs.js'
 
@@ -114,6 +132,20 @@ const WRITERS = new Set(['edit', 'write'])
 const FILES_LISTED = 12
 
 /**
+ * How many times a summary is asked for before the flattened one is tried: the
+ * first, and one more. A model that calls a tool or says nothing when told to
+ * summarise rarely does better on a third go.
+ */
+const SUMMARY_ATTEMPTS = 2
+
+/**
+ * The share of the room a flattened history may take. It is made after the
+ * provider refused a request the estimate said would fit, so the estimate has
+ * just been shown to run low, and half leaves space for that and the answer.
+ */
+const FLAT_SHARE = 0.5
+
+/**
  * What a prevented call was about, for the list under the summary.
  */
 function preventedTarget(call: ToolCall): string {
@@ -209,6 +241,14 @@ export interface SessionOptions {
   harnessUsage?: TurnUsage
   /** What that share cost, at the prices of the models that actually ran it. */
   harnessCostUsd?: number
+  /** Whether the session compacts on its own as the context fills. On when unset. */
+  autoCompact?: boolean
+  /** The most the user lets the context grow to, in tokens. The window alone when unset. */
+  contextLimit?: number
+  /** The estimator's correction from an earlier run of this session, so it does not start again at 1. */
+  calibration?: number
+  /** Compactions from an earlier run of this session, for the context panel. */
+  compactions?: CompactionRecord[]
   /**
    * The keys the user pasted. The model holds placeholders for them; this is the
    * only object that can turn one back into a value, for tool arguments alone.
@@ -230,6 +270,14 @@ export interface TurnSpend {
   subagentCostUsd: number
   harnessCostUsd: number
   streamMs: number
+}
+
+/** What a compaction the user asked for did, and what its requests cost. */
+export interface CompactSpend {
+  compacted: boolean
+  usage: TurnUsage
+  /** At the session's model's prices. Null where it has none. */
+  costUsd: number | null
 }
 
 export class Session {
@@ -303,6 +351,31 @@ export class Session {
    * providers refuse, so they wait here for a balanced point in the transcript.
    */
   private readonly pending: string[] = []
+  /**
+   * What is known about the model. Starts as `options.facts` and changes when
+   * settings are edited under a running session, which a price or a window
+   * typed by hand should reach without the session being rebuilt.
+   */
+  private facts: ModelFacts | undefined
+  private autoCompact: boolean
+  private contextLimit: number | undefined
+  /** The tool schemas by the estimator. The tool list is fixed for a session's life. */
+  private readonly toolSize: number
+  /** The last measured request, while it still describes what goes out. */
+  private anchor: Anchor | null = null
+  private readonly calibration: Calibration
+  private readonly compactions: CompactionRecord[]
+  /**
+   * Automatic compaction ran and left the context over the threshold anyway,
+   * because what is kept verbatim is that large on its own. Running it again
+   * each round would pay for a summary every round and free nothing, so it
+   * waits for the next turn, and a refusal from the provider is the backstop.
+   */
+  private compactionStuck = false
+  /** True while `compact()` runs, which `stop()` treats differently from a turn. */
+  private compactingByHand = false
+  /** Where the current turn's user message is in `messages`, or -1 between turns. */
+  private turnUser = -1
 
   constructor(
     readonly options: SessionOptions,
@@ -316,6 +389,12 @@ export class Session {
     // they are in the transcript the model reads and in no structure here.
     this.reads = new ReadIndex((options.history?.length ?? 0) > 0)
     this.secrets = options.secrets ?? new SecretVault()
+    this.facts = options.facts
+    this.autoCompact = options.autoCompact ?? true
+    this.contextLimit = options.contextLimit
+    this.calibration = new Calibration(options.calibration)
+    this.toolSize = toolTokens(tools.map(t => t.input))
+    this.compactions = (options.compactions ?? []).map(one => ({ ...one }))
     this.messages.push({ role: 'system', content: options.systemPrompt })
     // A resumed session keeps its running total: those turns were paid for, and
     // a counter that restarts at zero says they were not. A stored total that
@@ -330,12 +409,87 @@ export class Session {
     this.harnessCostUsd = options.harnessCostUsd ?? 0
     // A resumed session keeps its own system prompt, not the stored one: the
     // prompt is built fresh each launch and may have changed since.
+    // Copied, because compaction marks messages in place and the caller's
+    // array is not this session's to mark.
     for (const message of options.history ?? []) {
-      if (message.role !== 'system') this.messages.push(message)
+      if (message.role !== 'system') this.messages.push({ ...message })
     }
     // Turn numbers continue where the stored conversation left off, so the
-    // usage log of a resumed session does not restart at 1.
-    this.turn = this.messages.filter(m => m.role === 'user').length
+    // usage log of a resumed session does not restart at 1. A summary is sent
+    // as a user message and is not a turn.
+    this.turn = this.messages.filter(m => m.role === 'user' && m.summary !== true).length
+  }
+
+  /**
+   * What the provider is sent: the system prompt, the live summary if there
+   * is one, and every message not folded into a summary, with pruned tool
+   * results in their shortened form. `messages` keeps everything, so this is
+   * built fresh each time and the markers are the only thing compaction
+   * writes.
+   *
+   * The summary goes first wherever it sits in `messages`, since it stands for
+   * the start of the conversation. It keeps `summary: true`, which the wires
+   * ignore and the estimator reads.
+   */
+  wireMessages(): ChatMessage[] {
+    const [system, ...rest] = this.messages
+    const out: ChatMessage[] = system === undefined ? [] : [{ role: 'system', content: system.content }]
+    const summary = this.liveSummary()
+    if (summary !== undefined) out.push({ role: 'user', content: wrapSummary(summary.content), summary: true })
+    for (const m of rest) {
+      if (m === summary || m.compacted === 'compacted') continue
+      out.push(wireCopy(m))
+    }
+    return out
+  }
+
+  /** The summary the wire view opens with, if a compaction has run. */
+  private liveSummary(): ChatMessage | undefined {
+    return this.messages.find(m => m.role === 'user' && m.summary === true && m.compacted === undefined)
+  }
+
+  /** How big the next request is and how close it is to the window. */
+  get context(): ContextLedger {
+    return buildLedger({
+      messages: this.wireMessages(),
+      tools: this.toolSize,
+      anchor: this.anchor,
+      factor: this.calibration.factor,
+      model: this.options.model,
+      window: this.facts?.context,
+      limit: this.contextLimit,
+      reserve: reserveFor(this.provider.declaredOutput?.(this.limits()), this.facts?.maxOutput),
+      auto: this.autoCompact,
+      compactions: this.compactions,
+    })
+  }
+
+  private emitContext(): void {
+    this.bus.emit({ type: 'context', sessionId: this.options.sessionId, ledger: this.context, at: Date.now() })
+  }
+
+  /**
+   * New facts for the model, from a settings edit. The turn in flight uses them
+   * from its next request, and so do this session's subagents.
+   */
+  setFacts(facts: ModelFacts | undefined): void {
+    this.facts = facts
+    this.options.spawn?.setFacts(facts)
+    this.emitContext()
+  }
+
+  /** Turn automatic compaction on or off, for this session and its subagents. */
+  setAutoCompact(on: boolean): void {
+    this.autoCompact = on
+    this.options.spawn?.setAutoCompact(on)
+    this.emitContext()
+  }
+
+  /** Set or clear the user's limit on the context, for this session and its subagents. */
+  setContextLimit(limit: number | undefined): void {
+    this.contextLimit = limit
+    this.options.spawn?.setContextLimit(limit)
+    this.emitContext()
   }
 
   /** The conversation so far, for persisting and re-opening this session. */
@@ -468,10 +622,12 @@ export class Session {
   /**
    * End the turn now: abort the request in flight and stop the tool loop.
    * Subagents go with it, since nothing else in the app can end a background
-   * one.
+   * one. A compaction the user started is stopped alone: the background jobs
+   * running beside it between turns were started by an earlier turn and are
+   * not what the user is stopping.
    */
   stop(): void {
-    this.options.spawn?.stopAll()
+    if (!this.compactingByHand) this.options.spawn?.stopAll()
     if (this.controller === null) return
     this.stopped = true
     this.controller.abort()
@@ -492,7 +648,7 @@ export class Session {
     return { ...this.subagentUsage }
   }
 
-  /** The harness's own share of `spent`: approval checks and anything like them. */
+  /** The harness's own share of `spent`: approval checks and compaction summaries. */
   get spentByHarness(): TurnUsage {
     return { ...this.harnessUsage }
   }
@@ -521,8 +677,8 @@ export class Session {
   }
 
   /**
-   * Tokens the harness spent on a side-call of its own, an approval check, with
-   * what it cost at that model's prices. Null when nobody has priced the model:
+   * Tokens the harness spent on a side-call of its own, an approval check or a
+   * compaction summary, with what it cost at that model's prices. Null when nobody has priced the model:
    * an unpriced call adds its tokens and leaves the money alone.
    */
   addHarnessUsage(delta: TurnUsage, costUsd: number | null): void {
@@ -561,6 +717,16 @@ export class Session {
   }
 
   /**
+   * The last turn's rate, for a re-opened session to show. Subagent and
+   * harness output came off streams `streamMs` did not time, so it is left out.
+   */
+  get lastRate(): TurnRate | undefined {
+    const output = this.turnUsage.output - this.turnSubagentUsage.output - this.turnHarnessUsage.output
+    if (output <= 0 || this.turnStreamMs <= 0) return undefined
+    return { output, streamMs: this.turnStreamMs }
+  }
+
+  /**
    * The most recent `run()` alone, where `run()` returns the session total.
    * This is what the usage log records, so everything the cost dashboard
    * attributes a turn by is on it.
@@ -593,12 +759,15 @@ export class Session {
 
   /** `usage` at this session's model's prices, or null when it has none. */
   private priced(usage: TurnUsage): number | null {
-    const facts = this.options.facts
+    const facts = this.facts
     if (facts === undefined || this.turnUsageProblem) return null
     return costOf(usage, facts)
   }
 
   async run(userText: string): Promise<TurnUsage> {
+    // A compaction the user started is still rewriting the history this turn
+    // would be appended to.
+    if (this.running) throw new Error('this session is busy; wait for the turn or the compaction to finish')
     this.turn += 1
     this.turnUsage = emptyUsage()
     this.turnSubagentUsage = emptyUsage()
@@ -611,13 +780,16 @@ export class Session {
     this.turnFiles.clear()
     this.turnStartedAt = Date.now()
     this.stopped = false
+    this.compactionStuck = false
     this.controller = new AbortController()
     const sessionId = this.options.sessionId
     this.bus.emit({ type: 'session.started', sessionId, cwd: this.options.cwd, at: Date.now() })
     // Anything a background job finished with between turns goes in first: it
     // happened before this message, and the model should read it that way.
     this.flushPending()
+    this.turnUser = this.messages.length
     this.messages.push({ role: 'user', content: userText })
+    this.emitContext()
 
     try {
       return await this.runRounds(sessionId)
@@ -630,6 +802,7 @@ export class Session {
       throw err
     } finally {
       this.controller = null
+      this.turnUser = -1
       // What the turn came to, before anything else is folded in, so the line
       // lands under the turn it is about. Every way out of a turn passes here.
       // Priced from the model that actually ran it, which is why this is here
@@ -655,6 +828,10 @@ export class Session {
     this.failures = 0
 
     for (;;) {
+      // Before every request and not once a turn: a subagent's whole life is
+      // one turn, and a main session running tools can reach the window in
+      // the middle of one.
+      await this.fitContext()
       const { text, toolCalls, usage, thinking, streamMs } = await this.drainRound()
       this.addUsage(usage)
       // A round the provider never timed adds nothing: the turn's rate is over
@@ -675,6 +852,7 @@ export class Session {
           ...(thinking.length > 0 ? { thinking } : {}),
         })
       }
+      this.emitContext()
 
       if (this.stopped) {
         // Whatever the model had already asked for still needs an answer, or the
@@ -703,6 +881,7 @@ export class Session {
       // background answer can be folded in. A job started earlier in this turn
       // is therefore usable before the turn ends.
       this.flushPending()
+      this.emitContext()
 
       if (this.stopped) {
         this.record('stopped', 'Stopped.')
@@ -730,7 +909,15 @@ export class Session {
   private async drainRound(): Promise<{ text: string; toolCalls: ToolCall[]; usage: TurnUsage; thinking: ThinkingBlock[]; streamMs: number }> {
     const sessionId = this.options.sessionId
     const carried = emptyUsage()
-    for (let attempt = 1; ; attempt += 1) {
+    // A refusal for length is answered once, by compacting harder. A second
+    // one ends the turn, since whatever is left will not get any shorter.
+    let rescued = false
+    let attempt = 1
+    for (;;) {
+      // Stop pressed during a compaction before this request, or during the
+      // rescue after the last one. An empty round is what an aborted stream
+      // hands back, so the turn winds down as stopped.
+      if (this.stopped) return { text: '', toolCalls: [], usage: carried, thinking: [], streamMs: 0 }
       const spent = emptyUsage()
       this.bus.emit({ type: 'round.started', sessionId, turn: this.turn, at: Date.now() })
       try {
@@ -743,6 +930,11 @@ export class Session {
         return { ...round, usage }
       } catch (err) {
         addInto(carried, spent)
+        // The rescue is not a retry of the same bytes, so it spends no attempt.
+        if (!this.stopped && !rescued && this.autoCompact && isContextOverflow(err)) {
+          rescued = true
+          if ((await this.rescue()) || this.stopped) continue
+        }
         if (this.stopped || attempt >= ROUND_ATTEMPTS || !isRetryable(err)) throw err
         const why = this.secrets.redact(err instanceof Error ? err.message : String(err))
         const text = `The request failed (${why}). Asking again: attempt ${attempt + 1} of ${ROUND_ATTEMPTS}.`
@@ -755,6 +947,7 @@ export class Session {
         // stream hands back, so the loop winds down the way it knows and the
         // turn does not end as an error.
         if (this.stopped) return { text: '', toolCalls: [], usage: carried, thinking: [], streamMs: 0 }
+        attempt += 1
       }
     }
   }
@@ -772,15 +965,9 @@ export class Session {
     // generation speed without however long the request queued.
     let firstChunkAt = 0
 
-    const chunks = this.provider.stream({
-      model: this.options.model,
-      messages: this.messages,
-      tools: this.tools.map(t => t.input),
-      conversationId: this.options.sessionId,
-      ...(this.options.effort === undefined ? {} : { effort: this.options.effort }),
-      ...(this.options.facts?.maxOutput === undefined ? {} : { maxTokens: this.options.facts.maxOutput }),
-      ...(this.controller === null ? {} : { signal: this.controller.signal }),
-    })
+    const messages = this.wireMessages()
+    const estimated = partsTotal(estimateParts(messages, this.toolSize))
+    const chunks = this.provider.stream(this.request(messages, this.tools.map(t => t.input)))
 
     try {
       for await (const chunk of chunks) {
@@ -814,6 +1001,7 @@ export class Session {
             usage = chunk.usage
             copyInto(spent, chunk.usage)
             if (chunk.usageProblem !== undefined) this.noteUsageProblem(chunk.usageProblem)
+            else this.measured(chunk.usage, estimated)
             break
           case 'error':
             // As a ProviderError, so a provider that fell over halfway through
@@ -828,6 +1016,280 @@ export class Session {
       if (!this.stopped) throw err
     }
     return { text, toolCalls, usage, thinking, streamMs: firstChunkAt === 0 ? 0 : Date.now() - firstChunkAt }
+  }
+
+  /** A request with this session's model, settings and stop button. */
+  private request(messages: ChatMessage[], tools: ToolInput[]): ChatInput {
+    return {
+      model: this.options.model,
+      messages,
+      tools,
+      conversationId: this.options.sessionId,
+      ...this.limits(),
+      ...(this.controller === null ? {} : { signal: this.controller.signal }),
+    }
+  }
+
+  /** The effort and output ceiling every request of this session carries. */
+  private limits(): Pick<ChatInput, 'effort' | 'maxTokens'> {
+    return {
+      ...(this.options.effort === undefined ? {} : { effort: this.options.effort }),
+      ...(this.facts?.maxOutput === undefined ? {} : { maxTokens: this.facts.maxOutput }),
+    }
+  }
+
+  /**
+   * A response said how big its prompt was. That becomes the anchor, and the
+   * pair of figures moves the calibration. A report of zero is a server that
+   * sends no usage, and is no measurement.
+   */
+  private measured(usage: TurnUsage, estimated: number): void {
+    const reported = usage.input + usage.cacheRead + usage.cacheWrite
+    if (reported <= 0) return
+    this.calibration.sample(reported, estimated)
+    this.anchor = { reported, estimated }
+  }
+
+  /**
+   * Compact now, between turns, because the user asked. `compacted` is false
+   * when there was nothing to compact, the summary could not be made or the
+   * user stopped it, and the session's notes say which. It is also false while
+   * a turn runs, with no note, since the window offers no way to ask then and
+   * the turn checks the context before every request anyway. The spend is the
+   * summary requests alone, for the usage log, which has no turn to put them
+   * under.
+   */
+  async compact(): Promise<CompactSpend> {
+    if (this.running) return { compacted: false, usage: emptyUsage(), costUsd: null }
+    const before = { ...this.harnessUsage }
+    const cost = this.harnessCostUsd
+    this.stopped = false
+    this.controller = new AbortController()
+    this.compactingByHand = true
+    try {
+      const compacted = await this.summarise('manual')
+      const usage = subtract(this.harnessUsage, before)
+      const priced = this.facts !== undefined && costOf(usage, this.facts) !== null
+      return { compacted, usage, costUsd: priced ? this.harnessCostUsd - cost : null }
+    } finally {
+      this.controller = null
+      this.compactingByHand = false
+      this.flushPending()
+    }
+  }
+
+  /**
+   * The check before each request. Past the threshold the conversation is
+   * summarised through the cache. Past the usable space the summary request
+   * would not fit either, so tool results are pruned first and the history is
+   * summarised flat if that is not enough. Whatever happens here the round
+   * goes ahead, and the provider's answer settles whether it fitted.
+   */
+  private async fitContext(): Promise<void> {
+    if (!this.autoCompact || this.compactionStuck || this.stopped) return
+    const ledger = this.context
+    if (ledger.threshold === null || ledger.usable === null || ledger.tokens <= ledger.threshold) return
+    if (ledger.tokens <= ledger.usable) await this.summarise('auto')
+    else await this.shrink('auto', ledger.tokens)
+    const after = this.context
+    if (after.threshold !== null && after.tokens > after.threshold) this.compactionStuck = true
+  }
+
+  /**
+   * The provider refused the request as too long. The estimate put it under
+   * the window, so the estimate is raised to meet what the refusal proves, and
+   * the history is shrunk without the cache, which a request that long cannot
+   * be read through. True when something was shrunk and the round is worth
+   * asking for again.
+   */
+  private async rescue(): Promise<boolean> {
+    const refused = partsTotal(estimateParts(this.wireMessages(), this.toolSize))
+    // Against the window and never the user's limit: a limit above a window
+    // nobody has stated would raise the factor past what the refusal proves.
+    const { window, reserve } = this.context
+    this.anchor = null
+    if (window !== null && window > reserve) this.calibration.atLeast(window - reserve, refused)
+    return this.shrink('overflow', this.context.tokens)
+  }
+
+  /**
+   * Prune every long tool result, the newest included, and summarise the
+   * flattened history when that is not enough. The newest is included
+   * because a single oversized output in the last round is the likeliest
+   * reason a request stopped fitting, and the cache this would keep is
+   * already lost.
+   */
+  private async shrink(reason: CompactionReason, before: number): Promise<boolean> {
+    this.bus.emit({ type: 'context.compacting', sessionId: this.options.sessionId, reason, at: Date.now() })
+    const pruned: string[] = []
+    for (const m of this.messages) {
+      if (m.role !== 'tool' || !prunable(m)) continue
+      m.compacted = 'pruned'
+      pruned.push(m.toolCallId)
+    }
+    const ledger = this.context
+    // With no window there is no size to aim under, so pruning that found
+    // nothing to prune is the only sign the flattened summary is needed.
+    const over = ledger.threshold === null ? pruned.length === 0 : ledger.tokens > ledger.threshold
+    const cut = over ? this.cutFor(ledger) : null
+    const summary = cut === null ? null : await this.flatSummary(cut, ledger)
+    if (cut !== null && summary !== null) this.applySummary(cut, summary)
+    const compacted = summary === null || cut === null ? 0 : cut.compacted.length
+    if (pruned.length === 0 && compacted === 0) {
+      if (!this.stopped) this.note('The context could not be made smaller: there was no long tool output to shorten and nothing old enough to summarise.')
+      return false
+    }
+    this.compacted(reason, before, compacted, pruned, summary ?? undefined)
+    return true
+  }
+
+  /**
+   * Summarise through the cache, then flat if the model will not do it that
+   * way. True when a summary went in.
+   */
+  private async summarise(reason: CompactionReason): Promise<boolean> {
+    const ledger = this.context
+    const cut = this.cutFor(ledger)
+    if (cut === null) {
+      if (reason === 'manual') this.note('There is nothing to compact yet: the whole conversation fits in the part that is kept verbatim.')
+      return false
+    }
+    this.bus.emit({ type: 'context.compacting', sessionId: this.options.sessionId, reason, at: Date.now() })
+    const summary = (await this.cachedSummary()) ?? (this.stopped ? null : await this.flatSummary(cut, ledger))
+    if (summary === null) {
+      // A stopped turn says so itself. A stopped compaction by hand has no
+      // turn to say it.
+      if (!this.stopped) this.note('The context could not be compacted: the model did not write a summary. The conversation carries on as it was.')
+      else if (reason === 'manual') this.note('Compaction stopped. The conversation carries on as it was.')
+      return false
+    }
+    this.applySummary(cut, summary)
+    this.compacted(reason, ledger.tokens, cut.compacted.length, [], summary)
+    return true
+  }
+
+  /**
+   * Where this compaction cuts. The kept tail is a share of the window, or of
+   * the context itself where the window is unknown, which only a manual
+   * compaction or a refusal gets to.
+   */
+  private cutFor(ledger: ContextLedger): Cut | null {
+    const keep = KEEP_RATIO * (ledger.room ?? ledger.tokens)
+    return planCut(this.messages, keep, this.calibration.factor, this.turnUser)
+  }
+
+  /**
+   * The request the session would send next, with the instruction on the end.
+   * Every byte before the instruction is the prefix the provider has cached,
+   * so the conversation is read at the cached rate.
+   */
+  private async cachedSummary(): Promise<string | null> {
+    for (let attempt = 1; attempt <= SUMMARY_ATTEMPTS && !this.stopped; attempt += 1) {
+      const messages: ChatMessage[] = [...this.wireMessages(), { role: 'user', content: SUMMARY_INSTRUCTION }]
+      const estimated = partsTotal(estimateParts(messages, this.toolSize))
+      const answer = await this.ask(this.request(messages, this.tools.map(t => t.input)))
+      if (answer === null) continue
+      if (answer.usageRead) this.calibration.sample(answer.usage.input + answer.usage.cacheRead + answer.usage.cacheWrite, estimated)
+      if (answer.toolCalls === 0 && answer.text !== '') return answer.text
+    }
+    return null
+  }
+
+  /**
+   * The history being folded away, as plain text, summarised with no tools and
+   * none of the session's own prompt. It reads nothing from the cache and needs
+   * nothing from the model beyond writing text.
+   */
+  private async flatSummary(cut: Cut, ledger: ContextLedger): Promise<string | null> {
+    if (this.stopped) return null
+    const earlier = this.liveSummary()
+    const folded = cut.compacted.map(i => this.messages[i]).filter((m): m is ChatMessage => m !== undefined)
+    const budget = (FLAT_SHARE * (ledger.usable ?? ledger.tokens)) / this.calibration.factor
+    const history = flatten(folded, budget, earlier)
+    const answer = await this.ask(
+      this.request(
+        [
+          { role: 'system', content: FLAT_SYSTEM },
+          { role: 'user', content: flatInstruction(history) },
+        ],
+        [],
+      ),
+    )
+    return answer === null || answer.toolCalls > 0 || answer.text === '' ? null : answer.text
+  }
+
+  /**
+   * One side request, billed to the harness. Its stream reaches nobody: the
+   * summary is shown once it is whole. Null when the request failed, which
+   * the caller answers with its next way of getting a summary.
+   */
+  private async ask(input: ChatInput): Promise<{ text: string; toolCalls: number; usage: TurnUsage; usageRead: boolean } | null> {
+    let text = ''
+    let toolCalls = 0
+    const spent = emptyUsage()
+    let usageRead = true
+    let failed = false
+    try {
+      for await (const chunk of this.provider.stream(input)) {
+        if (chunk.kind === 'text') text += chunk.text
+        else if (chunk.kind === 'tool') toolCalls += 1
+        else if (chunk.kind === 'usage') copyInto(spent, chunk.usage)
+        else if (chunk.kind === 'done') {
+          copyInto(spent, chunk.usage)
+          if (chunk.usageProblem !== undefined) usageRead = false
+        } else if (chunk.kind === 'error') throw new ProviderError(chunk.message, chunk.status)
+      }
+    } catch (err) {
+      failed = true
+      if (!this.stopped) this.note(`A summary request failed: ${err instanceof Error ? err.message : String(err)}`)
+    }
+    this.addHarnessUsage(spent, this.facts === undefined ? null : costOf(spent, this.facts))
+    return failed || this.stopped ? null : { text: this.safe(text.trim()), toolCalls, usage: spent, usageRead }
+  }
+
+  /** Fold the cut messages into the summary. The old summary, if any, goes with them. */
+  private applySummary(cut: Cut, summary: string): void {
+    const earlier = this.liveSummary()
+    if (earlier !== undefined) earlier.compacted = 'compacted'
+    for (const i of cut.compacted) {
+      const m = this.messages[i]
+      if (m !== undefined) m.compacted = 'compacted'
+    }
+    // Appended where the compaction happened, so the window draws it at the
+    // point in the conversation where it took effect. `wireMessages` sends it
+    // first either way.
+    this.messages.push({ role: 'user', content: summary, summary: true })
+  }
+
+  /**
+   * What any compaction ends with. The anchor described a history that no
+   * longer goes out, and the read index may be pointing at lines that went
+   * into the summary, so both are dropped.
+   */
+  private compacted(reason: CompactionReason, before: number, compacted: number, pruned: string[], summary?: string): void {
+    this.anchor = null
+    this.reads.dropSpans()
+    const after = this.context.tokens
+    const at = Date.now()
+    this.compactions.push({ at, reason, before, after })
+    this.bus.emit({
+      type: 'context.compacted',
+      sessionId: this.options.sessionId,
+      reason,
+      before,
+      after,
+      compacted,
+      pruned,
+      ...(summary === undefined ? {} : { summary }),
+      at,
+    })
+    const how = HOW[reason]
+    const what = [
+      compacted > 0 ? `${compacted} message${compacted === 1 ? '' : 's'} summarised` : '',
+      pruned.length > 0 ? `${pruned.length} tool result${pruned.length === 1 ? '' : 's'} shortened` : '',
+    ].filter(part => part !== '')
+    this.note(`${how}: ${what.join(', ')}, context ${tokensText(before)} to ${tokensText(after)} tokens.`)
+    this.emitContext()
   }
 
   /** A tool call the stop landed on top of. The model is told it never ran. */
@@ -995,6 +1457,36 @@ export class Session {
     addInto(this.totalUsage, u)
     addInto(this.turnUsage, u)
   }
+}
+
+/** How the note after a compaction starts, by what set it off. */
+const HOW: Record<CompactionReason, string> = {
+  auto: 'Compacted automatically',
+  manual: 'Compacted on request',
+  overflow: 'Compacted after the provider refused the request as too long',
+}
+
+/** A message as the wire gets it: markers off, and a pruned result shortened. */
+function wireCopy(m: ChatMessage): ChatMessage {
+  if (m.role === 'tool') {
+    return {
+      role: 'tool',
+      content: m.compacted === 'pruned' ? prunedText(m.content) : m.content,
+      toolCallId: m.toolCallId,
+      ...(m.failed === true ? { failed: true } : {}),
+    }
+  }
+  return {
+    role: m.role,
+    content: m.content,
+    ...(m.toolCalls === undefined ? {} : { toolCalls: m.toolCalls }),
+    ...(m.thinking === undefined ? {} : { thinking: m.thinking }),
+  }
+}
+
+/** A token count for a sentence: `152k` from ten thousand up, the plain number below. */
+function tokensText(tokens: number): string {
+  return tokens >= 10_000 ? `${Math.round(tokens / 1000)}k` : tokens.toLocaleString('en-US')
 }
 
 /** Overwrite a usage report with another, in place. */

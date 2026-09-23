@@ -113,6 +113,13 @@ export interface ModelFacts {
    */
   maxOutput?: number
   /**
+   * The model's context window in tokens: the prompt and the answer together
+   * have to fit in it. Absent where nobody has said, and then the session
+   * shows the context as a size with no percentage and never compacts on its
+   * own.
+   */
+  context?: number
+  /**
    * Whether the model takes images alongside text. Absent means unanswered:
    * the endpoint did not publish it and the user has not typed it, which is
    * not the same as a no.
@@ -131,7 +138,11 @@ export interface ModelOffer {
   facts: ModelFacts
 }
 
-/** Which halves of a model's facts nobody has supplied. */
+/**
+ * Which halves of a model's facts nobody has supplied. The window is left out:
+ * a model with no known window loses automatic compaction and costs nothing
+ * extra, so it gets no warning mark.
+ */
 export type FactGap = 'efforts' | 'cost'
 
 export function factGaps(facts: ModelFacts | undefined): FactGap[] {
@@ -164,6 +175,8 @@ export function resolveFacts(provider: ProviderRecord, model: string): ModelFact
   if (tiers !== undefined && tiers.length > 0) merged.tiers = tiers.map(tier => ({ ...tier }))
   const maxOutput = typed.maxOutput ?? reported.maxOutput
   if (maxOutput !== undefined) merged.maxOutput = maxOutput
+  const context = typed.context ?? reported.context
+  if (context !== undefined) merged.context = context
   const vision = typed.vision ?? reported.vision
   if (vision !== undefined) merged.vision = vision
   const wire = typed.wire ?? reported.wire
@@ -219,6 +232,23 @@ export interface StoredConfig {
   approval?: ApprovalConfig
   /** The mode a new session starts in. `ask` when nobody has chosen. */
   permissionMode?: PermissionMode
+  /** How sessions manage their context. See `docs/harness/context.md`. */
+  context?: ContextConfig
+}
+
+/**
+ * The context settings a user can change. Everything else about compaction is
+ * a constant in `src/core/context.ts`.
+ */
+export interface ContextConfig {
+  /** Compact without being asked when the context nears the window. On when unset. */
+  auto?: boolean
+  /**
+   * The most any context may grow to, in tokens. Compaction works against this
+   * where it is smaller than the model's window, or where the window is
+   * unknown. The window alone when unset.
+   */
+  limit?: number
 }
 
 /** Everything a session needs to reach a provider. */
@@ -378,6 +408,8 @@ export function parseStored(parsed: unknown): StoredConfig {
     const approval = parseApproval(record.approval)
     if (approval !== undefined) stored.approval = approval
     if (isPermissionMode(record.permissionMode)) stored.permissionMode = record.permissionMode
+    const context = parseContextConfig(record.context)
+    if (context !== undefined) stored.context = context
     return stored
   }
 
@@ -459,6 +491,9 @@ export function parseFacts(value: unknown): ModelFacts | undefined {
   const published = record.maxOutput
   const ceiling = typeof published === 'number' && Number.isFinite(published) ? Math.floor(published) : 0
   if (ceiling > 0) facts.maxOutput = ceiling
+  const window = record.context
+  const size = typeof window === 'number' && Number.isFinite(window) ? Math.floor(window) : 0
+  if (size > 0) facts.context = size
   // A stored `false` is an answer and is kept. Anything that is not a boolean
   // is dropped, so a truthy string cannot read as a yes.
   if (typeof record.vision === 'boolean') facts.vision = record.vision
@@ -486,6 +521,16 @@ function parseTiers(value: unknown): PriceTier[] | undefined {
     if (Object.keys(tier).length > 1) tiers.push(tier)
   }
   return tiers.length === 0 ? undefined : tiers.sort((a, b) => a.over - b.over)
+}
+
+function parseContextConfig(value: unknown): ContextConfig | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const { auto, limit } = value as Record<string, unknown>
+  const context: ContextConfig = {
+    ...(typeof auto === 'boolean' ? { auto } : {}),
+    ...(typeof limit === 'number' && Number.isInteger(limit) && limit > 0 ? { limit } : {}),
+  }
+  return Object.keys(context).length === 0 ? undefined : context
 }
 
 /**

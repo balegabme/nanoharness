@@ -88,14 +88,12 @@
             <span class="mcp-word">MCP</span>
           </span>
           <span class="spacer"></span>
-          <span
-            class="usage-line link"
-            id="usage-line"
-            role="button"
-            tabindex="0"
-            title="This session, every turn added up. Open it for everything spent."
-            hidden
-          ></span>
+          <span class="metric rate" id="rate" title="Output tokens per second, this turn" hidden></span>
+          <!-- The whole session's tokens, and the context the next request
+               carries. Two buttons, because the first only grows and the second
+               shrinks when the conversation is compacted. -->
+          <button class="topbar-btn" id="tokens" type="button" aria-label="Tokens this session" hidden></button>
+          <button class="topbar-btn meter" id="context" type="button"></button>
           <span class="chip" id="status" hidden></span>
         </header>
 
@@ -115,7 +113,9 @@
               <span class="job-mode" id="sub-kind"></span>
               <span class="job-state" id="sub-state"></span>
               <span class="spacer"></span>
-              <span class="usage-line" id="sub-usage" title="What this subagent has spent" hidden></span>
+              <span class="metric rate" id="sub-rate" title="Output tokens per second" hidden></span>
+              <button class="topbar-btn" id="sub-tokens" type="button" aria-label="Tokens this subagent spent" hidden></button>
+              <button class="topbar-btn meter" id="sub-context" type="button"></button>
               <button class="btn sm outline" id="sub-copy" type="button" hidden>Copy result</button>
             </header>
             <p class="hint" id="sub-meta"></p>
@@ -259,6 +259,26 @@
         </button>
       </div>
     </form>
+
+    <!--
+      The panels the topbar and subagent buttons open. They live here and not
+      beside their buttons because the bars they sit in clip what overflows.
+    -->
+    <div class="popover" id="tokens-panel" role="dialog" aria-label="Tokens this session">
+      <div class="pop-title">Tokens this session</div>
+      <div class="pop-pills" id="tokens-pills"></div>
+      <p class="pop-note" id="tokens-note"></p>
+      <div class="pop-actions">
+        <button class="btn sm outline" id="tokens-spend" type="button">See all spending</button>
+      </div>
+    </div>
+    <div class="popover" id="context-panel" role="dialog" aria-label="Context"></div>
+    <div class="popover" id="sub-tokens-panel" role="dialog" aria-label="Tokens this subagent spent">
+      <div class="pop-title">Tokens this subagent spent</div>
+      <div class="pop-pills" id="sub-tokens-pills"></div>
+      <p class="pop-note" id="sub-tokens-note"></p>
+    </div>
+    <div class="popover" id="sub-context-panel" role="dialog" aria-label="Subagent context"></div>
 
     <dialog class="sheet" id="settings-dialog" aria-label="Settings">
       <nav class="sheet-nav">

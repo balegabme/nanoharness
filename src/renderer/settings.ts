@@ -533,7 +533,30 @@ function modelEditor(id: string): HTMLElement {
     focusOn(`.model-edit-reset[data-model="${CSS.escape(id)}"]`)
   })
 
-  wrap.append(levels, costs, visionField(id, facts.vision), reset)
+  wrap.append(levels, costs, windowField(id, typed.context ?? facts.context), visionField(id, facts.vision), reset)
+  return wrap
+}
+
+/**
+ * The model's context window. Without one the meter has no percentage and
+ * nothing compacts on its own, so an endpoint that does not publish it leaves
+ * the field for the user.
+ */
+function windowField(id: string, value: number | undefined): HTMLElement {
+  const wrap = el('div', 'model-window')
+  const field = el('label', 'price-field')
+  const box = el('input')
+  box.type = 'number'
+  box.min = '1'
+  box.step = '1000'
+  box.value = value === undefined ? '' : String(value)
+  box.placeholder = 'unknown'
+  box.addEventListener('change', () => {
+    const parsed = Number(box.value.trim())
+    writeOverride(id, { context: Number.isInteger(parsed) && parsed > 0 ? parsed : undefined })
+  })
+  field.append(el('span', undefined, 'tokens'), box)
+  wrap.append(el('span', 'model-edit-label', 'Context window'), field)
   return wrap
 }
 
@@ -584,7 +607,7 @@ function priceField(id: string, key: PriceKey, label: string, value: number | un
 }
 
 /** Fold one field into this model's corrections and redraw. */
-function writeOverride(id: string, patch: Partial<Record<'efforts' | 'vision' | PriceKey, Effort[] | number | boolean | undefined>>): void {
+function writeOverride(id: string, patch: Partial<Record<'efforts' | 'vision' | 'context' | PriceKey, Effort[] | number | boolean | undefined>>): void {
   const next: ModelFacts = { ...overrides[id] }
   for (const [key, value] of Object.entries(patch)) {
     if (value === undefined || (Array.isArray(value) && value.length === 0)) delete next[key as keyof ModelFacts]

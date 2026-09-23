@@ -305,6 +305,8 @@ export async function configStatus(): Promise<ConfigStatus> {
     providers: stored.providers.map(p => ({ ...p, hasKey: secrets[p.id] !== undefined })),
     keyStorage: safeStorage.isEncryptionAvailable() ? 'os' : 'unavailable',
     knownProviders: KNOWN_PROVIDERS,
+    autoCompact: autoCompactOf(stored),
+    contextLimit: stored.context?.limit ?? null,
   }
   if (stored.active !== undefined) status.active = stored.active
   if (stored.approval !== undefined) status.approval = stored.approval
@@ -394,6 +396,45 @@ export async function setDefaultMode(mode: PermissionMode): Promise<void> {
 
 export async function defaultMode(): Promise<PermissionMode> {
   return (await readStored()).permissionMode ?? 'ask'
+}
+
+/**
+ * Whether sessions compact on their own. One setting for every session, on
+ * until someone turns it off, because a session that fills its window with
+ * it off stops with an error instead.
+ */
+export async function setAutoCompact(on: boolean): Promise<void> {
+  const stored = await readStored()
+  stored.context = { ...stored.context, auto: on }
+  await writeStored(stored)
+}
+
+export async function autoCompact(): Promise<boolean> {
+  return autoCompactOf(await readStored())
+}
+
+function autoCompactOf(stored: StoredConfig): boolean {
+  return stored.context?.auto ?? true
+}
+
+/**
+ * The most any context may grow to, for every session. Null clears it, and
+ * compaction goes back to working against the model's window.
+ */
+export async function setContextLimit(limit: number | null): Promise<void> {
+  if (limit !== null && !(Number.isInteger(limit) && limit > 0)) {
+    throw new Error('the context limit must be a whole number of tokens, above nought')
+  }
+  const stored = await readStored()
+  const context = { ...stored.context }
+  if (limit === null) delete context.limit
+  else context.limit = limit
+  stored.context = context
+  await writeStored(stored)
+}
+
+export async function contextLimit(): Promise<number | undefined> {
+  return (await readStored()).context?.limit
 }
 
 /** The approval ladder as clients, newest settings each time it is asked for. */

@@ -6,19 +6,22 @@ import type { ActiveSelection, Effort, ModelFacts, ModelOffer, ProviderKind, Pro
 import type { JobState, JobView } from '../core/jobs.js'
 import type { AccessIntent } from '../core/scope.js'
 import type { SpawnMode } from '../core/spawn.js'
-import type { AppEvent, McpServerStatus, SessionNote, ToolStats, TurnUsage } from '../core/types.js'
+import type { AppEvent, CompactionMark, ContextLedger, McpServerStatus, SessionNote, ToolStats, TurnRate, TurnUsage } from '../core/types.js'
 import type { UsageReport } from '../core/usage-report.js'
 
 export const IPC_CHANNELS = {
   ping: 'ipc:ping',
   sessionSend: 'session:send',
   sessionStop: 'session:stop',
+  sessionCompact: 'session:compact',
   sessionEvent: 'session:event',
   configGet: 'config:get',
   configSaveProvider: 'config:save-provider',
   configDeleteProvider: 'config:delete-provider',
   configSetActive: 'config:set-active',
   configProbe: 'config:probe',
+  configSetAutoCompact: 'config:set-auto-compact',
+  configSetContextLimit: 'config:set-context-limit',
   workspaceList: 'workspace:list',
   workspaceAdd: 'workspace:add',
   workspaceRemove: 'workspace:remove',
@@ -106,10 +109,14 @@ export interface SessionView {
   usage?: TurnUsage
   /** The subagents' share of `usage`. */
   subagentUsage?: TurnUsage
-  /** The harness's own share of `usage`: approval checks and the like. */
+  /** The harness's own share of `usage`: approval checks and compaction summaries. */
   harnessUsage?: TurnUsage
   /** What that share cost, priced at the models that ran it. */
   harnessCostUsd?: number
+  /** The context as it stood when the session last stopped. Absent until it has measured one. */
+  context?: ContextLedger
+  /** The last turn's rate, so a re-opened session shows one. Absent until a turn has finished. */
+  rate?: TurnRate
 }
 
 /** Auto mode's answer for one session, and why it is not available when it is not. */
@@ -138,6 +145,10 @@ export interface TranscriptMessage {
   failed?: boolean
   /** What the model thought before this message, where the provider reports it. */
   thinking?: string
+  /** Folded into a summary, or a tool result sent shortened. The message itself is whole. */
+  compacted?: CompactionMark
+  /** A summary a compaction wrote, drawn where the compaction happened. */
+  summary?: true
 }
 
 export interface SessionOpenResponse {
@@ -176,6 +187,8 @@ export interface SubagentOpenResponse {
   endedAt: number
   messages: TranscriptMessage[]
   notes: SessionNote[]
+  /** Its context when it ended, for the meter above its conversation. */
+  context?: ContextLedger
 }
 
 /** A tool wants paths outside the session root, or a command run, and waits. */
@@ -204,6 +217,11 @@ export interface PermissionAsk {
 }
 
 export type PermissionDecision = 'once' | 'session' | 'deny'
+
+export interface SessionCompactResponse {
+  /** False when there was nothing to compact, no summary came back or the user stopped it. The session's notes say which. */
+  compacted: boolean
+}
 
 export interface SessionSendResponse {
   sessionId: string
@@ -243,6 +261,10 @@ export interface ConfigStatus {
   approval?: ApprovalConfig
   /** Why auto mode cannot be turned on. Absent when it can. */
   approvalProblem?: string
+  /** Whether sessions compact on their own as the context fills. */
+  autoCompact: boolean
+  /** The most any context may grow to, in tokens. Null for the model's window alone. */
+  contextLimit: number | null
 }
 
 /** Create a provider (no `id`) or update one (with its `id`). */
@@ -302,6 +324,11 @@ export interface NanoBridge {
   send(sessionId: string, text: string): Promise<SessionSendResponse>
   /** End the running turn. Safe to call when nothing is running. */
   stop(sessionId: string): Promise<void>
+  /**
+   * Summarise the older part of the conversation now. Refused while a turn is
+   * running; `stop` ends a compaction that is.
+   */
+  compact(sessionId: string): Promise<SessionCompactResponse>
   workspaces(): Promise<WorkspaceStatus>
   /** Opens a directory picker. Resolves to null when the user cancels it. */
   addWorkspace(): Promise<WorkspaceStatus | null>
@@ -351,6 +378,10 @@ export interface NanoBridge {
   setActive(request: ActiveSetRequest): Promise<ConfigStatus>
   /** Set the approval model ladder. An empty list turns auto mode off for good. */
   saveApproval(approval: ApprovalConfig): Promise<ConfigStatus>
+  /** Turn automatic compaction on or off, for every session, live ones included. */
+  setAutoCompact(on: boolean): Promise<ConfigStatus>
+  /** Set the most any context may grow to, or clear it with null. Live sessions take it at once. */
+  setContextLimit(limit: number | null): Promise<ConfigStatus>
   probeProvider(request: ConfigProbeRequest): Promise<ConfigProbeResult>
   /**
    * What has been spent, grouped for the spend view. `days` counts back from

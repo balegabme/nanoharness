@@ -29,7 +29,7 @@ export interface UsageRecord {
   usage: TurnUsage
   /** The subagents' share of `usage`. Inside it, never added to it. */
   subagent: TurnUsage
-  /** The harness's own share of `usage`: approval checks and anything like them. */
+  /** The harness's own share of `usage`: approval checks and compaction summaries. */
   harness: TurnUsage
   /**
    * What the whole turn cost, at the prices the models carried while it ran.
@@ -47,6 +47,12 @@ export interface UsageRecord {
   harnessCostUsd: number
   /** Generating time over the turn's rounds, first chunk to last, tools excluded. */
   streamMs: number
+  /**
+   * Set on spend that happened between turns, which today is a compaction the
+   * user asked for. It adds to every total and to no count of turns. `turn` is
+   * the turn it followed.
+   */
+  betweenTurns?: true
 }
 
 /**
@@ -158,6 +164,7 @@ function parseRecord(line: string): UsageRecord | null {
     subagentCostUsd,
     harnessCostUsd,
     streamMs,
+    ...(value.betweenTurns === true ? { betweenTurns: true } : {}),
   }
 }
 

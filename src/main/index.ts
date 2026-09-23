@@ -33,7 +33,9 @@ import { emptyUsage } from '../core/types.js'
 import { IPC_CHANNELS } from '../ipc/contract.js'
 import {
   approvalEndpoints,
+  autoCompact,
   configStatus,
+  contextLimit,
   defaultMode,
   deleteProvider,
   loadProviderConfig,
@@ -42,6 +44,8 @@ import {
   saveApproval,
   saveProvider,
   setActive,
+  setAutoCompact,
+  setContextLimit,
   setDefaultMode,
 } from './config-store.js'
 import { PermissionBroker, gateState, promptingGate } from './permission.js'
@@ -59,24 +63,26 @@ import {
   renameSession,
   saveSubagent,
   saveTranscript,
+  sessionContext,
   sessionIdentity,
   sessionRole,
   sessionRoot,
   sessionUsage,
   setSessionRole,
-  setSessionUsage,
+  setSessionState,
   toTranscriptView,
   transcriptPath,
   usageNames,
   workspaceStatus,
 } from './workspace-store.js'
+import type { SessionState } from './workspace-store.js'
 import { createWindow, serveRenderer } from './window.js'
 import type { AgentRole, HarnessFacts } from '../core/agents.js'
 import type { JobView } from '../core/jobs.js'
 import type { PromptEnvironment } from '../core/prompt.js'
 import type { SubagentSetup, SubagentSlot } from '../core/spawn.js'
 import type { Tool } from '../core/session.js'
-import type { AppEvent, McpServerStatus, TurnUsage } from '../core/types.js'
+import type { AppEvent, McpServerStatus } from '../core/types.js'
 import type {
   ActiveSetRequest,
   AgentSummary,
@@ -91,6 +97,7 @@ import type {
   SessionOpenResponse,
   SessionSendRequest,
   SecretView,
+  SessionCompactResponse,
   SessionView,
   SubagentOpenResponse,
   WorkspaceStatus,
@@ -118,6 +125,9 @@ const FORWARDED: Record<AppEvent['type'], true> = {
   'session.stopped': true,
   'session.note': true,
   'session.summary': true,
+  context: true,
+  'context.compacting': true,
+  'context.compacted': true,
   'permission.request': true,
   'mcp.status': true,
   'job.started': true,
@@ -291,7 +301,7 @@ function jobsFor(sender: WebContents): JobRegistry {
     // as it now stands, or the window and the file disagree until the next
     // message is sent.
     if (parent !== undefined) {
-      void setSessionUsage(event.job.sessionId, spendOf(parent)).catch((err: unknown) => {
+      void setSessionState(event.job.sessionId, stateOf(parent)).catch((err: unknown) => {
         process.stderr.write(`session usage: ${err instanceof Error ? err.message : String(err)}\n`)
       })
     }
@@ -418,9 +428,12 @@ async function judgeFor(sessionId: string): Promise<Judge> {
   return judge
 }
 
-/** A session's running totals, in the shape the store writes. */
-function spendOf(session: Session): { total: TurnUsage; subagents: TurnUsage; harness: TurnUsage; harnessCostUsd: number } {
-  return { total: session.spent, subagents: session.spentBySubagents, harness: session.spentByHarness, harnessCostUsd: session.harnessCost }
+/** A session's running totals and its context, in the shape the store writes. */
+function stateOf(session: Session): SessionState {
+  return {
+    spend: { total: session.spent, subagents: session.spentBySubagents, harness: session.spentByHarness, harnessCostUsd: session.harnessCost },
+    context: session.context,
+  }
 }
 
 /**
@@ -559,6 +572,9 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
   })
 
   const spent = await sessionUsage(sessionId)
+  const auto = await autoCompact()
+  const limit = await contextLimit()
+  const stored = await sessionContext(sessionId)
 
   const setup = async (request: { role: AgentRole; mode: string }, slot: SubagentSlot): Promise<SubagentSetup> => {
     // Only a background child gets `job_update`: a foreground one is being
@@ -614,18 +630,24 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
       cwd: root,
       model: config.model,
       effort: config.effort,
-      facts: resolveFacts(config.provider, config.model),
+      facts,
       systemPrompt,
       access,
       history: await loadTranscript(sessionId),
       secrets,
+      autoCompact: auto,
+      ...(limit === undefined ? {} : { contextLimit: limit }),
+      ...(stored === null ? {} : { compactions: stored.compactions }),
+      ...(stored?.model === config.model ? { calibration: stored.calibration } : {}),
       ...(spent === null ? {} : { usage: spent.total, subagentUsage: spent.subagents, harnessUsage: spent.harness, harnessCostUsd: spent.harnessCostUsd }),
       spawn: createSpawnHost({
         sessionId,
         role,
         cwd: root,
         model: config.model,
-        facts: resolveFacts(config.provider, config.model),
+        facts,
+        autoCompact: auto,
+        ...(limit === undefined ? {} : { contextLimit: limit }),
         provider,
         access,
         jobs: jobsFor(sender),
@@ -656,6 +678,7 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
             endedAt: Date.now(),
             messages: record.messages,
             notes: record.notes,
+            context: record.context,
           })
         },
         // Sending a failed write to stderr would tell nobody, and by then the
@@ -699,6 +722,19 @@ ${outcome.answer}`)
   sessions.set(sessionId, session)
   promptSecrets.set(sessionId, secrets.names())
   return session
+}
+
+/**
+ * Hand the settings' current facts to every live session, after a save that
+ * changed prices, limits or the context window and nothing a session is built
+ * from. Settings that do not resolve leave the sessions as they are: the save
+ * that broke them is the setup screen's to report.
+ */
+async function refreshFacts(): Promise<void> {
+  const config = await loadProviderConfig().catch(() => null)
+  if (config === null) return
+  const facts = resolveFacts(config.provider, config.model)
+  for (const session of sessions.values()) session.setFacts(facts)
 }
 
 /**
@@ -776,6 +812,21 @@ app.whenReady().then(() => {
   // not end because somebody looked at the model list.
   ipcMain.handle(IPC_CHANNELS.configSaveProvider, async (_event: IpcMainInvokeEvent, req: ProviderSaveRequest): Promise<ConfigStatus> => {
     if (await saveProvider(req)) void retire()
+    else await refreshFacts()
+    return configStatus()
+  })
+
+  // One setting for every session, so it is stored and handed to each live one.
+  // A session built later reads it from the file.
+  ipcMain.handle(IPC_CHANNELS.configSetAutoCompact, async (_event: IpcMainInvokeEvent, on: boolean): Promise<ConfigStatus> => {
+    await setAutoCompact(on)
+    for (const session of sessions.values()) session.setAutoCompact(on)
+    return configStatus()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.configSetContextLimit, async (_event: IpcMainInvokeEvent, limit: number | null): Promise<ConfigStatus> => {
+    await setContextLimit(limit)
+    for (const session of sessions.values()) session.setContextLimit(limit ?? undefined)
     return configStatus()
   })
 
@@ -967,6 +1018,41 @@ app.whenReady().then(() => {
     sessions.get(sessionId)?.stop()
   })
 
+  // A compaction runs between turns, on the session's own model and history,
+  // so a session nobody has sent anything to since launch is built for it.
+  ipcMain.handle(IPC_CHANNELS.sessionCompact, async (event: IpcMainInvokeEvent, sessionId: string): Promise<SessionCompactResponse> => {
+    const session = await sessionFor(event.sender, sessionId)
+    const identity = await sessionIdentity(sessionId)
+    if (identity === null) throw new Error('that session is gone; start a new one from the sidebar')
+    const outcome = await session.compact()
+    await saveTranscript(sessionId, session.transcript, session.notes)
+    const updated = await setSessionState(sessionId, stateOf(session))
+    // The summary requests are the harness's own spend and belong to no turn,
+    // so they get a line of their own under the turn they followed.
+    if (outcome.usage.input + outcome.usage.output + outcome.usage.cacheRead + outcome.usage.cacheWrite > 0) {
+      await appendUsage({
+        at: Date.now(),
+        sessionId,
+        workspaceId: identity.workspaceId,
+        turn: session.turnNumber,
+        role: identity.role,
+        model: session.options.model,
+        usage: outcome.usage,
+        subagent: emptyUsage(),
+        harness: outcome.usage,
+        costUsd: outcome.costUsd,
+        subagentCostUsd: 0,
+        harnessCostUsd: outcome.costUsd ?? 0,
+        streamMs: 0,
+        betweenTurns: true,
+      }).catch((err: unknown) => {
+        process.stderr.write(`usage log: ${err instanceof Error ? err.message : String(err)}\n`)
+      })
+    }
+    if (updated === null) throw new Error('that session is gone; start a new one from the sidebar')
+    return { compacted: outcome.compacted }
+  })
+
   ipcMain.handle(IPC_CHANNELS.sessionSend, async (event: IpcMainInvokeEvent, req: SessionSendRequest) => {
     // The window has already captured what it drew, and this is idempotent on
     // text that has been through it. It runs again because this is the boundary
@@ -995,7 +1081,8 @@ app.whenReady().then(() => {
     // answer is not a message, and a crash mid-turn should leave the session
     // exactly as it was before the message was sent.
     await saveTranscript(req.sessionId, session.transcript, session.notes)
-    const updated = await noteTurn(req.sessionId, text, spendOf(session))
+    const rate = session.lastRate
+    const updated = await noteTurn(req.sessionId, text, { ...stateOf(session), ...(rate === undefined ? {} : { rate }) })
 
     // One line per completed turn: what `nh usage` and the spend view are both
     // built out of. A log that cannot be written is worth a warning and no more

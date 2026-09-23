@@ -142,6 +142,12 @@ interface PendingTool {
 
 export function createAnthropicProvider(opts: AnthropicOptions): ChatProvider {
   return {
+    // The server adds `max_tokens` to the prompt and refuses the request when
+    // the sum is over the window, however short the answer would have been.
+    declaredOutput(input) {
+      return maxTokensFor(input.effort ?? 'medium', input.maxTokens)
+    },
+
     async *stream(input: ChatInput): AsyncGenerator<ChatChunk> {
       const effort: Effort = input.effort ?? 'medium'
       const budget = budgetFor(effort, input.maxTokens)
@@ -284,8 +290,10 @@ export function createAnthropicProvider(opts: AnthropicOptions): ChatProvider {
 /**
  * Fold the harness message list into the Anthropic shape: the system prompt is
  * lifted out, tool results become `tool_result` blocks on a user message, and
- * consecutive results merge into one message because the API wants alternating
- * roles.
+ * anything that would put two user messages in a row goes into one, as
+ * separate blocks, because the API wants alternating roles. That covers a run
+ * of tool results, a background answer folded in after them, and the
+ * compaction summary followed by the message it was made in front of.
  */
 function toWireMessages(messages: readonly ChatMessage[]): WireMessage[] {
   const out: WireMessage[] = []
@@ -312,7 +320,9 @@ function toWireMessages(messages: readonly ChatMessage[]): WireMessage[] {
       content.push({ type: 'tool_use', id: call.id, name: call.name, input: parseArgs(call.args) })
     }
     if (content.length === 0) continue
-    out.push({ role: m.role, content })
+    const last = out[out.length - 1]
+    if (m.role === 'user' && last?.role === 'user') last.content.push(...content)
+    else out.push({ role: m.role, content })
   }
   return out
 }

@@ -91,10 +91,16 @@ Five differences matter, and each is handled at the boundary, so none of it
 leaks into the session loop:
 
 - `max_tokens` is required. It is derived from the effort, because a thinking
-  budget has to stay strictly below it.
+  budget has to stay strictly below it. The server adds it to the prompt and
+  refuses a request whose sum is over the window, so the provider reports it
+  through `declaredOutput` and the session keeps that much of the window free
+  (`context.md`).
 - The system prompt is a top-level field, never a message.
 - Tool results are `tool_result` blocks on a user message, and consecutive
   results merge into one message, because the API wants alternating roles.
+  Consecutive plain user messages merge the same way, as separate text blocks
+  in one message. That happens after a compaction, where the summary goes out
+  as a user message and the first message kept after it is often another.
 - Events are named (`message_start`, `content_block_*`, `message_delta`),
   and tool arguments stream as `input_json_delta` fragments that are
   concatenated and parsed once at `content_block_stop`.
@@ -204,9 +210,9 @@ that wants less says so in the error.
 
 ## Model facts
 
-Four things about a model are worth knowing before a turn runs on it: which
-effort levels it takes, what it charges, the most output it will produce, and
-whether it takes images. `readFacts`
+Five things about a model are worth knowing before a turn runs on it: which
+effort levels it takes, what it charges, the most output it will produce, how
+big its context window is, and whether it takes images. `readFacts`
 (`src/providers/model-facts.ts`) reads them out of the `/models` answer, and
 `ModelFacts` in `src/core/config.ts` is what comes back. Prices are stored as US
 dollars per million tokens, because that is the unit vendors quote; every wire
@@ -244,6 +250,17 @@ does not name `image` is a no, and a flag set false is a no. An endpoint that
 mentions neither has not answered at all, and `vision` comes back undefined.
 The settings screen offers the same three, so a model nobody has described
 stays undescribed instead of being recorded as text only.
+
+The window is read from `context_length`, `context_window` or
+`max_context_length` on the entry, `max_input_tokens` at the top level or in
+`model_info`, `top_provider.context_length` on an aggregator that routes one
+model to several upstreams, and `limit.context` on a server that groups its
+ceilings under one key. `max_input_tokens` is the prompt alone where the others
+are prompt and answer together. It is read anyway, because a window sized a
+little small makes compaction run a little early and nothing worse. A model
+with no window has no context percentage and never compacts on its own, and the
+settings screen has a field for it beside the prices. `factGaps` does not count
+it, since a missing window turns a feature off and costs no money.
 
 ### When nothing describes a model
 
@@ -366,7 +383,8 @@ from the window leaves whatever is there.
 `src/providers/catalogue.ts` reads `https://models.dev/api.json`, a public
 directory describing the models of several hundred endpoints, keyed by the same
 base URL the user pastes into settings. Prices, effort levels, output ceilings,
-whether a model reads images and which wire it answers on all come from there.
+context windows, whether a model reads images and which wire it answers on all
+come from there.
 
 It is read when the user presses **Fetch models** and at no other time, and
 nothing is kept between presses, so a model added this morning is described this
@@ -557,3 +575,13 @@ reports usage once, in its last chunk, so an attempt that never gets there
 carries nothing and the successful round's own count is all there is. Each retry
 leaves a note in the flow saying which attempt is being made, and the fifth
 failure ends the turn with the error.
+
+A request refused as longer than the model's window is a 4xx that the same
+bytes will get again, and shorter bytes will not. `isContextOverflow`, beside
+`isRetryable`, recognises one by shape, since no two servers word it alike:
+status 413, an error code of `context_length_exceeded` or `request_too_large`
+in the body the error quotes, or a message saying the prompt, input or context
+is too long or over the window. A 5xx or a 429 that mentions the context is left
+to `isRetryable`, because the server failing and a per-minute quota are both
+answered by waiting. The session answers a refusal once, by shrinking the
+history and asking again (`context.md`).

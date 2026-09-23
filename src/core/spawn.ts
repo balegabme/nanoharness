@@ -5,7 +5,7 @@ import { Session } from './session.js'
 import type { Tool } from './session.js'
 import type { AccessGate } from './scope.js'
 import type { ChatProvider } from './provider.js'
-import type { ChatMessage, SessionNote, ToolStats, TurnUsage } from './types.js'
+import type { ChatMessage, ContextLedger, SessionNote, ToolStats, TurnUsage } from './types.js'
 import type { Effort, ModelFacts } from './config.js'
 import type { AgentRole } from './agents.js'
 import type { JobRegistry, JobView } from './jobs.js'
@@ -89,6 +89,15 @@ export interface SpawnHost {
    * otherwise keep spending after the window said it had stopped.
    */
   stopAll(): void
+  /**
+   * New facts for the model, from a settings edit. Subagents started from now
+   * on get them, and running ones take them from their next request.
+   */
+  setFacts(facts: ModelFacts | undefined): void
+  /** Turn automatic compaction on or off, for running subagents and later ones. */
+  setAutoCompact(on: boolean): void
+  /** Set or clear the user's limit on the context, for running subagents and later ones. */
+  setContextLimit(limit: number | undefined): void
 }
 
 /** One subagent's own conversation, for storing beside the parent's. */
@@ -101,6 +110,7 @@ export interface SubagentRecord {
   tools: ToolStats
   messages: ChatMessage[]
   notes: SessionNote[]
+  context: ContextLedger
 }
 
 /** One subagent's identity while it runs: its job entry, and how it was started. */
@@ -126,6 +136,10 @@ export interface SpawnDeps {
   model: string
   /** What is known about that model, so a subagent's turns are priced and capped like the parent's. */
   facts?: ModelFacts
+  /** Whether subagents compact on their own. On when unset, as for a session. */
+  autoCompact?: boolean
+  /** The user's limit on the context, as for a session. */
+  contextLimit?: number
   provider: ChatProvider
   /** The parent's gate: a subagent is held to exactly the parent's boundary. */
   access: AccessGate
@@ -210,6 +224,11 @@ export function createSpawnHost(deps: SpawnDeps): SpawnHost {
    * it would hold its whole conversation for as long as the parent lives.
    */
   const live = new Map<string, Session>()
+  // All three can change under a running parent, from settings, so they are
+  // read here at each spawn and not out of `deps`.
+  let facts = deps.facts
+  let autoCompact = deps.autoCompact ?? true
+  let contextLimit = deps.contextLimit
 
   /**
    * A clone is the parent one message later: the parent's prompt, the parent's
@@ -235,7 +254,9 @@ export function createSpawnHost(deps: SpawnDeps): SpawnHost {
         cwd: deps.cwd,
         model: deps.model,
         systemPrompt: setup.systemPrompt,
-        ...(deps.facts === undefined ? {} : { facts: deps.facts }),
+        ...(facts === undefined ? {} : { facts }),
+        autoCompact,
+        ...(contextLimit === undefined ? {} : { contextLimit }),
         access: deps.access,
         ...(setup.effort === undefined ? {} : { effort: setup.effort }),
         ...(setup.history === undefined ? {} : { history: setup.history }),
@@ -263,7 +284,7 @@ export function createSpawnHost(deps: SpawnDeps): SpawnHost {
         usage,
         tools: child.toolStats,
         ms: Date.now() - startedAt,
-        costUsd: deps.facts === undefined ? null : costOf(usage, deps.facts),
+        costUsd: facts === undefined ? null : costOf(usage, facts),
         stopped,
       }
     } catch (err) {
@@ -285,7 +306,7 @@ export function createSpawnHost(deps: SpawnDeps): SpawnHost {
   ): Promise<void> {
     if (deps.save === undefined) return
     try {
-      await deps.save(slot, { request, state, note, usage, tools: child.toolStats, messages: child.transcript, notes: child.notes })
+      await deps.save(slot, { request, state, note, usage, tools: child.toolStats, messages: child.transcript, notes: child.notes, context: child.context })
     } catch (err) {
       // This runs on all three ways out, so the sentence says which one it
       // was: a subagent that failed or was stopped is exactly the one whose
@@ -369,6 +390,21 @@ export function createSpawnHost(deps: SpawnDeps): SpawnHost {
     stopAll() {
       for (const child of live.values()) child.stop()
     },
+
+    setFacts(next) {
+      facts = next
+      for (const child of live.values()) child.setFacts(next)
+    },
+
+    setAutoCompact(on) {
+      autoCompact = on
+      for (const child of live.values()) child.setAutoCompact(on)
+    },
+
+    setContextLimit(limit) {
+      contextLimit = limit
+      for (const child of live.values()) child.setContextLimit(limit)
+    },
   }
 }
 
@@ -390,7 +426,7 @@ export function cloneHistory(transcript: readonly ChatMessage[]): ChatMessage[] 
   const cut = transcript.findIndex(
     message => message.role === 'assistant' && (message.toolCalls ?? []).some(call => !answered.has(call.id)),
   )
-  return [...(cut < 0 ? transcript : transcript.slice(0, cut))]
+  return cut < 0 ? [...transcript] : transcript.slice(0, cut)
 }
 
 /** The subagent's last word, whole. What the parent is given is decided above. */

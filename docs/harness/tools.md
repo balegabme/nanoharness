@@ -218,6 +218,12 @@ read. Creating a file is always allowed. A file the session wrote itself counts
 as current without a re-read, since the session knows what it put there; its
 spans are dropped, because the new content is on disk and in nobody's context.
 
+A compaction drops every span and keeps the versions. The lines a file was read
+at may have gone into a summary or been shortened, and a model told they are
+already in the conversation would look for them there and not find them. The
+version still says what was on disk when the file was read, so the freshness
+rule for `edit` and `write` carries on unchanged (`context.md`).
+
 Version is modification time and size together. Either alone changes too
 rarely: a rewrite inside the same millisecond keeps the time, and a swap of two
 characters keeps the size.

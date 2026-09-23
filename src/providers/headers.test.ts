@@ -27,11 +27,11 @@ function empty(): Response {
 
 /** The headers one `stream()` call put on its request. */
 async function sentHeaders(run: () => AsyncGenerator<ChatChunk>): Promise<Headers> {
-  const fetchMock = vi.fn(async () => empty())
+  const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => empty())
   vi.stubGlobal('fetch', fetchMock)
   // Drained and not merely started: the request goes out on the first pull.
   for await (const chunk of run()) void chunk
-  const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined
+  const init = fetchMock.mock.calls[0]?.[1]
   return new Headers(init?.headers)
 }
 

@@ -54,6 +54,18 @@ describe('what a window of turns came to', () => {
     expect(report.totals.unpriced).toBe(1)
   })
 
+  it('adds a compaction by hand to the spend and to no count of turns', () => {
+    const summary = { ...nothing, input: 5000, output: 400 }
+    const compaction = turn({ usage: summary, harness: summary, costUsd: null, harnessCostUsd: 0, streamMs: 0, betweenTurns: true })
+    const report = buildReport([turn(), compaction], { now: NOW })
+
+    expect(report.totals.turns).toBe(1)
+    expect(report.totals.unpriced).toBe(0)
+    expect(report.totals.usage.input).toBe(6000)
+    const harness = report.byPhase.find(row => row.id === 'harness')
+    expect(harness).toMatchObject({ turns: 0, usage: summary })
+  })
+
   it('leaves out a turn older than the window, and says how many it left out', () => {
     const report = buildReport([turn(), turn({ at: at(1) })], { days: 7, now: NOW })
 
@@ -78,7 +90,7 @@ describe('what a window of turns came to', () => {
 })
 
 describe('who spent it', () => {
-  it('splits a turn into the conversation, its subagents and the approval model', () => {
+  it('splits a turn into the conversation, its subagents and the harness', () => {
     const report = buildReport(
       [
         turn({
@@ -97,7 +109,7 @@ describe('who spent it', () => {
     expect(byId.get('conversation')?.usage.output).toBe(180)
     expect(byId.get('conversation')?.costUsd).toBeCloseTo(0.015)
     expect(byId.get('subagents')?.costUsd).toBeCloseTo(0.03)
-    expect(byId.get('approval')?.costUsd).toBeCloseTo(0.005)
+    expect(byId.get('harness')?.costUsd).toBeCloseTo(0.005)
     // The three phases are the whole turn, not most of it.
     expect(report.byPhase.reduce((sum, row) => sum + row.costUsd, 0)).toBeCloseTo(report.totals.costUsd)
   })

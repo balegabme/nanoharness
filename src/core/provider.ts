@@ -4,6 +4,14 @@ import type { Effort } from './config.js'
 
 export interface ChatProvider {
   stream(input: ChatInput): AsyncGenerator<ChatChunk>
+  /**
+   * The output ceiling a request with these settings declares, on a wire where
+   * the server counts that ceiling against the window before it reads a word of
+   * the prompt. The session keeps that much of the window free. A wire that
+   * declares no ceiling, or whose server counts only what the model writes,
+   * leaves this out, and the session keeps a default back instead.
+   */
+  declaredOutput?(input: Pick<ChatInput, 'effort' | 'maxTokens'>): number
 }
 
 export interface ChatInput {
@@ -148,6 +156,30 @@ export function isRetryable(err: unknown): boolean {
   }
   const code = causeCode(err)
   return code !== undefined && RETRY_CODE.has(code)
+}
+
+/**
+ * Whether the provider refused a request for being longer than the model's
+ * window. Retrying the same bytes cannot help, and shortening them can, so the
+ * session compacts and asks once more.
+ *
+ * Recognised by shape, since no two servers word it alike: status 413, an
+ * error code of `context_length_exceeded` or `request_too_large` anywhere in
+ * the body the error quotes, or a message that says the prompt, the input or
+ * the context is too long or exceeds the window or the maximum.
+ */
+const OVERFLOW_CODE = /context_length_exceeded|request_too_large/i
+const OVERFLOW_TEXT =
+  /(prompt|input|context|request)[^.]{0,40}(too long|too large|exceeds?|exceeded|longer than)|maximum context length|context window/i
+
+export function isContextOverflow(err: unknown): boolean {
+  if (!(err instanceof ProviderError)) return false
+  if (err.status === 413) return true
+  // A 5xx that mentions the context is the server failing, and a 429 that
+  // calls a request too large is a per-minute quota talking. Waiting is the
+  // answer to both, and `isRetryable` already gives it.
+  if (err.status !== undefined && (err.status >= 500 || err.status === 429)) return false
+  return OVERFLOW_CODE.test(err.message) || OVERFLOW_TEXT.test(err.message)
 }
 
 /**
