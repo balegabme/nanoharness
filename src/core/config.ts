@@ -234,7 +234,15 @@ export interface StoredConfig {
   permissionMode?: PermissionMode
   /** How sessions manage their context. See `docs/harness/context.md`. */
   context?: ContextConfig
+  /** Whether the user's hooks run. On when unset. See `docs/harness/hooks.md`. */
+  hooks?: boolean
+  /** Whether a pasted image is shrunk to the size the model reads before it is stored and sent. On when unset. */
+  downscaleImages?: boolean
 }
+
+/** The settings that are one switch each, and on until someone turns them off. */
+export const SWITCH_NAMES = ['hooks', 'downscaleImages'] as const
+export type SwitchName = (typeof SWITCH_NAMES)[number]
 
 /**
  * The context settings a user can change. Everything else about compaction is
@@ -410,6 +418,8 @@ export function parseStored(parsed: unknown): StoredConfig {
     if (isPermissionMode(record.permissionMode)) stored.permissionMode = record.permissionMode
     const context = parseContextConfig(record.context)
     if (context !== undefined) stored.context = context
+    if (typeof record.hooks === 'boolean') stored.hooks = record.hooks
+    if (typeof record.downscaleImages === 'boolean') stored.downscaleImages = record.downscaleImages
     return stored
   }
 

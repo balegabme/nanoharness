@@ -2,7 +2,7 @@
 import { BAD_SSE, NO_BODY, ProviderError, StreamBrokenError, retryAfterMs } from '../core/provider.js'
 import type { ChatProvider, ChatInput } from '../core/provider.js'
 import type { ChatChunk, ChatMessage, JsonSchema, ToolInput, TurnUsage } from '../core/types.js'
-import { emptyUsage } from '../core/types.js'
+import { dataUrl, emptyUsage } from '../core/types.js'
 import { endpointURL } from '../core/config.js'
 import { readOffers } from './model-facts.js'
 import { wireHeaders } from './headers.js'
@@ -48,7 +48,11 @@ interface WireToolCall {
   function: { name: string; arguments: string }
 }
 
+/** A part of a user message that carries more than text. */
+type WirePart = { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }
+
 type WireMessage =
+  | { role: 'user'; content: WirePart[] }
   | { role: 'system' | 'user' | 'assistant'; content: string; tool_calls?: WireToolCall[] }
   | { role: 'tool'; tool_call_id: string; content: string }
 
@@ -171,6 +175,14 @@ export function createOpenAIProvider(opts: OpenAIOptions): ChatProvider {
 function toWireMessage(m: ChatMessage): WireMessage {
   if (m.role === 'tool') {
     return { role: 'tool', tool_call_id: m.toolCallId, content: m.content }
+  }
+  // A message with pictures is a list of parts, the pictures ahead of the
+  // words about them. Without any it stays a plain string, the form every
+  // server on this wire reads.
+  if (m.role === 'user' && m.images !== undefined && m.images.length > 0) {
+    const content: WirePart[] = m.images.map(image => ({ type: 'image_url', image_url: { url: dataUrl(image) } }))
+    if (m.content !== '') content.push({ type: 'text', text: m.content })
+    return { role: 'user', content }
   }
   if (!m.toolCalls || m.toolCalls.length === 0) {
     return { role: m.role, content: m.content }

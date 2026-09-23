@@ -24,35 +24,16 @@ correct itself on the next round.
 ## bash
 
 Writes the command to a temporary script and runs it as `bash <script>` from
-the project cwd. On Windows it looks up Git Bash under Program Files and errors
-if none is found (a PowerShell fallback arrives with the env probe, plan §12).
-Output is capped at 1 MB with an explicit `[output truncated at 1 MB]` marker.
-Failures report the exit code.
+the project cwd, through the shell `env-detection.md` describes: Git Bash on
+Windows, with the PATH a login shell would have and without paying for the
+profile on every command. Output is capped at 1 MB with an explicit
+`[output truncated at 1 MB]` marker. Failures report the exit code.
 
 The script file is there because Git Bash cuts a `-c` string at 8 KiB and runs
 the front of it anyway. A 12 KB patch script arrived with its heredoc
 terminator missing, the shell warned about an unterminated heredoc, and the
 file being patched had already been half written. The script is readable by
 this user alone, since it holds the command and the temp directory is shared.
-
-The shell is not started with `-l`. It is handed the PATH a login shell would
-have.
-
-What the profile exports is `~/.local/bin`, `~/.cargo/bin`, and on macOS the
-PATH a GUI-launched app has no other way to inherit. It is not what puts
-`grep`, `sed` and `curl` on PATH: Git Bash prepends `/mingw64/bin` and
-`/usr/bin` either way. Sourcing it costs three to four seconds on Windows, and
-every command used to pay that.
-
-A profile does not change while the app is open, so one read per process serves
-them all. On Windows the value is converted back with `cygpath -w -p`, which
-round-trips a real PATH without losing a segment. Measured end to end, a
-command went from about 3.5s to about 0.45s.
-
-Nothing waits on that read. The app starts it while the window is being built:
-a session cannot issue a tool call before a model has answered, and by then the
-read has long finished. A command that arrives first starts its own login
-shell, and so does every command if the read fails or never returns.
 
 CRLF is folded to LF on the way in, since bash counts the carriage return as
 part of a heredoc terminator. The fold covers the whole command, so a heredoc

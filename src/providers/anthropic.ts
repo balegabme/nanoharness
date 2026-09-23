@@ -1,7 +1,7 @@
 // doc: docs/harness/providers.md
 import { BAD_SSE, NO_BODY, ProviderError, StreamBrokenError, retryAfterMs } from '../core/provider.js'
 import type { ChatProvider, ChatInput } from '../core/provider.js'
-import type { ChatChunk, ChatMessage, JsonSchema, ThinkingBlock, ToolCall, ToolInput, TurnUsage } from '../core/types.js'
+import type { ChatChunk, ChatMessage, ImageType, JsonSchema, ThinkingBlock, ToolCall, ToolInput, TurnUsage } from '../core/types.js'
 import { emptyUsage } from '../core/types.js'
 import { endpointURL } from '../core/config.js'
 import { readOffers } from './model-facts.js'
@@ -70,6 +70,7 @@ export function maxTokensFor(effort: Effort, ceiling?: number): number {
 
 type ContentBlock =
   | { type: 'text'; text: string }
+  | { type: 'image'; source: { type: 'base64'; media_type: ImageType; data: string } }
   | { type: 'thinking'; thinking: string; signature?: string }
   | { type: 'redacted_thinking'; data: string }
   | { type: 'tool_use'; id: string; name: string; input: unknown }
@@ -314,6 +315,10 @@ function toWireMessages(messages: readonly ChatMessage[]): WireMessage[] {
     for (const block of m.thinking ?? []) {
       if (block.kind === 'redacted') content.push({ type: 'redacted_thinking', data: block.data })
       else if (block.signature !== undefined) content.push({ type: 'thinking', thinking: block.text, signature: block.signature })
+    }
+    // Pictures go ahead of the words about them.
+    for (const image of m.images ?? []) {
+      content.push({ type: 'image', source: { type: 'base64', media_type: image.mediaType, data: image.data } })
     }
     if (m.content !== '') content.push({ type: 'text', text: m.content })
     for (const call of m.toolCalls ?? []) {

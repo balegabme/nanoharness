@@ -122,9 +122,11 @@ the session emits during the run is streamed live to the caller over
 the invoke reply carries the usage and the session as it now stands, since the
 first message names it.
 
-One of those events flows the other way in spirit: `permission.request` is
+Two of those events flow the other way in spirit. `permission.request` is
 emitted when a tool reaches outside the session folder or wants to run a shell
 command, and the turn stays parked until the renderer answers it over
-`permission:respond`. There is no HTTP listener in v1, and a session can still
+`permission:respond`. `hooks.trust` is emitted when a project's hooks file has
+not been approved, and the session build waits for the answer over
+`hooks:trust-respond`. There is no HTTP listener in v1, and a session can still
 be driven headlessly without a window, though a gate with nobody to ask refuses
 the shell.

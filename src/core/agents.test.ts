@@ -22,6 +22,7 @@ import type { Tool } from './session.js'
 import type { ChatInput, ChatProvider } from './provider.js'
 import type { SubagentRecord } from './spawn.js'
 import type { AppEvent, ChatChunk, ChatMessage } from './types.js'
+import type { HostFacts } from '../env/probe.js'
 
 /**
  * A turn that delegates, end to end. The provider is the only fake: the session
@@ -34,6 +35,8 @@ import type { AppEvent, ChatChunk, ChatMessage } from './types.js'
 const PARENT_PROMPT = 'You are the parent.'
 /** The session's own effort setting, which every subagent it starts inherits. */
 const PARENT_EFFORT = 'low'
+/** The machine the prompts describe. The tests read what a role is told, not what the probe finds. */
+const HOST: HostFacts = { os: 'Linux', arch: 'x64', shell: 'bash 5.2', coreutils: 'GNU', tools: [], missing: [] }
 
 /**
  * Answers from a script keyed by the conversation's last user message: the
@@ -116,7 +119,7 @@ function harness(
   for (const type of ['job.started', 'job.update', 'job.finished'] as const) bus.on(type, event => void events.push(event))
   const jobs = new JobRegistry(bus)
   const access = workspaceGate(cwd)
-  const env = { root: cwd, platform: process.platform, shell: 'bash', today: '2026-01-01' }
+  const env = { root: cwd, platform: process.platform, host: HOST, today: '2026-01-01' }
 
   const parent: { session?: Session } = {}
   const session = new Session(

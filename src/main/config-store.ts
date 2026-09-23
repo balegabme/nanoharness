@@ -12,9 +12,10 @@ import {
   parseStored,
   clampEffort,
   resolveConfig,
+  parseHeaderName,
   resolveFacts,
+  SWITCH_NAMES,
 } from '../core/config.js'
-import { parseHeaderName } from '../core/config.js'
 import { approvalProblem } from '../core/approval.js'
 import { causeCode } from '../core/provider.js'
 import { createProvider, listModelsFor } from '../providers/factory.js'
@@ -22,7 +23,7 @@ import { KNOWN_PROVIDERS } from '../providers/profiles.js'
 import { userDataDir } from '../core/usage-log.js'
 import type { ApprovalConfig, JudgeEndpoint, PermissionMode } from '../core/approval.js'
 import type { ActiveSetRequest, ConfigProbeRequest, ConfigProbeResult, ConfigStatus, ProviderSaveRequest } from '../ipc/contract.js'
-import type { Effort, ModelFacts, ProviderConfig, ProviderRecord, StoredConfig } from '../core/config.js'
+import type { Effort, ModelFacts, ProviderConfig, ProviderRecord, StoredConfig, SwitchName } from '../core/config.js'
 
 /**
  * Settings live in the OS user-data dir, never the repo, and split in two:
@@ -307,6 +308,8 @@ export async function configStatus(): Promise<ConfigStatus> {
     knownProviders: KNOWN_PROVIDERS,
     autoCompact: autoCompactOf(stored),
     contextLimit: stored.context?.limit ?? null,
+    hooks: switchOf(stored, 'hooks'),
+    downscaleImages: switchOf(stored, 'downscaleImages'),
   }
   if (stored.active !== undefined) status.active = stored.active
   if (stored.approval !== undefined) status.approval = stored.approval
@@ -435,6 +438,27 @@ export async function setContextLimit(limit: number | null): Promise<void> {
 
 export async function contextLimit(): Promise<number | undefined> {
   return (await readStored()).context?.limit
+}
+
+/**
+ * One of the settings that is a single switch. A session reads it when it is
+ * built, so turning hooks off reaches a live session once it is rebuilt.
+ */
+export async function setSwitch(name: SwitchName, on: boolean): Promise<void> {
+  // The name picks a key in the settings file, so one from the window is
+  // checked before it can write over some other setting.
+  if (!SWITCH_NAMES.includes(name) || typeof on !== 'boolean') throw new Error(`not a switch: ${String(name)}`)
+  const stored = await readStored()
+  stored[name] = on
+  await writeStored(stored)
+}
+
+export async function switchOn(name: SwitchName): Promise<boolean> {
+  return switchOf(await readStored(), name)
+}
+
+function switchOf(stored: StoredConfig, name: SwitchName): boolean {
+  return stored[name] ?? true
 }
 
 /** The approval ladder as clients, newest settings each time it is asked for. */

@@ -9,6 +9,7 @@ import type {
   ConfigProbeRequest,
   ConfigProbeResult,
   ConfigStatus,
+  ImageUpload,
   McpStatusView,
   NanoBridge,
   PermissionDecision,
@@ -24,6 +25,7 @@ import type {
   WorkspaceStatus,
 } from '../ipc/contract.js'
 import type { AgentRole } from '../core/agents.js'
+import type { SwitchName } from '../core/config.js'
 import type { JobView } from '../core/jobs.js'
 import type { AppEvent } from '../core/types.js'
 import type { UsageReport } from '../core/usage-report.js'
@@ -31,8 +33,8 @@ import type { UsageReport } from '../core/usage-report.js'
 // The renderer never sees ipcRenderer itself, only the calls on this bridge.
 const bridge: NanoBridge = {
   ping: () => ipcRenderer.invoke(IPC_CHANNELS.ping) as Promise<PingResponse>,
-  send: (sessionId: string, text: string) =>
-    ipcRenderer.invoke(IPC_CHANNELS.sessionSend, { sessionId, text }) as Promise<SessionSendResponse>,
+  send: (sessionId: string, text: string, images: ImageUpload[]) =>
+    ipcRenderer.invoke(IPC_CHANNELS.sessionSend, { sessionId, text, images }) as Promise<SessionSendResponse>,
   stop: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.sessionStop, sessionId) as Promise<void>,
   compact: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.sessionCompact, sessionId) as Promise<SessionCompactResponse>,
   workspaces: () => ipcRenderer.invoke(IPC_CHANNELS.workspaceList) as Promise<WorkspaceStatus>,
@@ -65,6 +67,8 @@ const bridge: NanoBridge = {
   saveApproval: (approval: ApprovalConfig) => ipcRenderer.invoke(IPC_CHANNELS.configSaveApproval, approval) as Promise<ConfigStatus>,
   setAutoCompact: (on: boolean) => ipcRenderer.invoke(IPC_CHANNELS.configSetAutoCompact, on) as Promise<ConfigStatus>,
   setContextLimit: (limit: number | null) => ipcRenderer.invoke(IPC_CHANNELS.configSetContextLimit, limit) as Promise<ConfigStatus>,
+  setSwitch: (name: SwitchName, on: boolean) => ipcRenderer.invoke(IPC_CHANNELS.configSetSwitch, { name, on }) as Promise<ConfigStatus>,
+  answerHookTrust: (id: string, allow: boolean) => ipcRenderer.invoke(IPC_CHANNELS.hooksTrustRespond, { id, allow }) as Promise<void>,
   probeProvider: (request: ConfigProbeRequest) => ipcRenderer.invoke(IPC_CHANNELS.configProbe, request) as Promise<ConfigProbeResult>,
   usageReport: (days: number | null) => ipcRenderer.invoke(IPC_CHANNELS.usageReport, days) as Promise<UsageReport>,
   usageClear: (days: number | null) => ipcRenderer.invoke(IPC_CHANNELS.usageClear, days) as Promise<UsageReport>,

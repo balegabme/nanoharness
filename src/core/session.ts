@@ -18,6 +18,7 @@ import type {
   CompactionReason,
   CompactionRecord,
   ContextLedger,
+  ImagePart,
   PreventedCall,
   SessionNote,
   ThinkingBlock,
@@ -30,6 +31,7 @@ import type {
 } from './types.js'
 import type { SpawnHost } from './spawn.js'
 import type { JobRegistry } from './jobs.js'
+import type { HookVerdict, Hooks } from '../hooks/hooks.js'
 
 /**
  * What a tool is handed instead of a bare cwd. `access` is the scope guard: a
@@ -114,6 +116,16 @@ const FAILURE_NUDGE = 5
 
 const CLOSING_NOTE_ODDS = 1 / 10_000
 const CLOSING_NOTE = 'I love you <3 - balega, creator of nanoharness'
+
+/**
+ * How many times Stop hooks may keep one turn going. A hook that refuses every
+ * answer would otherwise hold the turn open for as long as the model keeps
+ * replying.
+ */
+const STOP_CONTINUES = 3
+
+/** What the model is told about a call the user's stop landed on before it ran. */
+const NOT_RUN = 'stopped by the user before this ran'
 
 /** How many times one round is asked for before the turn gives up. */
 const ROUND_ATTEMPTS = 5
@@ -254,6 +266,8 @@ export interface SessionOptions {
    * only object that can turn one back into a value, for tool arguments alone.
    */
   secrets?: SecretVault
+  /** The user's hooks. A subagent gets the tool hooks alone; see `Hooks.forSubagent`. */
+  hooks?: Hooks
 }
 
 /**
@@ -376,6 +390,8 @@ export class Session {
   private compactingByHand = false
   /** Where the current turn's user message is in `messages`, or -1 between turns. */
   private turnUser = -1
+  /** How many times Stop hooks have kept the turn in hand going. */
+  private stopContinues = 0
 
   constructor(
     readonly options: SessionOptions,
@@ -415,9 +431,9 @@ export class Session {
       if (message.role !== 'system') this.messages.push({ ...message })
     }
     // Turn numbers continue where the stored conversation left off, so the
-    // usage log of a resumed session does not restart at 1. A summary is sent
-    // as a user message and is not a turn.
-    this.turn = this.messages.filter(m => m.role === 'user' && m.summary !== true).length
+    // usage log of a resumed session does not restart at 1. A summary and a
+    // Stop hook's reply are sent as user messages and are not turns.
+    this.turn = this.messages.filter(m => m.role === 'user' && m.summary !== true && m.hook !== true).length
   }
 
   /**
@@ -436,9 +452,12 @@ export class Session {
     const out: ChatMessage[] = system === undefined ? [] : [{ role: 'system', content: system.content }]
     const summary = this.liveSummary()
     if (summary !== undefined) out.push({ role: 'user', content: wrapSummary(summary.content), summary: true })
+    // A model known not to read images, which a session switched to one after
+    // pictures were sent can be, is told they were there and not sent them.
+    const blind = this.facts?.vision === false
     for (const m of rest) {
       if (m === summary || m.compacted === 'compacted') continue
-      out.push(wireCopy(m))
+      out.push(wireCopy(m, blind))
     }
     return out
   }
@@ -764,10 +783,15 @@ export class Session {
     return costOf(usage, facts)
   }
 
-  async run(userText: string): Promise<TurnUsage> {
+  async run(userText: string, images: readonly ImagePart[] = []): Promise<TurnUsage> {
     // A compaction the user started is still rewriting the history this turn
     // would be appended to.
     if (this.running) throw new Error('this session is busy; wait for the turn or the compaction to finish')
+    // Only a model known not to read images is refused. One nobody has
+    // described is sent them, and the provider says whether it can.
+    if (images.length > 0 && this.facts?.vision === false) {
+      throw new Error(`${this.options.model} does not take images. Send the message without them, or switch to a model that reads images.`)
+    }
     this.turn += 1
     this.turnUsage = emptyUsage()
     this.turnSubagentUsage = emptyUsage()
@@ -778,6 +802,7 @@ export class Session {
     this.turnTally = emptyToolStats()
     this.turnPrevented = []
     this.turnFiles.clear()
+    this.stopContinues = 0
     this.turnStartedAt = Date.now()
     this.stopped = false
     this.compactionStuck = false
@@ -788,12 +813,19 @@ export class Session {
     // happened before this message, and the model should read it that way.
     this.flushPending()
     this.turnUser = this.messages.length
-    this.messages.push({ role: 'user', content: userText })
+    const asked: ChatMessage = { role: 'user', content: userText, ...(images.length === 0 ? {} : { images: [...images] }) }
+    this.messages.push(asked)
     this.emitContext()
 
     try {
       return await this.runRounds(sessionId)
     } catch (err) {
+      // A turn that failed before the model answered may have failed on the
+      // pictures. Left on the message they would go out again with every later
+      // request, and a provider that refused them once would refuse each one.
+      if (asked.images !== undefined && !this.messages.slice(this.messages.indexOf(asked) + 1).some(m => m.role === 'assistant')) {
+        delete asked.images
+      }
       // A tool that threw can be quoting the arguments it was given, which by
       // then held the real value.
       const message = this.secrets.redact(err instanceof Error ? err.message : String(err))
@@ -864,6 +896,7 @@ export class Session {
       }
 
       if (toolCalls.length === 0) {
+        if (await this.stopHookContinues(text)) continue
         // No answer, no error and nothing on screen is the one ending the user
         // cannot act on, so the turn says so.
         if (text.trim() === '') this.note('The turn ended without an answer. Send that again, or ask for what is missing.')
@@ -1294,7 +1327,7 @@ export class Session {
 
   /** A tool call the stop landed on top of. The model is told it never ran. */
   private noteSkipped(call: ToolCall): void {
-    const note = 'stopped by the user before this ran'
+    const note = NOT_RUN
     this.bus.emit({
       type: 'tool_result',
       sessionId: this.options.sessionId,
@@ -1415,7 +1448,78 @@ export class Session {
 
     const tool = this.toolFor(call)
     if (tool === undefined) return { ok: false, summary: `unknown tool: ${call.name}` }
-    return this.runWithArgs(tool, call.args)
+    const hooks = this.options.hooks
+    return hooks === undefined ? this.runWithArgs(tool, call.args) : this.hookedRun(tool, call, hooks)
+  }
+
+  /**
+   * One call with the user's tool hooks around it. The hooks see the arguments
+   * as the model wrote them, placeholders and all, and a result with any key
+   * already taken out. A PreToolUse refusal stops the call before the
+   * permission gate is asked and counts as prevented. What the hooks have to
+   * say goes on the end of the result, where the model reads it next.
+   */
+  private async hookedRun(tool: Tool, call: ToolCall, hooks: Hooks): Promise<ToolResult> {
+    const sessionId = this.options.sessionId
+    const args = hookArgs(call.args)
+    const on = { tool: call.name, ...this.hookSignal() }
+    const before = await hooks.run('PreToolUse', sessionId, { tool: call.name, args }, on)
+    this.noteHookProblems(before)
+    // Stopped while the hook ran, so the call is one the stop landed on.
+    if (this.stopped) return { ok: false, summary: NOT_RUN, content: NOT_RUN, isError: true }
+    if (before.block !== null) {
+      const refused = `a PreToolUse hook refused this call: ${before.block}`
+      return { ok: false, summary: refused, content: refused, isError: true, prevented: true }
+    }
+    const result = this.scrub(await this.runWithArgs(tool, call.args))
+    const output = result.content ?? result.summary
+    const after = await hooks.run('PostToolUse', sessionId, { tool: call.name, args, result: { ok: result.ok, output } }, on)
+    this.noteHookProblems(after)
+    const added = [
+      ...before.context.map(text => `[PreToolUse hook]\n${text}`),
+      ...after.context.map(text => `[PostToolUse hook]\n${text}`),
+      ...(after.block === null ? [] : [`[PostToolUse hook]\n${after.block}`]),
+    ]
+    return added.length === 0 ? result : { ...result, content: [output, ...added].join('\n\n') }
+  }
+
+  /**
+   * Run the Stop hooks on the answer the turn is about to end with. A refusal
+   * goes back to the model as a message of its own, marked as the hook's and
+   * not the user's, and the turn carries on. True when it does.
+   *
+   * The window hears the refusal as a note. It is not written to the journal,
+   * because the message itself is in the transcript and is drawn as that note
+   * when the session is opened again.
+   */
+  private async stopHookContinues(answer: string): Promise<boolean> {
+    const hooks = this.options.hooks
+    if (hooks === undefined || !hooks.has('Stop')) return false
+    const verdict = await hooks.run('Stop', this.options.sessionId, { answer, continued: this.stopContinues }, this.hookSignal())
+    // Stopped while the hook ran: the turn ends as stopped, not as refused.
+    if (this.stopped) return false
+    this.noteHookProblems(verdict)
+    if (verdict.block === null) return false
+    const reason = this.safe(verdict.block)
+    if (this.stopContinues >= STOP_CONTINUES) {
+      this.note(`A Stop hook refused the answer again, after keeping this turn going ${STOP_CONTINUES} times. The turn ends here anyway. It said: ${reason}`)
+      return false
+    }
+    this.stopContinues += 1
+    const text = `A Stop hook did not let the turn end yet. It said:\n${reason}`
+    this.messages.push({ role: 'user', content: text, hook: true })
+    this.bus.emit({ type: 'session.note', sessionId: this.options.sessionId, turn: this.turn, text, at: Date.now() })
+    this.emitContext()
+    return true
+  }
+
+  /** The turn's signal, so Stop reaches a hook that is running. */
+  private hookSignal(): { signal?: AbortSignal } {
+    return this.controller === null ? {} : { signal: this.controller.signal }
+  }
+
+  private noteHookProblems(verdict: HookVerdict): void {
+    for (const problem of verdict.problems) this.note(problem)
   }
 
   private toolFor(call: ToolCall): Tool | undefined {
@@ -1459,6 +1563,18 @@ export class Session {
   }
 }
 
+/**
+ * A call's arguments as a hook reads them: the object the model wrote, or the
+ * text itself when it is not JSON, so a hook can still see what was asked.
+ */
+function hookArgs(raw: string): unknown {
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return raw
+  }
+}
+
 /** How the note after a compaction starts, by what set it off. */
 const HOW: Record<CompactionReason, string> = {
   auto: 'Compacted automatically',
@@ -1466,8 +1582,11 @@ const HOW: Record<CompactionReason, string> = {
   overflow: 'Compacted after the provider refused the request as too long',
 }
 
-/** A message as the wire gets it: markers off, and a pruned result shortened. */
-function wireCopy(m: ChatMessage): ChatMessage {
+/**
+ * A message as the wire gets it: markers off, a pruned result shortened, and
+ * with `blind` set, each picture swapped for a line saying one was sent.
+ */
+function wireCopy(m: ChatMessage, blind: boolean): ChatMessage {
   if (m.role === 'tool') {
     return {
       role: 'tool',
@@ -1476,9 +1595,15 @@ function wireCopy(m: ChatMessage): ChatMessage {
       ...(m.failed === true ? { failed: true } : {}),
     }
   }
+  const images = m.images?.length ?? 0
+  if (blind && images > 0) {
+    const line = `[harness: the user sent ${images === 1 ? 'an image' : `${images} images`} here, left out because this model does not take images]`
+    return { role: m.role, content: m.content === '' ? line : `${m.content}\n\n${line}` }
+  }
   return {
     role: m.role,
     content: m.content,
+    ...(m.images === undefined ? {} : { images: m.images }),
     ...(m.toolCalls === undefined ? {} : { toolCalls: m.toolCalls }),
     ...(m.thinking === undefined ? {} : { thinking: m.thinking }),
   }

@@ -49,6 +49,15 @@ development history is in the git log; none of the three is repeated here.
 - Thinking is stored and replayed where the provider signed it.
 - A system prompt built per session, naming the workspace root, the platform,
   the shell and the date.
+- The prompt also says what the machine has: the operating system and its
+  version, the bash and whether its `sed` is GNU or BSD, and which of git, node,
+  bun, python, pnpm, npm, yarn, rg and fd are installed and which are not. The
+  machine is probed once per launch, through the same shell and PATH the
+  agent's commands get.
+- A message can carry pictures. They go to the model ahead of the words on
+  every wire, count toward the context estimate, and are kept in the session's
+  folder, one file each, so the transcript does not write them again at every
+  turn. A model known not to take images is refused before anything is sent.
 - No round budget on the tool loop. A model going in circles is caught instead:
   a repeated call is refused and the turn ends with a note; a run of failures
   appends a nudge to the result and carries on.
@@ -227,6 +236,18 @@ development history is in the git log; none of the three is repeated here.
   prompt.
 - `examples/mcp.json` and `examples/skills/release-checklist/`.
 
+**Hooks**
+- Commands of the user's that run when a session opens, before and after each
+  tool call, and when the agent says it is done, from `~/.nanoharness/hooks.json`
+  and the project's `.nanoharness/hooks.json`. A hook can refuse a tool call,
+  send the agent back to work, or put text in front of the model.
+- A project's hooks run only after the user has approved the file, and a file
+  that changes is asked about again.
+- A hook that runs out of time is stopped with everything it started, and so
+  is one running when the user stops the turn or quits the app. A hook that
+  exits is done, even when a process it started keeps running.
+- `examples/hooks.json`, with one hook per event.
+
 **Tooling**
 - Doc map with `nh doc-check` in CI, the improvement ledger and its
   `log_improvement` tool, and `nh usage` over a per-turn usage log.
@@ -288,6 +309,11 @@ development history is in the git log; none of the three is repeated here.
   takes all of it, and not the range on screen.
 - A renderer that fails to load writes a banner into the page instead of leaving
   a blank window.
+- Pictures pasted into the composer or dropped on it are attached as chips named
+  Image #1, Image #2 and so on, and shrunk to the size models read before they
+  are sent. The sent message shows them over its words.
+- A General pane in settings, with the switches for running hooks and for
+  shrinking pictures.
 
 ### Changed
 - A provider is configured in the setup screen and nowhere else. Nothing about a

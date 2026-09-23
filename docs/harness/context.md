@@ -45,6 +45,11 @@ since calibration corrects it for the one answering. Thinking counts only where
 it goes back on the wire, as a signed or redacted block. An unsigned block is
 kept for the window alone.
 
+An image counts as its pixels over 750, plus a block, which is the rate plan
+§15 records for one wire. The wires that bill by tile or by patch come out near
+that figure for a picture of the size the window sends, and calibration takes
+up the rest.
+
 The factor is ours. Each response gives one pair of figures, what the provider
 reported for a prompt and what the estimator said for the same bytes. The first
 pair sets the factor outright, and each later one moves it 30% of the way to the
@@ -217,7 +222,8 @@ likeliest reason a request stopped fitting. The threshold is about 2,000 tokens,
 so a result under it costs little to send whole. Pruning costs no request. If
 the ledger is still over the threshold, the rescue summarises a flattened copy
 of the history: no tools, no session prompt, plain text, every tool output cut
-to 2,000 characters, and the whole within half the usable space, since the
+to 2,000 characters, pictures left out and only counted, and the whole within
+half the usable space, since the
 estimate has just been shown to run low. The previous summary goes in first and
 is counted before any message, because it is the only record of what is older,
 and the oldest messages are left out when the rest will not fit. Then the round
@@ -359,6 +365,5 @@ Before the defaults are called tuned, a handful of long sessions from our own
 work should be replayed through a mock provider with their recorded usage, to
 see where compaction runs and what the summary drops.
 
-Messages carry text alone today. An image has no character count, so when
-messages can carry one the estimator will need a flat figure per image, taken
-from the first real response that carries one.
+The figure for an image is one wire's published rate. Nobody has yet held it
+against what the other wires report for the same picture.

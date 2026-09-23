@@ -2,11 +2,11 @@
 import type { AgentRole } from '../core/agents.js'
 import type { ApprovalConfig, PermissionMode } from '../core/approval.js'
 import type { KnownProvider } from '../providers/profiles.js'
-import type { ActiveSelection, Effort, ModelFacts, ModelOffer, ProviderKind, ProviderRecord } from '../core/config.js'
+import type { ActiveSelection, Effort, ModelFacts, ModelOffer, ProviderKind, ProviderRecord, SwitchName } from '../core/config.js'
 import type { JobState, JobView } from '../core/jobs.js'
 import type { AccessIntent } from '../core/scope.js'
 import type { SpawnMode } from '../core/spawn.js'
-import type { AppEvent, CompactionMark, ContextLedger, McpServerStatus, SessionNote, ToolStats, TurnRate, TurnUsage } from '../core/types.js'
+import type { AppEvent, CompactionMark, ContextLedger, ImageType, McpServerStatus, SessionNote, ToolStats, TurnRate, TurnUsage } from '../core/types.js'
 import type { UsageReport } from '../core/usage-report.js'
 
 export const IPC_CHANNELS = {
@@ -22,6 +22,7 @@ export const IPC_CHANNELS = {
   configProbe: 'config:probe',
   configSetAutoCompact: 'config:set-auto-compact',
   configSetContextLimit: 'config:set-context-limit',
+  configSetSwitch: 'config:set-switch',
   workspaceList: 'workspace:list',
   workspaceAdd: 'workspace:add',
   workspaceRemove: 'workspace:remove',
@@ -31,6 +32,7 @@ export const IPC_CHANNELS = {
   sessionRename: 'session:rename',
   sessionTranscriptPath: 'session:transcript-path',
   permissionRespond: 'permission:respond',
+  hooksTrustRespond: 'hooks:trust-respond',
   permissionMode: 'permission:mode',
   permissionSetMode: 'permission:set-mode',
   configSaveApproval: 'config:save-approval',
@@ -58,9 +60,19 @@ export interface AgentSummary {
   purpose: string
 }
 
+/** A picture as the window sends it, already shrunk if the user asked for that. */
+export interface ImageUpload {
+  mediaType: ImageType
+  width: number
+  height: number
+  /** The bytes, in base64 with no `data:` prefix. */
+  data: string
+}
+
 export interface SessionSendRequest {
   sessionId: string
   text: string
+  images?: ImageUpload[]
 }
 
 /** The MCP servers one session has, and whether anything has been dialled yet. */
@@ -149,6 +161,18 @@ export interface TranscriptMessage {
   compacted?: CompactionMark
   /** A summary a compaction wrote, drawn where the compaction happened. */
   summary?: true
+  /** A Stop hook's reply, drawn as the note it was shown as live. */
+  hook?: true
+  /** The pictures sent with a user message. */
+  images?: ImageView[]
+}
+
+/** A picture as the chat view draws it. */
+export interface ImageView {
+  /** The bytes as a `data:` URL. */
+  src: string
+  width: number
+  height: number
 }
 
 export interface SessionOpenResponse {
@@ -265,6 +289,10 @@ export interface ConfigStatus {
   autoCompact: boolean
   /** The most any context may grow to, in tokens. Null for the model's window alone. */
   contextLimit: number | null
+  /** Whether the user's hooks run. */
+  hooks: boolean
+  /** Whether pasted images are shrunk to the size the model reads. */
+  downscaleImages: boolean
 }
 
 /** Create a provider (no `id`) or update one (with its `id`). */
@@ -321,7 +349,7 @@ export type ConfigProbeResult = { ok: true; models: ModelOffer[] } | { ok: false
 /** The only surface the renderer gets. Exposed by the preload script. */
 export interface NanoBridge {
   ping(): Promise<PingResponse>
-  send(sessionId: string, text: string): Promise<SessionSendResponse>
+  send(sessionId: string, text: string, images: ImageUpload[]): Promise<SessionSendResponse>
   /** End the running turn. Safe to call when nothing is running. */
   stop(sessionId: string): Promise<void>
   /**
@@ -382,6 +410,10 @@ export interface NanoBridge {
   setAutoCompact(on: boolean): Promise<ConfigStatus>
   /** Set the most any context may grow to, or clear it with null. Live sessions take it at once. */
   setContextLimit(limit: number | null): Promise<ConfigStatus>
+  /** Turn one of the on-or-off settings on or off. Live sessions take it when they are next built. */
+  setSwitch(name: SwitchName, on: boolean): Promise<ConfigStatus>
+  /** Answer a `hooks.trust` event: run that project's hooks, or leave them off. */
+  answerHookTrust(id: string, allow: boolean): Promise<void>
   probeProvider(request: ConfigProbeRequest): Promise<ConfigProbeResult>
   /**
    * What has been spent, grouped for the spend view. `days` counts back from

@@ -24,6 +24,32 @@ knows the shape and the paths.
 
 `docs/harness/mcp.md` has the rest of the format.
 
+## `hooks.json`
+
+Copy to `~/.nanoharness/hooks.json` for every workspace, or to a project's
+`.nanoharness/hooks.json` for that one alone. Both files run, the global one
+first. A project's file runs only after you have read and approved it in the
+window, and an edit to it asks again. The Run hooks switch in Settings, under
+General, turns every hook off.
+
+Each hook is a bash command, run from the workspace root with the event as JSON
+on stdin. Exit 2 from a `PreToolUse` hook refuses the call, and from a `Stop`
+hook refuses the answer, with stderr as the reason. Anything a hook prints on a
+clean exit reaches the agent. Four hooks here, one per event:
+
+- `SessionStart` runs `nh doc-check` and says nothing unless the doc map is
+  broken, in which case the problems go into the system prompt.
+- `PreToolUse` refuses any shell command that commits or pushes. `match` is a
+  pattern on the tool name, matched whole.
+- `PostToolUse` runs the type checker after every write or edit and hands the
+  agent the first errors.
+- `Stop` runs the tests when the agent says it is done, and sends it back to
+  work with the failures while they fail. Once it has sent the agent back
+  three times in one turn, the next refusal lets the turn end, with a note.
+
+`timeout` is in seconds and defaults to 60. `docs/harness/hooks.md` has the
+rest of the format, including the JSON a hook can print in place of plain text.
+
 ## `skills/`
 
 Copy a folder to `.nanoharness/skills/`. A skill is a folder with a `SKILL.md`

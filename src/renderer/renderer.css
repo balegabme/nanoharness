@@ -1343,6 +1343,25 @@ body {
   background: var(--nh-bg-layer-1);
 }
 
+/* The pictures sent with a message, over its words, small enough that a
+   screenshot does not push the answer off the screen. */
+.user-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+}
+
+.user-images:not(:last-child) {
+  margin-bottom: var(--s2);
+}
+
+.user-images img {
+  max-width: 240px;
+  max-height: 180px;
+  border-radius: 4px;
+  border: 1px solid var(--nh-border-l2);
+}
+
 .block.assistant .body {
   color: var(--nh-label-primary);
 }
@@ -1810,6 +1829,64 @@ details.block pre + pre {
 
 .composer textarea::placeholder {
   color: var(--nh-label-caption);
+}
+
+/* A file held over the card: the dashed edge says it will be taken. */
+.composer.dropping {
+  border-style: dashed;
+  border-color: var(--nh-accent-line);
+}
+
+/* Pictures attached to the draft, one chip each, above the text. */
+.attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+  padding: 0 var(--s3);
+}
+
+.attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  padding: 3px 4px 3px 3px;
+  border: 1px solid var(--nh-border-l2);
+  border-radius: var(--nh-radius-card);
+  background: var(--nh-bg-layer-1);
+  color: var(--nh-label-secondary);
+  font: 500 12px var(--nh-font-sans);
+}
+
+.attachment img {
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+.attachment-remove {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--nh-label-caption);
+  cursor: pointer;
+}
+
+.attachment-remove:hover {
+  background: var(--nh-bg-layer-2);
+  color: var(--nh-label-primary);
+}
+
+.attach-note {
+  margin: 0;
+  padding: 0 var(--s3) 0 var(--s4);
+  color: var(--nh-label-caption);
+  font-size: 12px;
 }
 
 .controls {
@@ -3060,6 +3137,22 @@ button.chip:hover:enabled,
   align-items: center;
   gap: var(--s3);
   padding-top: var(--s1);
+}
+
+/* An on/off setting: the box and its name on one line, what it does under it. */
+.setting-switch {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-top: var(--s4);
+  color: var(--nh-label-primary);
+  font: 500 13px var(--nh-font-sans);
+  cursor: pointer;
+}
+
+.setting-switch input {
+  margin: 0;
+  accent-color: var(--nh-accent-500);
 }
 
 .pop-toggle {

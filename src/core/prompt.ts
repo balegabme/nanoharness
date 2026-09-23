@@ -1,5 +1,6 @@
 // doc: docs/harness/sessions.md
 import { EOL } from 'node:os'
+import { hostLines, type HostFacts } from '../env/probe.js'
 
 /**
  * What the agent is told about the machine it is standing on. Everything here
@@ -11,8 +12,8 @@ export interface PromptEnvironment {
   /** The session folder. Also the boundary every tool is held to. */
   root: string
   platform: NodeJS.Platform
-  /** How `bash` will actually run, in words the model can act on. */
-  shell: string
+  /** The operating system, the shell and the tools on the PATH, probed once per launch. */
+  host: HostFacts
   /** Today, so "recent" and "latest" mean something. */
   today: string
 }
@@ -37,8 +38,7 @@ export function buildSystemPrompt(env: PromptEnvironment): string {
     'You are NanoHarness, a coding agent working on the user\'s machine through tools.',
     '',
     `Workspace: ${env.root}`,
-    `Platform: ${env.platform}`,
-    `Shell: ${env.shell}`,
+    ...hostLines(env.host),
     `Today: ${env.today}`,
   ]
 

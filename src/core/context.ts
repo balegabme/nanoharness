@@ -64,6 +64,15 @@ export function textTokens(text: string): number {
   return Math.ceil(text.length / CHARS_PER_TOKEN)
 }
 
+/**
+ * An image as the estimator sizes it: its pixels over 750, the rate plan §15
+ * records. Wires that bill by tiles or patches land near it for an image of
+ * the size the window sends, and calibration takes up the rest.
+ */
+function imageTokens(width: number, height: number): number {
+  return Math.ceil((width * height) / 750)
+}
+
 /** The tool schemas as the estimator sizes them. They do not change within a session. */
 export function toolTokens(tools: readonly ToolInput[]): number {
   let total = 0
@@ -93,7 +102,8 @@ export function estimateParts(messages: readonly ChatMessage[], tools: number): 
       continue
     }
     if (m.role === 'user') {
-      const size = textTokens(m.content) + BLOCK_TOKENS + MESSAGE_TOKENS
+      let size = textTokens(m.content) + BLOCK_TOKENS + MESSAGE_TOKENS
+      for (const image of m.images ?? []) size += imageTokens(image.width, image.height) + BLOCK_TOKENS
       if (m.summary === true) parts.summary += size
       else parts.user += size
       continue

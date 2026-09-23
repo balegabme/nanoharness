@@ -1,0 +1,26 @@
+{
+  "SessionStart": [
+    {
+      "command": "out=$(nh doc-check 2>&1) || { echo 'nh doc-check found problems:'; echo \"$out\"; }"
+    }
+  ],
+  "PreToolUse": [
+    {
+      "match": "bash",
+      "command": "if grep -Eq 'git +(commit|push)'; then echo 'Commits and pushes are mine to make. Suggest the command instead.' >&2; exit 2; fi"
+    }
+  ],
+  "PostToolUse": [
+    {
+      "match": "write|edit",
+      "command": "out=$(pnpm -s typecheck 2>&1) || echo \"$out\" | head -n 40",
+      "timeout": 120
+    }
+  ],
+  "Stop": [
+    {
+      "command": "if ! out=$(pnpm -s test 2>&1); then echo 'The tests fail:' >&2; echo \"$out\" | tail -n 40 >&2; exit 2; fi",
+      "timeout": 300
+    }
+  ]
+}

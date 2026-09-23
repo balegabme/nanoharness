@@ -17,9 +17,10 @@ import { defineConfig } from 'vitest/config'
  * On Linux that costs milliseconds. On Windows a process launch is a few
  * hundred milliseconds, and the first shell of each test file sources a login
  * profile, which is seconds on an idle machine and tens of seconds on one that
- * is busy; the app warms that read at startup, but a test file is its own
- * process and cannot. A minute covers a loaded laptop and still ends a genuine
- * hang while somebody is watching it.
+ * is busy. The app reads that PATH once at startup; a test file is a process of
+ * its own, and pays for the read unless it waits on `warmShell()` first. A
+ * minute covers a loaded laptop and still ends a genuine hang while somebody
+ * is watching it.
  */
 export default defineConfig({
   test: {

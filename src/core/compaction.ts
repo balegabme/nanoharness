@@ -177,7 +177,14 @@ function flatLine(m: ChatMessage): string {
   if (m.role === 'tool') return `Tool result${m.failed === true ? ' (failed)' : ''}:\n${cut(m.content)}`
   if (m.role === 'system') return ''
   if (m.summary === true) return `Earlier checkpoint:\n${m.content}`
-  if (m.role === 'user') return `User:\n${m.content}`
+  if (m.hook === true) return `Stop hook:\n${m.content}`
+  if (m.role === 'user') {
+    // The flat history is text, so a picture is left out and only counted. The
+    // summary can still say one was sent, and what the user wrote about it.
+    const images = m.images?.length ?? 0
+    const sent = images === 0 ? '' : images === 1 ? ' (with an image, left out here)' : ` (with ${images} images, left out here)`
+    return `User${sent}:\n${m.content}`
+  }
   const parts = m.content === '' ? [] : [`Assistant:\n${m.content}`]
   for (const call of m.toolCalls ?? []) parts.push(`Tool call ${call.name}: ${cut(call.args)}`)
   return parts.join('\n')

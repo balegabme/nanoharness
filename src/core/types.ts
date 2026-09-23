@@ -35,10 +35,10 @@ export interface ToolStats {
   ok: number
   failed: number
   /**
-   * Calls the permission system stopped, whoever stopped them: the approval
-   * model in auto mode, or the person at the dialog. Counted apart from
-   * `failed`: that one is the work going wrong, this one is the harness doing
-   * its job.
+   * Calls the harness stopped, whoever stopped them: the approval model in
+   * auto mode, the person at the dialog, or a PreToolUse hook. Counted apart
+   * from `failed`: that one is the work going wrong, this one is the harness
+   * doing its job.
    */
   prevented: number
 }
@@ -69,9 +69,9 @@ export interface ToolResult {
   content?: string
   isError?: boolean
   /**
-   * The call never ran because the permission system refused it. Set only by
-   * the gate's own refusals. A tool that failed on its own, on a missing file
-   * or a non-zero exit, is not counted as something the harness stopped.
+   * The call never ran because the permission system or a PreToolUse hook
+   * refused it. A tool that failed on its own, on a missing file or a non-zero
+   * exit, is not counted as something the harness stopped.
    */
   prevented?: boolean
 }
@@ -220,6 +220,10 @@ export type AppEvent =
   // `problem` is set when auto mode was on and the approval model could not
   // answer. The prompt is the fallback and says so on its face.
   | { type: 'permission.request'; sessionId: string; id: string; intent: 'read' | 'write' | 'run'; paths: string[]; command?: string; root: string; problem?: string; at: number }
+  // A project hooks file the user has not approved as it now reads, found while
+  // a session was being built. The build waits for the answer. `text` is the
+  // whole file, because the approval covers exactly that text.
+  | { type: 'hooks.trust'; sessionId: string; id: string; path: string; text: string; at: number }
   // Which MCP servers this session ended up with, once its hub has finished
   // dialling. The window asks for the same thing when a session is opened; this
   // is the push for the case where the answer arrives after the question.
@@ -258,8 +262,8 @@ export type AppEvent =
  * message count when it happened, which replays it in place.
  */
 /**
- * One call the permission system stopped, as the summary line lists it. The
- * reason is the refusal the agent was given, verbatim.
+ * One call the permission system or a hook stopped, as the summary line lists
+ * it. The reason is the refusal the agent was given, verbatim.
  */
 export interface PreventedCall {
   tool: string
@@ -286,15 +290,43 @@ export interface SessionNote {
  */
 export type CompactionMark = 'compacted' | 'pruned'
 
+/** The image formats a message may carry. Each wire that takes images takes all four. */
+export const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const
+export type ImageType = (typeof IMAGE_TYPES)[number]
+
+export function isImageType(value: unknown): value is ImageType {
+  return (IMAGE_TYPES as readonly unknown[]).includes(value)
+}
+
+/** A picture the user attached to a message. */
+export interface ImagePart {
+  /** Unique within the session. It names the image's file in the session's folder. */
+  id: string
+  mediaType: ImageType
+  width: number
+  height: number
+  /** The bytes, in base64 with no `data:` prefix. The transcript file leaves them out; the image has a file of its own. */
+  data: string
+}
+
+/** An image as a `data:` URL, the form the wires that take a URL accept inline. */
+export function dataUrl(image: ImagePart): string {
+  return `data:${image.mediaType};base64,${image.data}`
+}
+
 export type ChatMessage =
   | {
       role: 'system' | 'user' | 'assistant'
       content: string
+      /** On a user message: the pictures sent with it, in the order they were attached. */
+      images?: ImagePart[]
       toolCalls?: ToolCall[]
       thinking?: ThinkingBlock[]
       compacted?: CompactionMark
       /** A compaction summary, written by the model and sent in place of what it summarises. */
       summary?: true
+      /** Sent by a Stop hook that would not let the turn end. The user did not write it, and it is not a turn. */
+      hook?: true
     }
   | { role: 'tool'; content: string; toolCallId: string; failed?: boolean; compacted?: CompactionMark }
 

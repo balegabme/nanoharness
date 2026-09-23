@@ -3,7 +3,7 @@ import { el, pretty } from './dom.js'
 import { costOf, moneyText } from './facts.js'
 import { hitText, promptTokens, shortTokens, Throughput, totalTokens } from './metrics.js'
 import type { ContextMeter } from './context-meter.js'
-import type { TranscriptMessage } from '../ipc/contract.js'
+import type { ImageView, TranscriptMessage } from '../ipc/contract.js'
 import type { AppEvent, PreventedCall, SessionNote, TurnRate, TurnUsage } from '../core/types.js'
 import type { ModelFacts } from '../core/config.js'
 
@@ -367,8 +367,21 @@ export class ChatView {
     return { wrapper, body }
   }
 
-  userBlock(text: string): void {
-    this.block('user', 'you').textContent = text
+  /** What the user sent: the pictures in the order they were attached, then the words. */
+  userBlock(text: string, images: readonly ImageView[] = []): void {
+    const body = this.block('user', 'you')
+    if (images.length > 0) {
+      const row = el('div', 'user-images')
+      for (const [index, image] of images.entries()) {
+        const thumb = el('img')
+        thumb.src = image.src
+        thumb.alt = `Image #${index + 1}`
+        thumb.title = `Image #${index + 1}, ${image.width} × ${image.height}`
+        row.append(thumb)
+      }
+      body.append(row)
+    }
+    if (text !== '') body.append(text)
   }
 
   errorBlock(text: string): void {
@@ -691,8 +704,12 @@ export class ChatView {
       this.compactionBlock(message.text)
       return
     }
+    if (message.hook === true) {
+      this.noteBlock(message.text)
+      return
+    }
     if (message.role === 'user') {
-      this.userBlock(message.text)
+      this.userBlock(message.text, message.images)
       return
     }
     if (message.thinking !== undefined && message.thinking !== '') this.thinkingBlock(message.thinking)

@@ -81,13 +81,13 @@ nanoharness/
   .github/workflows/ci.yml   .gitignore   .editorconfig
   docs/
     harness/              # one md per feature area: the documentation layer.
-                          # doc-map.md holds the index; pages still to write are
-                          # snippets, hooks and env-detection.
+                          # doc-map.md holds the index; the page still to write
+                          # is snippets.
     research/             # deep-research artifacts (source material, not doc-map targets)
   snippets/               # built-in prompt snippets shipped with the package (secret-free)
   examples/               # sample skill, hooks.json, mcp.json, commands/, secret-free
   src/                    # today: main core ipc cli tools providers mcp renderer
-                          # planned: snippets hooks env
+                          # hooks env; planned: snippets
 ```
 
 Doc-map rules. `docs/harness/doc-map.md` is the live version of 1 to 4 and
@@ -270,8 +270,10 @@ via `count_tokens` isn't worth the extra round-trip).
 
 Config: project or global `hooks.json`. Events: `PreToolUse`, `PostToolUse`, `Stop`,
 `SessionStart`. Runner spawns shell command, pipes JSON (event + payload) on stdin; exit
-code 2 = block, stdout JSON = annotate/modify (inject context, file a flaw). `doc-check`
-runs as a SessionStart hook by default.
+code 2 = block, stdout JSON = annotate (`block`, `context`). A project's file runs only
+after the user approves it, pinned to the file's hash. No hook ships switched on:
+`examples/hooks.json` runs `doc-check` as a SessionStart hook, for a user to copy.
+`docs/harness/hooks.md` is the live spec.
 
 ---
 
@@ -561,6 +563,7 @@ only the answers are in the repo.
 6. Checkpoints + rewind, permission modes, interrupt/steering queue, session forking, slash
    commands + project memory, cost dashboard.
 7. Hooks + env detection + image pipeline (downscale + OCR path for text screenshots).
+   Built without the OCR path, which is deferred and logged in the improvement ledger.
 8. Token-efficiency pass per §15 ranking: cache-discipline audits, microcompaction,
    tool-def diet; spike programmatic MCP wrapping; compaction whitelist; eval harness for
    cost-per-task.

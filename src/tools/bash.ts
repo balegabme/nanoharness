@@ -1,31 +1,17 @@
 // doc: docs/harness/tools.md
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { existsSync } from 'node:fs'
 import { rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { defineTool } from '../core/session.js'
+import { shellLaunch } from '../env/shell.js'
+import type { ShellLaunch } from '../env/shell.js'
 import type { ArgsParse, Tool } from '../core/session.js'
 import type { ToolResult } from '../core/types.js'
 
 const OUTPUT_CAP = 1024 * 1024
 const TIMEOUT_MS = 60_000
-
-/** Kills the PATH probe if a profile never returns. Nothing waits on the probe. */
-const PROBE_TIMEOUT_MS = 120_000
-
-function findBash(): string | null {
-  if (process.platform !== 'win32') return 'bash'
-  const candidates = [
-    'C:\\Program Files\\Git\\bin\\bash.exe',
-    'C:\\Program Files\\Git\\usr\\bin\\bash.exe',
-    'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
-  ]
-  return candidates.find(existsSync) ?? null
-}
-
-const bashBin = findBash()
 
 /**
  * The ways to write that the planner's shell refuses: redirects, the
@@ -82,10 +68,10 @@ function parseArgs(args: Record<string, unknown>): ArgsParse<BashArgs> {
  * The temp directory is shared and the file holds the command, so it is
  * written for this user alone.
  */
-function run(command: string, cwd: string): Promise<ToolResult> {
+function run(command: string, cwd: string, launch: ShellLaunch): Promise<ToolResult> {
   const script = join(tmpdir(), `nh-${randomUUID()}.sh`)
   return writeFile(script, command.replace(/\r\n/g, '\n'), { encoding: 'utf8', mode: 0o600 })
-    .then(() => exec(script, cwd))
+    .then(() => exec(script, cwd, launch))
     .catch((err: unknown) => {
       // The loop needs a result to hand back to the model, so a failed write
       // is a tool error and not a thrown promise.
@@ -97,49 +83,12 @@ function run(command: string, cwd: string): Promise<ToolResult> {
     .finally(() => void rm(script, { force: true }).catch(() => undefined))
 }
 
-/**
- * The PATH a login shell would have, read once in the background. Sourcing the
- * profile costs three to four seconds on an idle Windows machine, and it is
- * the only source of `~/.local/bin`, `~/.cargo/bin` and the PATH a
- * GUI-launched app inherits on macOS. Git Bash prepends `/mingw64/bin` and
- * `/usr/bin` either way.
- *
- * Nothing waits for the read. A command that arrives before it settles starts
- * its own login shell, and so does every command if it fails. On Windows
- * `cygpath -w -p` converts the value back to Windows form without losing a
- * segment.
- */
-let probe: Promise<void> | undefined
-let loginPath: string | undefined
-
-/** Starts the PATH read at app start. Safe to call twice, and optional. */
-export function warmShell(): void {
-  if (bashBin !== null) readLoginPath()
-}
-
-function readLoginPath(): void {
-  probe ??= new Promise<void>(resolve => {
-    const print = process.platform === 'win32' ? 'cygpath -w -p "$PATH"' : 'printf %s "$PATH"'
-    execFile(bashBin as string, ['-lc', print], { windowsHide: true, encoding: 'utf8', timeout: PROBE_TIMEOUT_MS }, (error, stdout) => {
-      const value = stdout.trim()
-      if (error === null && value !== '') loginPath = value
-      resolve()
-    })
-  })
-}
-
-function exec(script: string, cwd: string): Promise<ToolResult> {
-  readLoginPath()
-  // Empty for the first command. With the profile's PATH in hand the shell has
-  // no reason to read the profile again.
-  const path = loginPath
-  const args = path === undefined ? ['-l', script] : [script]
-  const env = path === undefined ? process.env : { ...process.env, PATH: path }
+function exec(script: string, cwd: string, launch: ShellLaunch): Promise<ToolResult> {
   return new Promise<ToolResult>(resolve => {
     execFile(
-      bashBin as string,
-      args,
-      { cwd, env, timeout: TIMEOUT_MS, windowsHide: true, maxBuffer: OUTPUT_CAP, encoding: 'utf8' },
+      launch.bin,
+      [...launch.args, script],
+      { cwd, env: launch.env, timeout: TIMEOUT_MS, windowsHide: true, maxBuffer: OUTPUT_CAP, encoding: 'utf8' },
       (error, stdout, stderr) => {
         const out = [stdout, stderr].filter(Boolean).join('\n').trim()
         if (!error) {
@@ -169,6 +118,11 @@ function exec(script: string, cwd: string): Promise<ToolResult> {
   })
 }
 
+function noShell(): ToolResult {
+  const missing = 'no shell available: git bash not found in the usual Windows paths'
+  return { ok: false, summary: missing, content: missing, isError: true }
+}
+
 // Both shells share one timeout and one output cap; the guard is the only
 // difference between them.
 function bashTool(guarded: boolean): Tool {
@@ -190,10 +144,9 @@ function bashTool(guarded: boolean): Tool {
       const refused = guarded ? writeGuard(command) : null
       if (refused !== null) return { ok: false, summary: refused, content: refused, isError: true }
 
-      if (!bashBin) {
-        const missing = 'no shell available: git bash not found in the usual Windows paths'
-        return { ok: false, summary: missing, content: missing, isError: true }
-      }
+      // Before the gate, so nobody is asked to approve a command with no shell to run it.
+      const launch = shellLaunch()
+      if (launch === null) return noShell()
 
       // The command is approved whole and never parsed for paths: a heredoc or
       // a sed address reads as somewhere on disk. A gate with nobody to ask
@@ -201,7 +154,7 @@ function bashTool(guarded: boolean): Tool {
       const allowed = await access.checkCommand(command)
       if (!allowed.ok) return { ok: false, summary: allowed.reason, content: allowed.reason, isError: true, prevented: true }
 
-      return run(command, cwd)
+      return run(command, cwd, launch)
     },
   })
 }

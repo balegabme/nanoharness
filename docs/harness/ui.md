@@ -6,9 +6,10 @@ its own, which is why the window can be rebuilt without touching the core.
 
 Files:
 - src/main/window.ts: BrowserWindow, the `app://` scheme, navigation lockdown
-- src/main/preload.ts: the context bridge, with ping, send, workspaces, sessions, rename, transcript paths, role, jobs, one subagent's stored conversation, agents, MCP status, secrets, config, permission answers, the usage report and clearing it, external links, onEvent
+- src/main/preload.ts: the context bridge, with ping, send, workspaces, sessions, rename, transcript paths, role, jobs, one subagent's stored conversation, agents, MCP status, secrets, config, permission answers, hook trust answers, the usage report and clearing it, external links, onEvent
 - src/renderer/index.ts: the shell, which session is open, the agent, model and effort chips, and the diff and spend panes
-- src/renderer/composer.ts: the composer in its two seats, and the height the flow clears
+- src/renderer/composer.ts: the composer in its two seats, the height the flow clears, and the pictures attached to the draft
+- src/renderer/images.ts: a pasted or dropped file read as a picture to send, shrunk first when the switch is on
 - src/renderer/jobs.ts: the running subagents and the buffered stream of each one
 - src/renderer/sidebar.ts: folders and their sessions, search, add and delete
 - src/renderer/metrics.ts: tokens per second, the cache hit rate and short token counts, kept away from the DOM so they can be tested
@@ -410,6 +411,15 @@ picker opens. Where the property is missing the plain rules underneath still
 apply and the popup is the platform's, because the whole block sits behind an
 `@supports`.
 
+A question can carry a file, drawn whole in a box of its own under the text.
+The hooks question uses it, because the approval covers exactly that file
+(`hooks.md`). Questions come one at a time: one that arrives from the main
+process while another is on screen waits until the first is answered.
+
+The general pane holds the settings that are a switch: whether hooks run, and
+whether images are shrunk before they are sent. Each box writes through as it
+is clicked. A write that fails puts the box back and says why under it.
+
 The about pane is a mark, the line "Built with ♥ by balega", and a link to
 `@BalegaNorbert` on X, with the version under it. The link cannot open in the
 window: `setWindowOpenHandler` denies new windows and `will-navigate` is
@@ -615,6 +625,38 @@ Two grey dots, the count and a nought, read as "some are down" on a session that
 had not tried to start anything. When the hub finishes connecting, the main
 process pushes an `mcp.status` event and the chip becomes the real answer.
 `mcp.md` has the client.
+
+## Pictures
+
+A picture pasted into the composer, or a file dropped on it, is attached to the
+draft as a chip above the text: a thumbnail, its name and a button that takes it
+off again. A paste that carries text as well, as a copy from a document can,
+attaches the picture and puts the text in the draft. The chips are named
+Image #1, Image #2 and so on in the order the model receives them, so "Image
+#2" in the text is the second picture the model gets. Taking one off renumbers
+the rest. A message may be pictures alone.
+
+With **Shrink images before sending** on, which it is until someone turns it
+off, a picture with an edge over 1,568 pixels, or more than about 1.15 million
+pixels in all, is drawn again at that size. Models commonly scale a larger
+picture down to about that on their own side (plan §15), so the pixels past it
+cost upload time, and tokens on the wires that bill by area, and show the model
+nothing more. A JPEG is written again as a JPEG, anything else as a PNG. A
+format no wire takes, a BMP say, is drawn again as a PNG at its own size either
+way. The switch is read at each paste, so turning it off does not change a
+picture already attached.
+
+Twenty pictures fit on one message and each may be up to 10 MB. The main
+process holds the same two limits (`sessions.md`), and the composer checks them
+when a picture is attached, so one over them is turned away with a line under
+the draft and never costs the user a message. A model marked in settings as
+taking no images is refused the same way at Send, with the draft left where it
+is. A model nobody has described is sent the picture, and the provider answers.
+A picture still being read when Send is pressed goes with the message.
+
+The sent message draws its pictures over its words, small, with the size in
+the tooltip. The page's content security policy lets images load from `data:`
+URLs and from nowhere else outside the app.
 
 ## Keys pasted into the chat
 

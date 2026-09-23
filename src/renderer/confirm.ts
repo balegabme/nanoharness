@@ -10,6 +10,7 @@ import { must } from './dom.js'
 const dialog = must<HTMLDialogElement>('confirm-dialog')
 const title = must<HTMLElement>('confirm-title')
 const detail = must<HTMLElement>('confirm-detail')
+const code = must<HTMLElement>('confirm-code')
 const yes = must<HTMLButtonElement>('confirm-yes')
 const no = must<HTMLButtonElement>('confirm-no')
 
@@ -22,14 +23,31 @@ const promptCancel = must<HTMLButtonElement>('prompt-cancel')
 export interface ConfirmRequest {
   title: string
   detail?: string
+  /** Text shown as it is, in a box of its own: a file the question is about. */
+  code?: string
   /** What the destructive button says. Naming the act beats a bare "OK". */
   confirmLabel?: string
 }
 
-export async function ask(request: ConfirmRequest): Promise<boolean> {
+/**
+ * The question on screen, and every one asked after it. A question can arrive
+ * from the main process while another is up, and `showModal()` on an open
+ * dialog throws, so each waits for the one before it to be answered.
+ */
+let asking: Promise<unknown> = Promise.resolve()
+
+export function ask(request: ConfirmRequest): Promise<boolean> {
+  const turn = asking.then(() => show(request))
+  asking = turn
+  return turn
+}
+
+function show(request: ConfirmRequest): Promise<boolean> {
   title.textContent = request.title
   detail.textContent = request.detail ?? ''
   detail.hidden = request.detail === undefined
+  code.textContent = request.code ?? ''
+  code.hidden = request.code === undefined
   yes.textContent = request.confirmLabel ?? 'Remove'
 
   dialog.showModal()

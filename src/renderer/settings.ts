@@ -6,7 +6,7 @@ import { matches } from './match.js'
 import type { ApprovalCandidate, ApprovalConfig } from '../core/approval.js'
 import type { ConfigStatus, NanoBridge, ProviderSaveRequest, ProviderView, SecretView } from '../ipc/contract.js'
 import type { KnownProvider } from '../providers/profiles.js'
-import type { Effort, ModelFacts, PriceKey, ProviderKind } from '../core/config.js'
+import type { Effort, ModelFacts, PriceKey, ProviderKind, SwitchName } from '../core/config.js'
 
 /**
  * Settings is a sheet over the app, not a screen the app falls back to: the
@@ -19,6 +19,7 @@ const closeButton = must<HTMLButtonElement>('settings-close')
 const navProviders = must<HTMLButtonElement>('pane-providers')
 const navSecrets = must<HTMLButtonElement>('pane-secrets')
 const navApproval = must<HTMLButtonElement>('pane-approval')
+const navGeneral = must<HTMLButtonElement>('pane-general')
 const navAbout = must<HTMLButtonElement>('pane-about')
 const providersPane = must<HTMLElement>('providers-pane')
 const secretsPane = must<HTMLElement>('secrets-pane')
@@ -32,6 +33,10 @@ const approvalList = must<HTMLElement>('approval-list')
 const approvalEmpty = must<HTMLElement>('approval-empty')
 const approvalEffort = must<HTMLSelectElement>('approval-effort')
 const approvalNote = must<HTMLElement>('approval-note')
+const generalPane = must<HTMLElement>('general-pane')
+const switchHooks = must<HTMLInputElement>('switch-hooks')
+const switchDownscale = must<HTMLInputElement>('switch-downscale')
+const generalNote = must<HTMLElement>('general-note')
 const aboutPane = must<HTMLElement>('about-pane')
 const aboutVersion = must<HTMLElement>('about-version')
 
@@ -114,7 +119,7 @@ export function openSettings(pane: SettingsPane = 'providers'): void {
   if (pane === 'providers') setupBase.focus()
 }
 
-export type SettingsPane = 'providers' | 'secrets' | 'approval' | 'about'
+export type SettingsPane = 'providers' | 'secrets' | 'approval' | 'general' | 'about'
 
 export function closeSettings(): void {
   if (dialog.open) dialog.close()
@@ -124,10 +129,12 @@ function showPane(pane: SettingsPane): void {
   providersPane.hidden = pane !== 'providers'
   secretsPane.hidden = pane !== 'secrets'
   approvalPane.hidden = pane !== 'approval'
+  generalPane.hidden = pane !== 'general'
   aboutPane.hidden = pane !== 'about'
   navProviders.classList.toggle('current', pane === 'providers')
   navSecrets.classList.toggle('current', pane === 'secrets')
   navApproval.classList.toggle('current', pane === 'approval')
+  navGeneral.classList.toggle('current', pane === 'general')
   navAbout.classList.toggle('current', pane === 'about')
   if (pane === 'secrets') void refreshSecrets()
   if (pane === 'approval') drawApproval()
@@ -725,9 +732,27 @@ export function applyConfig(status: ConfigStatus): void {
   }
   setupNote.textContent = notes.join(' ')
 
+  switchHooks.checked = status.hooks
+  switchDownscale.checked = status.downscaleImages
+
   // Nothing can run: the sheet is the only useful thing on screen.
   if (!status.configured) openSettings('providers')
   onConfig(status)
+}
+
+/**
+ * Write one switch through. On a failed write the box goes back to what is
+ * stored, so it never shows a setting the harness is not using.
+ */
+async function writeSwitch(name: SwitchName, box: HTMLInputElement): Promise<void> {
+  if (bridge === null) return
+  generalNote.textContent = ''
+  try {
+    applyConfig(await bridge.setSwitch(name, box.checked))
+  } catch (err) {
+    box.checked = !box.checked
+    generalNote.textContent = `${WARN} ${message(err)}`
+  }
 }
 
 async function probe(intent: 'test' | 'fetch'): Promise<void> {
@@ -900,6 +925,9 @@ export function initSettings(handlers: SettingsHandlers): void {
   navProviders.addEventListener('click', () => showPane('providers'))
   navSecrets.addEventListener('click', () => showPane('secrets'))
   navApproval.addEventListener('click', () => showPane('approval'))
+  navGeneral.addEventListener('click', () => showPane('general'))
+  switchHooks.addEventListener('change', () => void writeSwitch('hooks', switchHooks))
+  switchDownscale.addEventListener('change', () => void writeSwitch('downscaleImages', switchDownscale))
   navAbout.addEventListener('click', () => showPane('about'))
   approvalProvider.addEventListener('change', () => drawApprovalModels())
   approvalEffort.addEventListener('change', () => void writeApproval())

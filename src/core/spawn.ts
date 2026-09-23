@@ -10,6 +10,7 @@ import type { Effort, ModelFacts } from './config.js'
 import type { AgentRole } from './agents.js'
 import type { JobRegistry, JobView } from './jobs.js'
 import type { SecretVault } from './secrets.js'
+import type { Hooks } from '../hooks/hooks.js'
 
 /**
  * Three ways to hand work to another agent, cheapest last (plan §5):
@@ -160,6 +161,8 @@ export interface SpawnDeps {
   bus?(slot: SubagentSlot): EventBus
   /** The session's vault, so a subagent can use the same keys the parent can. */
   secrets?: SecretVault
+  /** The session's hooks. A subagent runs the tool hooks among them and no others. */
+  hooks?: Hooks
   /**
    * Write the subagent's own conversation down, once it has stopped running.
    *
@@ -261,6 +264,7 @@ export function createSpawnHost(deps: SpawnDeps): SpawnHost {
         ...(setup.effort === undefined ? {} : { effort: setup.effort }),
         ...(setup.history === undefined ? {} : { history: setup.history }),
         ...(deps.secrets === undefined ? {} : { secrets: deps.secrets }),
+        ...(deps.hooks === undefined ? {} : { hooks: deps.hooks.forSubagent() }),
         // A background job can say where it has got to; a foreground subagent
         // has nothing to report to, because the parent is waiting for it.
         ...(slot.background ? { job: { id: slot.id, jobs: deps.jobs } } : {}),

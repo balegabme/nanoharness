@@ -151,12 +151,13 @@ export const DEFAULT_RULES: Readonly<ApprovalRules> = Object.freeze({
  * The user's own words, newest last, as the judge sees them. Only theirs: tool
  * output is the part an attacker can write into. A compaction summary goes out
  * as a user message but is the model's account of that output, so it is left
- * out with it.
+ * out with it, and so is a Stop hook's reply, which is often a test run's
+ * output passed on.
  */
 export function goalsFrom(history: readonly ChatMessage[], limit = 6, chars = 600): string[] {
   const said: string[] = []
   for (const message of history) {
-    if (message.role !== 'user' || message.summary === true) continue
+    if (message.role !== 'user' || message.summary === true || message.hook === true) continue
     const text = message.content.trim()
     if (text === '') continue
     said.push(text.length > chars ? `${text.slice(0, chars)}…` : text)

@@ -13,8 +13,9 @@ Files:
 ## What the agent is told
 
 A session's system prompt is built per session (`buildSystemPrompt`) and never
-hard-coded. It names the four things the model cannot see and will
-otherwise invent: the workspace root, the platform, the shell, and today's date.
+hard-coded. It names what the model cannot see and will otherwise invent: the
+workspace root, the machine, the shell and the tools on its PATH
+(`env-detection.md`), and today's date.
 On Windows it says outright that `bash` is Git Bash and not WSL, with no
 `/mnt/c` and no `/proc`, because a model without that line reasons from its
 training set, decides it is on Linux, and spends a turn probing a filesystem
@@ -95,10 +96,23 @@ then is kept.
 | session | a conversation started inside one folder | `workspaces.json` |
 | transcript | one session's messages, and the notes beside them | `sessions/<id>.json` |
 | subagent transcript | one subagent's whole conversation | `sessions/<id>/subagents/<job id>.json` |
+| picture | one image sent with a message | `sessions/<id>/images/<image id>.<png, jpg, gif or webp>` |
 
 The index and the transcripts are deliberately separate files. The sidebar draws
 itself from the index alone, so opening the app reads one small file no matter
 how much has been said in how many sessions.
+
+Pictures are kept out of the transcript for the same reason. The transcript is
+rewritten whole at the end of every turn, and a session that had been sent ten
+screenshots would write every one of them again each time. The transcript
+records each picture's id, type and size on the message it went with, and the
+bytes go to a file named by the id, written once and never changed. Reopening a
+session reads them back. A picture whose file has gone is dropped from its
+message, and the words it came with stay. A subagent's file keeps its pictures
+the same way, in the same folder, which is where a clone finds the ones it
+inherited from its parent already written. The main process gives each picture
+its id and refuses one that is not a PNG, JPEG, GIF or WebP, a message with
+more than 20, and a picture over 10 MB.
 
 A workspace is a directory the user picked, resolved through symlinks, and never
 stored twice: adding the same folder again returns the entry that is already

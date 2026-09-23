@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:" />
     <title>NanoHarness</title>
     <link rel="stylesheet" href="./renderer.css" />
   </head>
@@ -188,9 +188,12 @@
       typed into it, survives the move.
     -->
     <form class="composer" id="composer" autocomplete="off">
+      <!-- The pictures attached to the draft, filled by composer.ts. -->
+      <div class="attachments" id="attachments" hidden></div>
       <div class="composer-text" id="composer-text">
         <textarea id="input" rows="1" placeholder="Message the agent. Enter sends, Shift+Enter makes a newline."></textarea>
       </div>
+      <p class="attach-note" id="attach-note" hidden></p>
       <div class="controls">
         <span class="chip-select" id="agent-chip">
           <span class="chip-value" id="agent-value">Builder</span>
@@ -286,6 +289,7 @@
         <button class="nav-item" id="pane-providers" type="button">Providers</button>
         <button class="nav-item" id="pane-secrets" type="button">Secrets</button>
         <button class="nav-item" id="pane-approval" type="button">Approval</button>
+        <button class="nav-item" id="pane-general" type="button">General</button>
         <button class="nav-item" id="pane-about" type="button">About</button>
         <span class="spacer"></span>
         <button class="icon-btn" id="settings-close" type="button" title="Close" aria-label="Close">
@@ -398,6 +402,28 @@
         <p class="hint" id="approval-note"></p>
       </section>
 
+      <section class="sheet-pane" id="general-pane" hidden>
+        <h2>General</h2>
+        <label class="setting-switch">
+          <input type="checkbox" id="switch-hooks" />
+          <span>Run hooks</span>
+        </label>
+        <p class="hint">
+          Hooks are your own commands, run when a session opens, around each tool call and when the agent finishes. They are
+          read from ~/.nanoharness/hooks.json, and from a project's .nanoharness/hooks.json once you have approved that file.
+          Off, none of them runs.
+        </p>
+        <label class="setting-switch">
+          <input type="checkbox" id="switch-downscale" />
+          <span>Shrink images before sending</span>
+        </label>
+        <p class="hint">
+          A pasted or dropped image bigger than a model looks at is scaled down to the size it would see, which costs fewer
+          tokens and loses nothing it would have read. Off, the file goes as it is.
+        </p>
+        <p class="hint" id="general-note"></p>
+      </section>
+
       <section class="sheet-pane about" id="about-pane" hidden>
         <img class="about-mark" src="./logo.svg" alt="" width="72" height="72" />
         <p class="about-line">
@@ -436,6 +462,7 @@
     <dialog class="sheet small" id="confirm-dialog" aria-label="Confirm">
       <h2 id="confirm-title">Are you sure?</h2>
       <p class="hint" id="confirm-detail"></p>
+      <pre class="perm-path" id="confirm-code" hidden></pre>
       <div class="setup-actions dialog-actions">
         <button class="btn sm outline" id="confirm-no" type="button">Cancel</button>
         <button class="btn sm danger" id="confirm-yes" type="button">Remove</button>

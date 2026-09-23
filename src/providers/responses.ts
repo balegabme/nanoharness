@@ -2,7 +2,7 @@
 import { BAD_SSE, NO_BODY, ProviderError, StreamBrokenError, retryAfterMs } from '../core/provider.js'
 import type { ChatProvider, ChatInput } from '../core/provider.js'
 import type { ChatChunk, ChatMessage, JsonSchema, ToolCall, ToolInput, TurnUsage } from '../core/types.js'
-import { emptyUsage } from '../core/types.js'
+import { dataUrl, emptyUsage } from '../core/types.js'
 import { endpointURL } from '../core/config.js'
 import { wireHeaders } from './headers.js'
 
@@ -28,9 +28,12 @@ interface ResponsesOptions {
   sessionHeader?: string
 }
 
-/** A turn going out: a role with its text, or one half of a tool round. */
+/** One piece of a message: text, or a picture the user sent. */
+type WirePart = { type: 'input_text' | 'output_text'; text: string } | { type: 'input_image'; image_url: string }
+
+/** A turn going out: a role with what it said, or one half of a tool round. */
 type WireItem =
-  | { role: 'system' | 'user' | 'assistant'; content: { type: 'input_text' | 'output_text'; text: string }[] }
+  | { role: 'system' | 'user' | 'assistant'; content: WirePart[] }
   | { type: 'function_call'; call_id: string; name: string; arguments: string }
   | { type: 'function_call_output'; call_id: string; output: string }
 
@@ -209,10 +212,10 @@ export function toWireInput(messages: readonly ChatMessage[]): WireItem[] {
       items.push({ type: 'function_call_output', call_id: m.toolCallId, output: m.content })
       continue
     }
-    if (m.content !== '') {
-      const type = m.role === 'assistant' ? 'output_text' : 'input_text'
-      items.push({ role: m.role, content: [{ type, text: m.content }] })
-    }
+    // Pictures go ahead of the words about them.
+    const content: WirePart[] = (m.images ?? []).map(image => ({ type: 'input_image', image_url: dataUrl(image) }))
+    if (m.content !== '') content.push({ type: m.role === 'assistant' ? 'output_text' : 'input_text', text: m.content })
+    if (content.length > 0) items.push({ role: m.role, content })
     for (const call of m.toolCalls ?? []) {
       items.push({ type: 'function_call', call_id: call.id, name: call.name, arguments: call.args })
     }

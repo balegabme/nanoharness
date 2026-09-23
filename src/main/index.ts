@@ -1,11 +1,18 @@
 // doc: docs/harness/overview.md
 import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent, type WebContents } from 'electron'
+import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createProvider } from '../providers/factory.js'
-import { BASH_TOOL, GUARDED_BASH_TOOL, warmShell } from '../tools/bash.js'
+import { BASH_TOOL, GUARDED_BASH_TOOL } from '../tools/bash.js'
+import { warmShell } from '../env/shell.js'
+import { hostFacts } from '../env/probe.js'
+import { Hooks, hooksBlock, stopHooks } from '../hooks/hooks.js'
+import { hookPaths, readHookFile } from '../hooks/config.js'
+import type { HookFile } from '../hooks/config.js'
+import { HookTrust } from '../hooks/trust.js'
 import { READ_TOOL } from '../tools/read.js'
 import { GLOB_TOOL, GREP_TOOL } from '../tools/search.js'
 import { WRITE_TOOL } from '../tools/write.js'
@@ -23,12 +30,13 @@ import { loadServers, mcpPaths } from '../mcp/config.js'
 import { hasUnknownSecret, secretsBlock } from '../core/secrets.js'
 import { flushSecrets, forgetSecret, secretList, secretVault } from './secret-store.js'
 import { Session } from '../core/session.js'
-import { appendUsage, clearUsage, readUsage } from '../core/usage-log.js'
+import { appendUsage, clearUsage, readUsage, userDataDir } from '../core/usage-log.js'
 import { buildReport } from '../core/usage-report.js'
 import type { UsageReport } from '../core/usage-report.js'
 import { Judge, approvalProblem, goalsFrom, mergeRules } from '../core/approval.js'
 import type { ApprovalConfig, PermissionMode } from '../core/approval.js'
 import { resolveFacts } from '../core/config.js'
+import type { SwitchName } from '../core/config.js'
 import { emptyUsage } from '../core/types.js'
 import { IPC_CHANNELS } from '../ipc/contract.js'
 import {
@@ -47,10 +55,13 @@ import {
   setAutoCompact,
   setContextLimit,
   setDefaultMode,
+  setSwitch,
+  switchOn,
 } from './config-store.js'
 import { PermissionBroker, gateState, promptingGate } from './permission.js'
 import type { ApprovalRecord, GateState } from './permission.js'
 import {
+  acceptImages,
   addWorkspace,
   appendApproval,
   createSession,
@@ -129,6 +140,7 @@ const FORWARDED: Record<AppEvent['type'], true> = {
   'context.compacting': true,
   'context.compacted': true,
   'permission.request': true,
+  'hooks.trust': true,
   'mcp.status': true,
   'job.started': true,
   'job.update': true,
@@ -153,10 +165,6 @@ const HARNESS = harnessFacts()
 // Windows shows a toast under an application id. Without one set, a
 // notification from a dev-run Electron app is silently dropped.
 const APP_ID = 'com.nanoharness.app'
-
-function shellName(): string {
-  return process.platform === 'win32' ? 'Git Bash (MSYS), as a login shell running one script per command' : 'bash, as a login shell running one script per command'
-}
 
 // Live sessions, keyed the way the renderer addresses them. A session that was
 // never opened this launch is rebuilt from its stored transcript on first use.
@@ -359,8 +367,8 @@ function toolsFor(role: AgentRole, options: { canSpawn: boolean; isJob: boolean 
   return tools
 }
 
-function environment(root: string): PromptEnvironment {
-  return { root, platform: process.platform, shell: shellName(), today: new Date().toISOString().slice(0, 10) }
+async function environment(root: string): Promise<PromptEnvironment> {
+  return { root, platform: process.platform, host: await hostFacts(), today: new Date().toISOString().slice(0, 10) }
 }
 
 // No endpoint and no model are baked in: both come from the settings the user
@@ -427,6 +435,95 @@ async function judgeFor(sessionId: string): Promise<Judge> {
   judges.set(sessionId, judge)
   return judge
 }
+
+/** The project hook files the user has approved, and the ones refused this run. */
+const hookTrust = new HookTrust(join(userDataDir(), 'hook-trust.json'))
+
+/** Trust questions waiting on the window, by the id their event carried. */
+const trustAnswers = new Map<string, (allow: boolean) => void>()
+
+/**
+ * Trust questions in flight, by root and file hash, so two sessions opening
+ * in one folder at the same moment ask the user once.
+ */
+const trustAsks = new Map<string, Promise<boolean>>()
+
+/**
+ * Whether a project's hooks may run: approved before in exactly this form, or
+ * approved now. The session build waits on the window for the answer. A
+ * refusal holds until the app restarts or the file changes.
+ */
+function projectHooksTrusted(sender: WebContents, sessionId: string, root: string, file: HookFile): Promise<boolean> {
+  const key = `${root}\u0000${file.hash}`
+  const pending = trustAsks.get(key)
+  if (pending !== undefined) return pending
+  const asked = (async () => {
+    if (await hookTrust.approved(root, file.hash)) return true
+    if (hookTrust.refusedThisRun(root, file.hash)) return false
+    const allow = await askTrust(sender, sessionId, file)
+    if (!allow) {
+      hookTrust.refuse(root, file.hash)
+      return false
+    }
+    // An approval that cannot be written still holds for this run. The next
+    // launch asks again, which is the safe way for it to fail.
+    await hookTrust.approve(root, file.hash).catch((err: unknown) => {
+      process.stderr.write(`hook trust: ${err instanceof Error ? err.message : String(err)}\n`)
+    })
+    return true
+  })().finally(() => trustAsks.delete(key))
+  trustAsks.set(key, asked)
+  return asked
+}
+
+function askTrust(sender: WebContents, sessionId: string, file: HookFile): Promise<boolean> {
+  if (sender.isDestroyed()) return Promise.resolve(false)
+  const id = randomUUID()
+  return new Promise<boolean>(resolve => {
+    // A window closed with the question still up has answered no.
+    const gone = (): void => settle(false)
+    const settle = (allow: boolean): void => {
+      trustAnswers.delete(id)
+      sender.off('destroyed', gone)
+      resolve(allow)
+    }
+    trustAnswers.set(id, settle)
+    sender.once('destroyed', gone)
+    sender.send(IPC_CHANNELS.sessionEvent, { type: 'hooks.trust', sessionId, id, path: file.path, text: file.text, at: Date.now() } satisfies AppEvent)
+  })
+}
+
+/**
+ * The hooks a session runs, read once as it is built: the global file, then
+ * the project's once the user has approved it. What went wrong comes back as
+ * problems for the session to note.
+ */
+async function loadHooks(sender: WebContents, sessionId: string, root: string): Promise<{ hooks: Hooks; problems: string[] }> {
+  if (!(await switchOn('hooks'))) return { hooks: new Hooks([], root), problems: [] }
+  const paths = hookPaths(root)
+  const global = await readHookFile(paths.global)
+  const specs = [...global.hooks]
+  const problems = [...global.problems]
+  // A workspace opened at the home folder finds one file in both places.
+  if (paths.project !== paths.global) {
+    const project = await readHookFile(paths.project)
+    if (project.hooks.length === 0) {
+      problems.push(...project.problems)
+    } else if (await projectHooksTrusted(sender, sessionId, root, project)) {
+      specs.push(...project.hooks)
+      problems.push(...project.problems)
+    } else {
+      problems.push(`The hooks in ${project.path} are off because they were not approved. Change the file or restart the app to be asked again.`)
+    }
+  }
+  return { hooks: new Hooks(specs, root), problems }
+}
+
+/**
+ * The hook notes each session was last given. A session is rebuilt after every
+ * settings save, and a note it already carries is not written again.
+ */
+const hookNotes = new Map<string, string>()
 
 /** A session's running totals and its context, in the shape the store writes. */
 function stateOf(session: Session): SessionState {
@@ -513,11 +610,17 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
   // are part of the cached prefix. Discovering either mid-session would move
   // bytes the provider has already cached and cost the whole prefix.
   const skills = await loadSkills(root)
+  // Before anything is spawned, because the first time a project's hooks are
+  // met this waits on the user.
+  const { hooks, problems: hookProblems } = await loadHooks(sender, sessionId, root)
   const hub = await McpHub.connect(root)
   if (epochOf(sessionId) !== mine) {
     await hub.close()
     throw new Error('the settings changed while this session was opening; send that again')
   }
+  // After the check, so a build that is about to be thrown away does not run
+  // the user's commands for nothing.
+  const started = await hooks.run('SessionStart', sessionId, {})
   hubs.set(sessionId, hub)
   for (const server of hub.status) {
     if (!server.connected) console.warn(`mcp: ${server.name} is not connected: ${server.error ?? 'unknown reason'}`)
@@ -545,8 +648,11 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
     // A session that can spawn carries the routing rule. A distinct subagent
     // has no `spawn` tool, so its prompt does not name one.
     ...(AGENTS[role].tools.includes('spawn') ? HARNESS_HANDOFF : []),
+    // What a hook printed can hold a key. The session scrubs what passes
+    // through it, and this goes straight into the prompt, so it is scrubbed here.
+    ...hooksBlock(hooks, started.context.map(text => secrets.redact(text))),
   ]
-  const systemPrompt = agentPrompt(role, environment(root), context)
+  const systemPrompt = agentPrompt(role, await environment(root), context)
   const tools = [...toolsFor(role, { canSpawn: true, isJob: false }), ...hub.tools()]
   // A subagent is held to the parent's boundary and the same broker: an "allow
   // for this session" covers the work the user asked for, whoever does it. A
@@ -597,7 +703,7 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
     // There is no per-role default: the chip in the window is the whole
     // answer.
     return {
-      systemPrompt: agentPrompt(request.role, environment(root), [
+      systemPrompt: agentPrompt(request.role, await environment(root), [
         ...(await roleContext(request.role, root, HARNESS)),
         ...skillsBlock(skills),
         ...secretsBlock(secrets.names()),
@@ -612,6 +718,7 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
           root,
           ...(request.role === 'harness-editor' && HARNESS !== undefined ? { cli: HARNESS.cli } : {}),
         }),
+        ...hooksBlock(hooks.forSubagent(), []),
       ]),
       // A distinct subagent reaches the same servers the session does. They are
       // the session's connections, so nothing is spawned twice and nothing has
@@ -635,6 +742,7 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
       access,
       history: await loadTranscript(sessionId),
       secrets,
+      hooks,
       autoCompact: auto,
       ...(limit === undefined ? {} : { contextLimit: limit }),
       ...(stored === null ? {} : { compactions: stored.compactions }),
@@ -652,6 +760,7 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
         access,
         jobs: jobsFor(sender),
         secrets,
+        hooks,
         setup,
         // A subagent's stream goes to the same window, under the job's id. That
         // is the whole of what makes one watchable: the renderer already knows
@@ -719,6 +828,13 @@ ${outcome.answer}`)
   )
   parent.session = session
   session.restoreNotes(await loadNotes(sessionId))
+  const heard = [
+    ...hookProblems,
+    ...started.problems,
+    ...(started.block === null ? [] : [`A SessionStart hook exited 2, which stops nothing when a session opens, and the hooks after it did not run. It said: ${started.block}`]),
+  ]
+  if (heard.length > 0 && hookNotes.get(sessionId) !== heard.join('\n')) for (const problem of heard) session.note(problem)
+  hookNotes.set(sessionId, heard.join('\n'))
   sessions.set(sessionId, session)
   promptSecrets.set(sessionId, secrets.names())
   return session
@@ -775,6 +891,8 @@ function quit(event: Electron.Event): void {
   if (quitting) return
   quitting = true
   event.preventDefault()
+  // A hook's children live in a group of their own, which would outlive the app.
+  stopHooks()
   // A key captured in the last turn is still queued for the encrypted file, and
   // a job still running has to be written down before the sessions go.
   void abandonJobs()
@@ -785,10 +903,12 @@ function quit(event: Electron.Event): void {
 app.whenReady().then(() => {
   app.setAppUserModelId(APP_ID)
   serveRenderer()
-  // Read the shell's PATH while the window is still being built. Nothing waits
-  // on it, and doing it here means the agent's first command is as quick as its
-  // second, and is not the one that sources the profile.
-  warmShell()
+  // Read the shell's PATH and probe the machine while the window is still
+  // being built. The PATH read is never waited on, and doing it here means the
+  // agent's first command is as quick as its second. The probe is awaited by
+  // the first session's system prompt, which by then has usually got it.
+  void warmShell()
+  void hostFacts()
 
   ipcMain.handle(IPC_CHANNELS.ping, () => ({ ok: true, version: pkg.version }))
 
@@ -827,6 +947,14 @@ app.whenReady().then(() => {
   ipcMain.handle(IPC_CHANNELS.configSetContextLimit, async (_event: IpcMainInvokeEvent, limit: number | null): Promise<ConfigStatus> => {
     await setContextLimit(limit)
     for (const session of sessions.values()) session.setContextLimit(limit ?? undefined)
+    return configStatus()
+  })
+
+  // Hooks are read when a session is built, so switching them is followed by
+  // a rebuild. How images are prepared is read at each paste.
+  ipcMain.handle(IPC_CHANNELS.configSetSwitch, async (_event: IpcMainInvokeEvent, req: { name: SwitchName; on: boolean }): Promise<ConfigStatus> => {
+    await setSwitch(req.name, req.on)
+    if (req.name === 'hooks') void retire()
     return configStatus()
   })
 
@@ -1008,6 +1136,10 @@ app.whenReady().then(() => {
     return configStatus()
   })
 
+  ipcMain.handle(IPC_CHANNELS.hooksTrustRespond, (_event: IpcMainInvokeEvent, req: { id: string; allow: boolean }) => {
+    trustAnswers.get(req.id)?.(req.allow === true)
+  })
+
   ipcMain.handle(IPC_CHANNELS.permissionRespond, (event: IpcMainInvokeEvent, req: { id: string; decision: PermissionDecision }) => {
     brokerFor(event.sender).resolve(req.id, req.decision)
   })
@@ -1059,6 +1191,7 @@ app.whenReady().then(() => {
     // that matters: a key must not reach the transcript whatever called send.
     const vault = await secretVault()
     const text = vault.capture(req.text).text
+    const images = acceptImages(req.images)
     // A key captured after this session was built gives it a reference its
     // system prompt has never heard of, and a model reading `{{secret:name}}`
     // with nothing to explain it asks for the key it already has. Retiring the
@@ -1075,7 +1208,7 @@ app.whenReady().then(() => {
     // which folder or which agent to file that line under.
     const identity = await sessionIdentity(req.sessionId)
     if (identity === null) throw new Error('that session is gone; start a new one from the sidebar')
-    const usage = await session.run(text)
+    const usage = await session.run(text, images)
 
     // The transcript is written after the turn, not during it: a half-streamed
     // answer is not a message, and a crash mid-turn should leave the session

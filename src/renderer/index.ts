@@ -1,6 +1,7 @@
 // doc: docs/harness/ui.md
 import { ChatView } from './chat.js'
-import { autoGrow, initComposer, seat, showDock } from './composer.js'
+import { attachments, attachNote, autoGrow, clearAttachments, initComposer, seat, showDock } from './composer.js'
+import { ask } from './confirm.js'
 import { ContextMeter } from './context-meter.js'
 import { initCost, refreshCost } from './cost.js'
 import { el, message, must, relativeTime } from './dom.js'
@@ -37,7 +38,7 @@ import {
 import type { AgentSummary, ConfigStatus, NanoBridge, PermissionModeView } from '../ipc/contract.js'
 import type { DiffOpen } from './chat.js'
 import type { JobView } from '../core/jobs.js'
-import type { ContextLedger, McpServerStatus, ToolStats } from '../core/types.js'
+import type { AppEvent, ContextLedger, McpServerStatus, ToolStats } from '../core/types.js'
 import type { AgentRole } from '../core/agents.js'
 import type { Effort } from '../core/config.js'
 
@@ -825,11 +826,24 @@ async function setContextLimit(limit: number | null): Promise<void> {
 }
 
 async function send(): Promise<void> {
+  // A picture pasted just before Send may still be being read.
+  const pictures = await attachments()
   const text = input.value.trim()
-  if (text === '' || busy) return
-  if (latestConfig()?.configured !== true) {
+  if ((text === '' && pictures.length === 0) || busy) return
+  const status = latestConfig()
+  if (status?.configured !== true) {
     openSettings('providers')
     return
+  }
+  // Refused here and not only in the main process, so the draft is still in
+  // the composer to send some other way.
+  const active = status.active
+  if (pictures.length > 0 && active !== undefined) {
+    const facts = resolveFacts(status.providers.find(p => p.id === active.providerId), active.model)
+    if (facts.vision === false) {
+      attachNote(`${active.model} does not take images. Remove them, or switch to a model that reads images.`)
+      return
+    }
   }
   // Sending from the hero is how a session starts: the message names it, so
   // there is no separate "new session" step to take first.
@@ -844,18 +858,19 @@ async function send(): Promise<void> {
   const captured = await nh.captureSecrets(text).catch(() => ({ text, captured: [] }))
   const safe = captured.text
 
-  chat.userBlock(safe)
+  chat.userBlock(safe, pictures.map(picture => picture.view))
   if (captured.captured.length > 0) {
     const names = captured.captured.map(name => `{{secret:${name}}}`).join(', ')
     chat.noteBlock(`Kept out of the transcript: ${names}. Tools get the real value; the model never sees it.`)
   }
   input.value = ''
+  clearAttachments()
   autoGrow()
   chat.startTurn()
   setBusy(true)
 
   try {
-    const result = await nh.send(sessionId, safe)
+    const result = await nh.send(sessionId, safe, pictures.map(picture => picture.upload))
     // The first message names the session, so the sidebar has to be re-read.
     setStatus(await nh.workspaces())
     select(result.session.id)
@@ -938,7 +953,7 @@ must<HTMLButtonElement>('tokens-spend').addEventListener('click', () => {
 settingsButton.addEventListener('click', () => openSettings('providers'))
 heroSettings.addEventListener('click', () => openSettings('providers'))
 
-initComposer()
+initComposer(() => latestConfig()?.downscaleImages ?? true)
 initNotify()
 initPermission({ bridge: nh, report: text => chat.errorBlock(text) })
 initSidebar({
@@ -986,6 +1001,10 @@ nh.onEvent(event => {
     const outcome = event.type === 'session.finished' ? 'finished' : event.type === 'session.stopped' ? 'stopped' : 'error'
     announce(outcome, sessionById(event.sessionId)?.title ?? 'Session')
   }
+  if (event.type === 'hooks.trust') {
+    void trustHooks(event)
+    return
+  }
   if (event.type === 'permission.request') {
     if (event.sessionId === activeSessionId) enqueue(event)
     // A prompt for a session nobody is looking at cannot be answered
@@ -995,6 +1014,22 @@ nh.onEvent(event => {
   }
   if (!('sessionId' in event) || event.sessionId === activeSessionId) chat.handleEvent(event)
 })
+
+/**
+ * A project's hooks, shown whole before they may run. The approval covers the
+ * file as it reads now, so the file is what the user reads. Asked whichever
+ * session is on screen: the answer is about the folder, and every session in
+ * it shares the answer.
+ */
+async function trustHooks(event: Extract<AppEvent, { type: 'hooks.trust' }>): Promise<void> {
+  const allow = await ask({
+    title: 'Run this project\'s hooks?',
+    detail: `${event.path} runs these commands on your machine, around the agent's work. Approve them only if you trust whoever wrote this project. Any change to the file asks again.`,
+    code: event.text,
+    confirmLabel: 'Run them',
+  })
+  await nh.answerHookTrust(event.id, allow).catch((err: unknown) => chat.errorBlock(message(err)))
+}
 
 async function boot(): Promise<void> {
   let version = ''

@@ -1,13 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { Session } from '../core/session.js'
 import { emptyUsage } from '../core/types.js'
 import { Throughput } from '../renderer/metrics.js'
-import { addWorkspace, createSession, noteTurn, workspaceStatus } from './workspace-store.js'
+import {
+  acceptImages,
+  addWorkspace,
+  createSession,
+  loadTranscript,
+  noteTurn,
+  saveTranscript,
+  toTranscriptView,
+  transcriptPath,
+  workspaceStatus,
+} from './workspace-store.js'
 import type { ChatInput, ChatProvider } from '../core/provider.js'
-import type { ChatChunk } from '../core/types.js'
+import type { ChatChunk, ChatMessage } from '../core/types.js'
 import type { SessionState } from './workspace-store.js'
 
 /**
@@ -93,5 +103,77 @@ describe('a session read back after a restart', () => {
     await session.run('say nothing')
     await noteTurn(view.id, 'say nothing', stateOf(session))
     expect((await workspaceStatus()).sessions.find(s => s.id === view.id)?.rate).toEqual(rate)
+  })
+})
+
+/** Keeps what each request carried, and answers with one line. */
+class RecordingProvider implements ChatProvider {
+  sent: ChatMessage[][] = []
+
+  async *stream(input: ChatInput): AsyncGenerator<ChatChunk> {
+    this.sent.push(input.messages)
+    yield { kind: 'text', text: 'A red dot.' }
+    yield { kind: 'done', usage: { ...emptyUsage(), input: 200, output: 4 } }
+  }
+}
+
+/** A real one-pixel PNG, so the bytes that go to disk are a picture any viewer opens. */
+const PIXEL = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+
+describe('a picture sent with a message', () => {
+  it('goes to the model, is stored beside the transcript, and comes back when the session is reopened', async () => {
+    const space = await addWorkspace(dir)
+    const view = await createSession(space.id)
+    const provider = new RecordingProvider()
+    const session = new Session(
+      { sessionId: view.id, cwd: dir, model: 'test-model', systemPrompt: 'You are a test.', facts: { context: 100_000 } },
+      provider,
+      [],
+    )
+    const images = acceptImages([{ mediaType: 'image/png', width: 1, height: 1, data: PIXEL }])
+    await session.run('what is this?', images)
+
+    const asked = provider.sent[0]?.find(m => m.role === 'user')
+    expect(asked?.role === 'user' && asked.images?.map(image => image.data)).toEqual([PIXEL])
+
+    await saveTranscript(view.id, session.transcript, session.notes)
+    // The transcript names the picture and leaves its bytes to a file of their own.
+    const file = await readFile(transcriptPath(view.id), 'utf8')
+    expect(file).not.toContain(PIXEL)
+    const folder = join(dirname(transcriptPath(view.id)), view.id, 'images')
+    const stored = await readdir(folder)
+    expect(stored).toEqual([`${images[0]?.id}.png`])
+    expect((await readFile(join(folder, stored[0] ?? ''))).toString('base64')).toBe(PIXEL)
+
+    const reopened = await loadTranscript(view.id)
+    const shown = toTranscriptView(reopened).find(m => m.role === 'user')
+    expect(shown?.images).toEqual([{ src: `data:image/png;base64,${PIXEL}`, width: 1, height: 1 }])
+
+    // A picture whose file has gone is dropped, and the words it came with stay.
+    await rm(folder, { recursive: true })
+    const without = toTranscriptView(await loadTranscript(view.id)).find(m => m.role === 'user')
+    expect(without).toEqual({ role: 'user', text: 'what is this?' })
+  })
+
+  it('is refused by a model known not to read pictures, before anything is sent', async () => {
+    const provider = new RecordingProvider()
+    const session = new Session(
+      { sessionId: 'blind', cwd: dir, model: 'text-only', systemPrompt: 'You are a test.', facts: { context: 100_000, vision: false } },
+      provider,
+      [],
+    )
+    const images = acceptImages([{ mediaType: 'image/png', width: 1, height: 1, data: PIXEL }])
+    await expect(session.run('what is this?', images)).rejects.toThrow('text-only does not take images')
+    expect(provider.sent).toEqual([])
+    expect(session.transcript.filter(m => m.role === 'user')).toEqual([])
+  })
+
+  it('is refused at the door when it is not a picture the window could have sent', () => {
+    const upload = { mediaType: 'image/png', width: 1, height: 1, data: PIXEL }
+    expect(() => acceptImages([{ ...upload, mediaType: 'image/svg+xml' }])).toThrow('type or size')
+    expect(() => acceptImages([{ ...upload, width: 0 }])).toThrow('type or size')
+    expect(() => acceptImages([{ ...upload, data: 'not base64!' }])).toThrow('base64')
+    expect(() => acceptImages(Array.from({ length: 21 }, () => upload))).toThrow('20 images at most')
+    expect(() => acceptImages('a picture')).toThrow('as a list')
   })
 })

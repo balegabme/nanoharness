@@ -5,11 +5,11 @@ import { basename, join } from 'node:path'
 import { isAgentRole } from '../core/agents.js'
 import { realResolve } from '../core/scope.js'
 import { userDataDir } from '../core/usage-log.js'
-import { emptyUsage } from '../core/types.js'
+import { dataUrl, emptyUsage, isImageType } from '../core/types.js'
 import type { AgentRole } from '../core/agents.js'
 import type { JobState } from '../core/jobs.js'
 import type { SpawnMode } from '../core/spawn.js'
-import type { ChatMessage, CompactionRecord, ContextLedger, SessionNote, ToolStats, TurnRate, TurnUsage } from '../core/types.js'
+import type { ChatMessage, CompactionRecord, ContextLedger, ImagePart, ImageType, SessionNote, ToolStats, TurnRate, TurnUsage } from '../core/types.js'
 import type { UsageNames } from '../core/usage-report.js'
 import type { SessionView, TranscriptMessage, WorkspaceStatus, WorkspaceView } from '../ipc/contract.js'
 
@@ -85,6 +85,69 @@ export function subagentPath(sessionId: string, jobId: string): string {
   return join(subagentDir(sessionId), `${jobId}.json`)
 }
 
+/**
+ * Where a session's pictures are kept: one file each, beside its subagents,
+ * named by the image's id. The transcript records which image went with which
+ * message and leaves the bytes here, so the end of a turn does not rewrite
+ * every picture the session has ever been sent.
+ */
+function imageDir(sessionId: string): string {
+  return join(userDataDir(), 'sessions', sessionId, 'images')
+}
+
+const IMAGE_EXTENSIONS: Record<ImageType, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' }
+
+function imagePath(sessionId: string, image: StoredImage): string {
+  return join(imageDir(sessionId), `${image.id}.${IMAGE_EXTENSIONS[image.mediaType]}`)
+}
+
+/** An image as the transcript file records it. */
+type StoredImage = Omit<ImagePart, 'data'>
+
+/** The form `randomUUID` gives. An id names a file, so nothing else is let through. */
+const IMAGE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+
+/**
+ * How many pictures one message may carry, and how large each may be. The
+ * window shrinks a picture to well under the size limit before it sends it, so
+ * the limits only stop a picture the user chose to send whole, or a caller
+ * that is not the window, from filling the transcript folder.
+ */
+const IMAGES_PER_MESSAGE = 20
+const IMAGE_MAX_BYTES = 10 * 1024 * 1024
+
+/** A picture's type and size, from a record that may be anything. */
+function imageShape(raw: Record<string, unknown>): Omit<StoredImage, 'id'> | null {
+  const { mediaType, width, height } = raw
+  if (!isImageType(mediaType)) return null
+  if (typeof width !== 'number' || typeof height !== 'number') return null
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) return null
+  return { mediaType, width, height }
+}
+
+/**
+ * The pictures the window sent with a message, each given an id. Anything
+ * that is not a picture it could have sent is refused with the reason, and the
+ * message is not sent.
+ */
+export function acceptImages(uploads: unknown): ImagePart[] {
+  if (uploads === undefined) return []
+  if (!Array.isArray(uploads)) throw new Error('the images did not arrive as a list')
+  if (uploads.length > IMAGES_PER_MESSAGE) throw new Error(`one message can carry ${IMAGES_PER_MESSAGE} images at most`)
+  return uploads.map((upload: unknown) => {
+    if (typeof upload !== 'object' || upload === null) throw new Error('an image arrived without its fields')
+    const raw = upload as Record<string, unknown>
+    const shape = imageShape(raw)
+    if (shape === null) throw new Error('an image arrived with a type or size that cannot be read')
+    const data = raw.data
+    if (typeof data !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(data)) throw new Error('an image arrived without its bytes in base64')
+    if ((data.length / 4) * 3 > IMAGE_MAX_BYTES) {
+      throw new Error(`an image is over ${IMAGE_MAX_BYTES / 1024 / 1024} MB; turn on "Shrink images before sending" in Settings, under General`)
+    }
+    return { id: randomUUID(), ...shape, data }
+  })
+}
+
 /** One subagent as it is stored: the job's facts, and its whole conversation. */
 export interface StoredSubagent {
   id: string
@@ -111,10 +174,17 @@ export interface StoredSubagent {
   context?: ContextLedger
 }
 
+/**
+ * Write one subagent down. A clone starts from its parent's conversation, so
+ * its pictures are the parent's, and they go to the session's own picture
+ * folder, where the parent's copy of each is already written.
+ */
 export async function saveSubagent(record: StoredSubagent): Promise<string> {
   const path = subagentPath(record.sessionId, record.id)
   await mkdir(subagentDir(record.sessionId), { recursive: true })
-  await writeFile(path, `${JSON.stringify(record, null, 2)}\n`, 'utf8')
+  const messages: object[] = []
+  for (const message of record.messages) messages.push(await storeImages(record.sessionId, message))
+  await writeFile(path, `${JSON.stringify({ ...record, messages }, null, 2)}\n`, 'utf8')
   return path
 }
 
@@ -130,6 +200,9 @@ export async function loadSubagent(sessionId: string, jobId: string): Promise<St
     // is dropped, and never handed on to be read as a count.
     if (!isToolStats(parsed.tools)) delete parsed.tools
     if (!isLedger(parsed.context)) delete parsed.context
+    for (const message of parsed.messages) {
+      if (message.role !== 'tool' && message.images !== undefined) await loadImages(sessionId, message)
+    }
     return parsed
   } catch {
     return null
@@ -495,7 +568,30 @@ function isNote(value: unknown): value is SessionNote {
 }
 
 export async function loadTranscript(id: string): Promise<ChatMessage[]> {
-  return (await readSession(id)).messages
+  const { messages } = await readSession(id)
+  for (const message of messages) {
+    if (message.role !== 'tool' && message.images !== undefined) await loadImages(id, message)
+  }
+  return messages
+}
+
+/**
+ * Put each picture's bytes back on its message. A picture whose file is gone,
+ * or whose record cannot be read, is dropped, and the message keeps its words.
+ */
+async function loadImages(sessionId: string, message: Exclude<ChatMessage, { role: 'tool' }>): Promise<void> {
+  const kept: ImagePart[] = []
+  for (const value of message.images as unknown[]) {
+    if (typeof value !== 'object' || value === null) continue
+    const raw = value as Record<string, unknown>
+    const shape = imageShape(raw)
+    if (shape === null || typeof raw.id !== 'string' || !IMAGE_ID.test(raw.id)) continue
+    const image = { id: raw.id, ...shape }
+    const bytes = await readFile(imagePath(sessionId, image)).catch(() => null)
+    if (bytes !== null) kept.push({ ...image, data: bytes.toString('base64') })
+  }
+  if (kept.length > 0) message.images = kept
+  else delete message.images
 }
 
 /** What the window showed that was not a message, for the session it belongs to. */
@@ -512,7 +608,27 @@ export async function loadNotes(id: string): Promise<SessionNote[]> {
 export async function saveTranscript(id: string, messages: ChatMessage[], notes: readonly SessionNote[] = []): Promise<void> {
   const path = transcriptPath(id)
   await mkdir(join(userDataDir(), 'sessions'), { recursive: true })
-  await writeFile(path, `${JSON.stringify({ messages, notes }, null, 2)}\n`, 'utf8')
+  const stored: object[] = []
+  for (const message of messages) stored.push(await storeImages(id, message))
+  await writeFile(path, `${JSON.stringify({ messages: stored, notes }, null, 2)}\n`, 'utf8')
+}
+
+/**
+ * A message as the transcript file holds it, with each picture's bytes written
+ * to its own file. A picture is written once: its file is never changed after,
+ * so one that already exists is left alone.
+ */
+async function storeImages(sessionId: string, message: ChatMessage): Promise<object> {
+  if (message.role === 'tool' || message.images === undefined) return message
+  await mkdir(imageDir(sessionId), { recursive: true })
+  const images: StoredImage[] = []
+  for (const { data, ...image } of message.images) {
+    await writeFile(imagePath(sessionId, image), Buffer.from(data, 'base64'), { flag: 'wx' }).catch((err: unknown) => {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
+    })
+    images.push(image)
+  }
+  return { ...message, images }
 }
 
 /**
@@ -537,6 +653,8 @@ export function toTranscriptView(messages: ChatMessage[]): TranscriptMessage[] {
     const view: TranscriptMessage = { role: message.role, text: message.content }
     if (message.compacted !== undefined) view.compacted = message.compacted
     if (message.summary === true) view.summary = true
+    if (message.hook === true) view.hook = true
+    if (message.images !== undefined) view.images = message.images.map(image => ({ src: dataUrl(image), width: image.width, height: image.height }))
     // Signed or not, the thinking is what explains the turn, so a re-opened
     // session shows it. Whether it goes back on the wire is the provider's
     // business, not the transcript's.

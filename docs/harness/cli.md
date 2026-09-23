@@ -18,9 +18,10 @@ lists the files it owns. Defaults to the current directory. Exits 1 with one
 line per problem, 0 with a count when clean. `docs/harness/doc-map.md` has the
 rules.
 
-The plan also runs this as a `SessionStart` hook; that arrives with the hook
-runner in build step 7. Until then it is the `pnpm doc-check` script and a CI
-job.
+In this repo it is the `pnpm doc-check` script and a CI job.
+`examples/hooks.json` also runs it as a `SessionStart` hook, which puts the
+problems in front of the agent when a session opens and says nothing when the
+map is clean.
 
 ## nh usage [--days N] [--json]
 
