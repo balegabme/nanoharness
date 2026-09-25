@@ -85,6 +85,11 @@ export function subagentPath(sessionId: string, jobId: string): string {
   return join(subagentDir(sessionId), `${jobId}.json`)
 }
 
+/** Where a session's checkpoints are kept: the turns it can be rewound to, and the file contents that takes. */
+export function checkpointDir(sessionId: string): string {
+  return join(userDataDir(), 'sessions', sessionId, 'checkpoints')
+}
+
 /**
  * Where a session's pictures are kept: one file each, beside its subagents,
  * named by the image's id. The transcript records which image went with which

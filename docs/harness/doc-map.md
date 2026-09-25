@@ -39,6 +39,7 @@ pnpm doc-check
 - `ui.md`: the desktop window, the context bridge, the renderer
 - `sessions.md`: folders, sessions, transcripts, and the scope rule
 - `context.md`: measuring the context, and compacting it before it outgrows the window
+- `checkpoints.md`: a checkpoint per turn, and rewinding the conversation, the files or both
 - `agents.md`: the three roles, spawn modes, and background jobs
 - `mcp.md`: the MCP client, its transports, and the two config files
 - `skills.md`: the skill format and the list injected into the prompt

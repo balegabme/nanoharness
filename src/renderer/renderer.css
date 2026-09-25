@@ -1168,6 +1168,261 @@ body {
   animation: rise var(--nh-slow) var(--nh-ease);
 }
 
+/* A rewind is running: the files are being put back, and nothing on the
+   turns can be pressed until they are. */
+.stream.rewinding .turn-tools,
+.stream.rewinding .rewind-bar button {
+  pointer-events: none;
+  opacity: 0.4;
+}
+
+/* The turn index, beside the flow's scrollbar. Only the marks and the open
+   list take the pointer, so the flow under the rest of it scrolls and selects
+   as usual. */
+/* The flow is hidden while a subagent, a diff or the spend view is on screen,
+   and the index goes with it. */
+.stream[hidden] ~ .turn-index {
+  display: none;
+}
+
+.turn-index {
+  position: absolute;
+  right: 14px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  pointer-events: none;
+}
+
+/* One mark per turn, evenly spaced whatever the turns hold, so each one is as
+   easy to hit as the next. A column longer than the flow scrolls. */
+.ti-strip {
+  max-height: 100%;
+  padding: 4px 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  scrollbar-width: none;
+  pointer-events: auto;
+}
+
+.ti-mark {
+  position: relative;
+  flex: none;
+  width: 20px;
+  height: 9px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.ti-mark::before {
+  content: "";
+  position: absolute;
+  top: 3px;
+  right: 2px;
+  width: 8px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--nh-border-l3);
+  transition:
+    width var(--nh-fast) var(--nh-ease),
+    background var(--nh-fast) var(--nh-ease);
+}
+
+/* A turn that changed files is darker: those are the turns a rewind of the
+   code would do something for. */
+.ti-mark.edited::before {
+  background: var(--nh-label-tertiary);
+}
+
+.ti-mark:hover::before {
+  width: 14px;
+  background: var(--nh-label-secondary);
+}
+
+.ti-mark.current::before {
+  width: 16px;
+  background: var(--nh-accent);
+}
+
+.ti-mark:focus-visible {
+  outline: none;
+}
+
+/* The list, to the left of the marks. Under the pointer it is the list alone;
+   opened from the keyboard it has the filter and the keys as well. */
+.ti-panel {
+  position: absolute;
+  top: 50%;
+  right: 26px;
+  width: min(380px, calc(100vw - 120px));
+  max-height: min(78%, 520px);
+  translate: 0 -50%;
+  padding: 6px;
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--nh-border-l2);
+  border-radius: var(--nh-radius-card);
+  background: var(--nh-bg-layer-2);
+  box-shadow: var(--nh-shadow-lv2);
+  pointer-events: auto;
+  animation: rise var(--nh-fast) var(--nh-ease);
+}
+
+.turn-index.open .ti-panel {
+  display: flex;
+}
+
+.turn-index:not(.keys) .ti-filter,
+.turn-index:not(.keys) .ti-keys {
+  display: none;
+}
+
+.ti-filter {
+  width: 100%;
+  height: 30px;
+  padding: 0 var(--s3);
+  border: 1px solid var(--nh-border-l2);
+  border-radius: var(--nh-radius-chip);
+  background: var(--nh-bg-input);
+  color: var(--nh-label-primary);
+  font: 400 13px var(--nh-font-sans);
+}
+
+.ti-filter:focus {
+  outline: none;
+  border-color: var(--nh-accent-line);
+}
+
+.ti-list {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.ti-list:focus {
+  outline: none;
+}
+
+.ti-row {
+  display: grid;
+  grid-template-columns: 2.2em minmax(0, 1fr) 7.5em 22px;
+  align-items: center;
+  gap: var(--s2);
+  min-height: 30px;
+  padding: 0 4px 0 var(--s2);
+  border: 1px solid transparent;
+  border-radius: var(--nh-radius-chip);
+  cursor: pointer;
+}
+
+.ti-row:hover,
+.ti-row.pointed {
+  background: var(--nh-hover);
+}
+
+.ti-row[aria-selected="true"] {
+  border-color: var(--nh-accent-line);
+  background: var(--nh-accent-wash);
+}
+
+.ti-num,
+.ti-meta {
+  color: var(--nh-label-tertiary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.ti-meta {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.ti-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.ti-row.current .ti-num {
+  color: var(--nh-accent);
+  font-weight: 600;
+}
+
+.ti-prompt {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.ti-files {
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--nh-accent-wash);
+  color: var(--nh-accent);
+  font-size: 10.5px;
+}
+
+.ti-rewind {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--nh-radius-chip);
+  background: none;
+  color: var(--nh-label-secondary);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.ti-row:hover .ti-rewind,
+.ti-row.pointed .ti-rewind,
+.ti-row[aria-selected="true"] .ti-rewind {
+  opacity: 1;
+}
+
+.ti-rewind:hover {
+  background: var(--nh-hover-solid);
+  color: var(--nh-accent);
+}
+
+.ti-empty {
+  margin: var(--s2);
+  color: var(--nh-label-tertiary);
+  font-size: 12px;
+}
+
+.ti-keys,
+.rewind-keys {
+  color: var(--nh-label-tertiary);
+  font-size: 11px;
+}
+
+.ti-keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px var(--s3);
+  padding: 6px 4px 0;
+  border-top: 1px solid var(--nh-border-l1);
+}
+
+.ti-keys kbd,
+.rewind-keys kbd {
+  padding: 0 4px;
+  border: 1px solid var(--nh-border-l2);
+  border-radius: 4px;
+  font: 500 10.5px var(--nh-font-sans);
+}
+
 /* Bottom clearance for the floating composer: a spacer element and not
    padding, because its height is written from the composer's measured one. */
 .stream-tail {
@@ -1597,6 +1852,196 @@ details.block pre + pre {
    because the model no longer sees it. */
 .block.folded {
   opacity: 0.5;
+}
+
+/* What a held rewind took back, and after a message keeps it, what it took
+   until the session confirms the turn began. */
+.block.dropped {
+  display: none;
+}
+
+/* What going back to before a turn would take off the screen, while the card
+   above it waits for the answer. */
+.block.doomed {
+  opacity: 0.3;
+  filter: grayscale(0.6);
+  transition: opacity var(--nh-fast) var(--nh-ease);
+}
+
+.block.user {
+  position: relative;
+}
+
+.turn-no {
+  color: var(--nh-label-tertiary);
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+/* Rewind on the message's own row, shown while the pointer or the focus is on
+   it so a long session does not read as a column of buttons. */
+.turn-tools {
+  position: absolute;
+  top: -3px;
+  right: 0;
+  display: flex;
+  opacity: 0;
+  transition: opacity var(--nh-fast) var(--nh-ease);
+}
+
+.block.user:hover .turn-tools,
+.turn-tools:focus-within {
+  opacity: 1;
+}
+
+.turn-act {
+  height: 20px;
+  padding: 0 var(--s2);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--nh-border-l2);
+  border-radius: var(--nh-radius-chip);
+  background: var(--nh-bg-layer-1);
+  color: var(--nh-label-secondary);
+  font: 500 11px var(--nh-font-sans);
+  cursor: pointer;
+}
+
+.turn-act:hover,
+.turn-act:focus-visible {
+  outline: none;
+  border-color: var(--nh-accent-line);
+  color: var(--nh-accent);
+}
+
+/* The turn the index just brought into view. */
+.block.turn-focus .body {
+  box-shadow: 0 0 0 1px var(--nh-accent-line);
+}
+
+/* The card that asks before a rewind, just above the turn it goes back to. */
+.rewind-preview {
+  width: 100%;
+  max-width: var(--nh-column);
+  margin: 0 auto var(--s3);
+  padding: var(--s3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  border: 1px solid var(--nh-accent-line);
+  border-radius: var(--nh-radius-card);
+  background: var(--nh-bg-layer-2);
+  box-shadow: var(--nh-shadow-lv1);
+  font-size: 13px;
+  animation: block-in var(--nh-base) var(--nh-ease) backwards;
+}
+
+.rewind-modes {
+  align-self: flex-start;
+  padding: 2px;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  border: 1px solid var(--nh-border-l2);
+  border-radius: var(--nh-radius-chip);
+}
+
+.rewind-mode {
+  height: 24px;
+  padding: 0 var(--s2);
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--nh-label-secondary);
+  font: 500 12px var(--nh-font-sans);
+  cursor: pointer;
+}
+
+.rewind-mode:hover:enabled {
+  background: var(--nh-hover);
+}
+
+.rewind-mode[aria-checked="true"] {
+  background: var(--nh-accent-wash);
+  color: var(--nh-accent);
+}
+
+.rewind-mode:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.rewind-mode:focus-visible {
+  outline: 1px solid var(--nh-accent-line);
+}
+
+.rewind-summary,
+.rewind-note {
+  margin: 0;
+}
+
+.rewind-note {
+  color: var(--nh-label-tertiary);
+  font-size: 11.5px;
+}
+
+.rewind-files {
+  margin: 0;
+  padding: 6px var(--s2);
+  list-style: none;
+  border-radius: var(--nh-radius-chip);
+  background: var(--nh-bg-code);
+  font: 400 11.5px var(--nh-font-mono);
+}
+
+.rewind-files li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rewind-more {
+  color: var(--nh-label-tertiary);
+}
+
+.rewind-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.rewind-keys {
+  flex: 1;
+}
+
+/* Under what is left of the conversation while a rewind is held: what it did,
+   and Undo. */
+.rewind-bar {
+  width: 100%;
+  max-width: var(--nh-column);
+  margin: 0 auto var(--s4);
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--nh-accent-line);
+  border-radius: var(--nh-radius-card);
+  background: var(--nh-accent-wash);
+  animation: block-in var(--nh-base) var(--nh-ease) backwards;
+}
+
+.rewind-bar-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12.5px;
+}
+
+.rewind-bar-hint {
+  color: var(--nh-label-tertiary);
+  font-size: 11.5px;
 }
 
 /* On a tool card whose output now goes to the model shortened. */

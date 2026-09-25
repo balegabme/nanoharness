@@ -414,8 +414,9 @@ chips per turn (tokens, cost, cache-hit, tps). Tps = completion tokens ÷ stream
 events, and no new API fields or events.
 
 **Keyboard map (conventions worth keeping, since familiarity is the feature):** `Esc` interrupt
-(completed work preserved; queued messages dispatch next) · `Esc Esc` (empty input) rewind
-menu: conversation only / code only / both · `Shift+Tab` cycle permission mode · `Ctrl+O`
+(completed work preserved; queued messages dispatch next) · `Esc Esc` (empty input) turn
+index, `r` in it to rewind: conversation only / code only / both, confirmed first ·
+`Alt+↑/↓` jump between turns · `Shift+Tab` cycle permission mode · `Ctrl+O`
 verbose transcript · `Ctrl+T` todos · `Ctrl+B` background the task · `Ctrl+V` image chip ·
 `Ctrl+J` newline · `Ctrl+X Enter` queue-submit · `Enter` submit · `Up` from first row
 un-queues · `?` help · `@` path autocomplete · `/` command menu · `!` shell mode. Plus
@@ -433,8 +434,12 @@ center = chat stream; agent selector + model/effort chips; settings modal (in-ap
 ## 14. Feature backlog
 
 **v1 (core experience):**
-1. Checkpoints + rewind: file snapshot + conversation marker per turn; esc-esc menu
-   (conversation only / code only / both).
+1. Checkpoints + rewind: file snapshot + conversation marker per turn; a Rewind button on
+   each turn that shows what would change before anything does (conversation only / code
+   only / both), and a turn index beside the flow that esc-esc opens for the keyboard. A
+   rewind is held until the next message, so it can be undone. Built
+   (`docs/harness/checkpoints.md`). Only `edit` and `write` are snapshotted; `bash` and
+   changes outside the app are not.
 2. Diff-first edit review + permission modes: every `write` = diff card
    (accept/reject); modes ask-edits / auto-accept / yolo, cycled with `Shift+Tab`.
 3. Live plan/todo artifact: agent-maintained task list (plan-as-artifact) as widget.

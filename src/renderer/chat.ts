@@ -169,6 +169,12 @@ function argHint(args: string): string {
 export class ChatView {
   private readonly toolCards = new Map<string, HTMLDetailsElement>()
   private activity: HTMLElement | null = null
+  /**
+   * A block the next ones go in front of, until the turn starts. A message
+   * that keeps a held rewind is drawn at once, and the note the rewind leaves
+   * belongs above it, where the replay puts it.
+   */
+  private ahead: HTMLElement | null = null
   private activityClock: ReturnType<typeof setInterval> | null = null
   private assistantBody: HTMLElement | null = null
   /**
@@ -212,7 +218,7 @@ export class ChatView {
     const pinned = stream.scrollHeight - stream.scrollTop - stream.clientHeight < 80
     // The turn indicator stays the last thing in the flow, so a block that
     // arrives mid-turn goes above it and never orphans it up the page.
-    stream.insertBefore(node, this.activity ?? this.host.tail)
+    stream.insertBefore(node, this.ahead ?? this.activity ?? this.host.tail)
     this.roundNodes.push(node)
     if (this.host.mark !== undefined) this.host.mark.hidden = true
     if (pinned) stream.scrollTop = stream.scrollHeight
@@ -367,9 +373,9 @@ export class ChatView {
     return { wrapper, body }
   }
 
-  /** What the user sent: the pictures in the order they were attached, then the words. */
-  userBlock(text: string, images: readonly ImageView[] = []): void {
-    const body = this.block('user', 'you')
+  /** What the user sent: the pictures in the order they were attached, then the words. Returns the block. */
+  userBlock(text: string, images: readonly ImageView[] = []): HTMLElement {
+    const { wrapper, body } = this.blockPair('user', 'you')
     if (images.length > 0) {
       const row = el('div', 'user-images')
       for (const [index, image] of images.entries()) {
@@ -382,6 +388,15 @@ export class ChatView {
       body.append(row)
     }
     if (text !== '') body.append(text)
+    return wrapper
+  }
+
+  /**
+   * Draw what arrives before the turn starts above `node`, the message that
+   * started it. Null draws at the end again, for a turn that never started.
+   */
+  aheadOf(node: HTMLElement | null): void {
+    this.ahead = node
   }
 
   errorBlock(text: string): void {
@@ -567,6 +582,7 @@ export class ChatView {
     this.thinkingBody = null
     this.thinkingCard = null
     this.roundNodes = []
+    this.ahead = null
     this.subagentSpend = null
     this.throughput.seed(0)
     this.setUsage(null)
@@ -690,7 +706,7 @@ export class ChatView {
     for (const [index, message] of messages.entries()) {
       drawNotes(index)
       const from = this.roundNodes.length
-      this.drawMessage(message, results)
+      this.drawMessage(message, index, results)
       // What went into a summary is drawn dimmer. It is still the conversation
       // the user had, and no longer what the model is sent.
       if (message.compacted === 'compacted') for (const node of this.roundNodes.slice(from)) node.classList.add('folded')
@@ -698,7 +714,11 @@ export class ChatView {
     drawNotes(messages.length)
   }
 
-  private drawMessage(message: TranscriptMessage, results: ReadonlyMap<string, { text: string; failed: boolean; pruned: boolean }>): void {
+  private drawMessage(
+    message: TranscriptMessage,
+    index: number,
+    results: ReadonlyMap<string, { text: string; failed: boolean; pruned: boolean }>,
+  ): void {
     if (message.role === 'tool') return
     if (message.summary === true) {
       this.compactionBlock(message.text)
@@ -709,7 +729,8 @@ export class ChatView {
       return
     }
     if (message.role === 'user') {
-      this.userBlock(message.text, message.images)
+      // The transcript index, which a checkpoint's marker names.
+      this.userBlock(message.text, message.images).dataset.index = String(index)
       return
     }
     if (message.thinking !== undefined && message.thinking !== '') this.thinkingBlock(message.thinking)
@@ -822,6 +843,9 @@ export class ChatView {
         this.summaryBlock(event.text, event.prevented)
         break
       case 'session.started':
+        this.ahead = null
+        break
+      case 'session.checkpoint':
       case 'permission.request':
       case 'mcp.status':
       case 'job.started':

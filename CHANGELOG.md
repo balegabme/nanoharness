@@ -139,6 +139,22 @@ development history is in the git log; none of the three is repeated here.
 - A reopened session on the same model estimates its context with the
   tokenizer correction it had last measured. Before, it started again from 1
   and could read well low on code-heavy history until its first request.
+- Checkpoints and rewind. Every turn begins with a checkpoint that records
+  where the conversation stood and copies each file `edit` or `write` changes
+  before its first change. A rewind puts back the conversation, the files, or
+  both. The files go back at once and the rewind is held: it can be moved to
+  another turn or undone, and the next message keeps it. A conversation
+  rewind returns the turn's message to the composer. Subagents write through
+  their parent's checkpoints. Changes made through `bash` or outside the app
+  are not tracked.
+- The turns on screen. Each message the user sent has a Rewind button, which
+  opens a card above the turn: it dims what would go, lists the files that
+  would come back and lets the user pick the conversation, the code or both
+  before anything changes. A held rewind leaves a bar with Undo. A column of
+  marks beside the flow, one per turn, opens into a list of the messages under
+  the pointer, and Esc twice opens the same list for the keyboard, scrolling
+  the conversation to each turn as the selection moves. Alt+↑ and Alt+↓ jump
+  between turns.
 
 **Permissions**
 - Auto-approve mode, for the run nobody is watching: a task that goes for an

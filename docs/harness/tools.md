@@ -209,6 +209,15 @@ Version is modification time and size together. Either alone changes too
 rarely: a rewrite inside the same millisecond keeps the time, and a swap of two
 characters keeps the size.
 
+A rewind moves files under the index (`checkpoints.md`). A code rewind leaves
+the versions alone, so a file it put back no longer matches what the session
+last read or wrote and has to be read again. A conversation rewind cuts turns
+when the next message keeps it, and the index does not record which turn a
+read came in, so it cannot tell which reads are still in the conversation. It
+forgets every file it knew of and
+every file changed from the rewound turn on, and refuses to rewrite any of them
+until it has been read again. That rule holds in a resumed session too.
+
 The index is per session and lives in memory. A session rebuilt from a stored
 transcript starts in a resumed state, which drops the read-before-write rule
 for files it has no record of: those reads are in the transcript the model can
@@ -235,6 +244,9 @@ to LF and the file is written back with the line endings it came in with, so a
 model that copies what `read` showed it still matches a CRLF file. Binary files
 and files that do not decode as UTF-8 are refused, and so is an edit whose two
 strings are the same.
+
+`edit` and `write` both tell the session's checkpoints just before they write,
+so the file can be put back (`checkpoints.md`).
 
 ## What a write hands back
 

@@ -269,6 +269,12 @@ already checks before every request. `Session.compact()` refuses while a turn
 holds the session, and `run` refuses while a compaction does, so the two can
 never rewrite the same history at once.
 
+A rewind past a compaction takes the summary away and puts back the messages
+it had folded, along with the compaction's line in the panel, once the next
+message keeps it (`checkpoints.md`). A compaction started while a rewind is
+held keeps the rewind before it summarises, so it never folds turns the user
+took back.
+
 Stop ends a compaction the user started and leaves the history as it was, with a
 note saying so. It leaves background subagents running, since they belong to an
 earlier turn, which Stop during a turn does not. Stop during an automatic

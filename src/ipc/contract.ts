@@ -5,6 +5,7 @@ import type { KnownProvider } from '../providers/profiles.js'
 import type { ActiveSelection, Effort, ModelFacts, ModelOffer, ProviderKind, ProviderRecord, SwitchName } from '../core/config.js'
 import type { JobState, JobView } from '../core/jobs.js'
 import type { AccessIntent } from '../core/scope.js'
+import type { RewindMode } from '../core/checkpoints.js'
 import type { SpawnMode } from '../core/spawn.js'
 import type { AppEvent, CompactionMark, ContextLedger, ImageType, McpServerStatus, SessionNote, ToolStats, TurnRate, TurnUsage } from '../core/types.js'
 import type { UsageReport } from '../core/usage-report.js'
@@ -14,6 +15,8 @@ export const IPC_CHANNELS = {
   sessionSend: 'session:send',
   sessionStop: 'session:stop',
   sessionCompact: 'session:compact',
+  sessionCheckpoints: 'session:checkpoints',
+  sessionRewind: 'session:rewind',
   sessionEvent: 'session:event',
   configGet: 'config:get',
   configSaveProvider: 'config:save-provider',
@@ -247,6 +250,42 @@ export interface SessionCompactResponse {
   compacted: boolean
 }
 
+/** A turn the session can be rewound to, as the turn index lists it. */
+export interface CheckpointView {
+  id: string
+  turn: number
+  at: number
+  /** The first line of the message the turn began with. */
+  prompt: string
+  /** The transcript index of that message, which is how the window finds the turn on screen. */
+  marker: number
+  /** How many files `edit` and `write` changed during the turn. */
+  edited: number
+  /** Every file a rewind of the code to here would put back, relative to the session's folder when inside it. */
+  files: string[]
+}
+
+export interface SessionCheckpointsResponse {
+  /** Oldest first. */
+  checkpoints: CheckpointView[]
+  /** The rewind the session is holding, which the next message or compaction keeps. */
+  held: { checkpointId: string; mode: RewindMode } | null
+}
+
+export interface SessionRewindRequest {
+  sessionId: string
+  /** The turn to go back to, or null to undo the held rewind. */
+  checkpointId: string | null
+  mode: RewindMode
+}
+
+export interface SessionRewindResponse {
+  /** Files this call could not put back, shown as `CheckpointView.files` shows them. */
+  failed: { path: string; reason: string }[]
+  /** The message the rewound turn began with, when the rewind takes the conversation back past it. */
+  prompt?: string
+}
+
 export interface SessionSendResponse {
   sessionId: string
   usage: TurnUsage
@@ -357,6 +396,14 @@ export interface NanoBridge {
    * running; `stop` ends a compaction that is.
    */
   compact(sessionId: string): Promise<SessionCompactResponse>
+  /** The turns this session can be rewound to, and the rewind it is holding. */
+  checkpoints(sessionId: string): Promise<SessionCheckpointsResponse>
+  /**
+   * Put the files back to where a turn began and hold the rewind, which the
+   * next message keeps. The conversation is cut then. Refused while anything
+   * in the session is running.
+   */
+  rewind(request: SessionRewindRequest): Promise<SessionRewindResponse>
   workspaces(): Promise<WorkspaceStatus>
   /** Opens a directory picker. Resolves to null when the user cancels it. */
   addWorkspace(): Promise<WorkspaceStatus | null>

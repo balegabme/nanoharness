@@ -6,7 +6,7 @@ its own, which is why the window can be rebuilt without touching the core.
 
 Files:
 - src/main/window.ts: BrowserWindow, the `app://` scheme, navigation lockdown
-- src/main/preload.ts: the context bridge, with ping, send, workspaces, sessions, rename, transcript paths, role, jobs, one subagent's stored conversation, agents, MCP status, secrets, config, permission answers, project trust answers, the usage report and clearing it, external links, onEvent
+- src/main/preload.ts: the context bridge, with ping, send, compact, checkpoints, rewind, workspaces, sessions, rename, transcript paths, role, jobs, one subagent's stored conversation, agents, MCP status, secrets, config, permission answers, project trust answers, the usage report and clearing it, external links, onEvent
 - src/renderer/index.ts: the shell, which session is open, the agent, model and effort chips, and the diff and spend panes
 - src/renderer/composer.ts: the composer in its two seats, the height the flow clears, and the pictures attached to the draft
 - src/renderer/images.ts: a pasted or dropped file read as a picture to send, shrunk first when the switch is on
@@ -18,6 +18,7 @@ Files:
 - src/renderer/settings.ts: the settings sheet, with the provider list, form, probe and model ticking
 - src/renderer/permission.ts: the modal a tool waits on when it reaches outside its folder
 - src/renderer/confirm.ts: the app's own yes/no and one-line-of-text sheets, in place of the browser's `confirm()` and `prompt()`
+- src/renderer/turns.ts: the turns on screen and going back to one: each turn's Rewind button and menu, the card that asks before a rewind, the bar under a held one, and the turn index
 - src/renderer/menu.ts: the right-click menu, one at a time, placed near the pointer, closed by the next thing the user does
 - src/renderer/popover.ts: the panel a topbar button opens, placed under it and closed by Escape or a click elsewhere
 - src/renderer/context-meter.ts: the context ring and its panel, with the parts, the compactions and the controls
@@ -590,6 +591,110 @@ itself took up. Text that was only whitespace leaves no block at all, where it
 used to leave a labelled empty one. What survives sits close to the call it
 introduces, since commentary belongs with its tool card and not spaced off as a
 block of its own.
+
+## Turns and rewind
+
+`turns.ts` puts the session's checkpoints on screen and runs every rewind. The
+mouse and the keyboard reach the same actions (`checkpoints.md` has what a
+rewind does to the files and the history).
+
+### Asking first
+
+Each message the user sent is marked with its turn number. Hovering it, or
+tabbing onto it, shows a Rewind button, and a right-click on it opens a menu
+with the same rewind and a copy of the message. Rewind changes nothing yet. It
+opens a card above the message that says what going back to before that turn
+would do, and dims every block that would leave the screen.
+
+The card offers three ways back: the conversation and the code, the
+conversation only, and the code only. The code only is greyed out when no file
+changed with `edit` or `write` since the turn began. It starts on the way the
+held rewind goes, or on both when nothing is held or when that way is the code
+only and this turn has no files. Under the choice it says how
+many turns go and lists the files that come back, six of them and a count of
+the rest. It says that the message goes back into the composer, and that
+commands the agent ran and changes made outside the app are not put back.
+
+The Rewind button has the focus when the card opens. Its keys:
+
+| Key | Does |
+|---|---|
+| ← →, or 1 2 3 | pick the way back |
+| Enter | rewind |
+| Esc | close the card and change nothing |
+
+Esc on the card is caught before the composer sees it, so closing the card
+does not count toward the double press that opens the turn index. An open menu
+takes the Esc first.
+
+After a rewind the focus goes to the composer when the message went back into
+it. When the rewind hid what had the focus, it goes to Undo, or after Undo to
+the composer.
+
+### Held
+
+A confirmed rewind puts the files back at once and holds. The turns it took
+back leave the screen, and a bar at the end of what is left says what went
+back and has an Undo button. A code rewind leaves the turns in place, since
+the conversation stays. When the conversation went back, the turn's message
+goes into the composer, which takes the focus, unless the user has typed
+something of their own there; Undo takes it out again. While a rewind is held,
+Rewind on an earlier turn opens the card again and moves the held rewind there
+once confirmed.
+
+Sending the next message keeps the rewind, as does a compaction started from
+the context panel, and the window reopens the session once that is done. The
+turns a sent message took back stay hidden until the session's list is read
+again after the turn. They come back if the message was refused before its turn
+began, since the rewind is then still held.
+
+A rewind holds the session the way a turn does. The turn buttons and Undo are
+dimmed until it is done, and any other rewind asked for in the meantime is
+dropped. The window does not reload the session after a rewind. It redraws the
+turns from what it already has.
+
+### The turn index
+
+A column of marks sits beside the flow's scrollbar, one per turn in sight,
+evenly spaced so each is as easy to hit as the next. A turn that changed files
+has a darker mark, and the turn being read is lit. The turn being read is the
+last one whose message starts above a line near the top of the view, or the
+last turn once the flow is scrolled to the end, and it is worked out on every
+scroll event by a binary search over the messages, so the lit mark never lags
+the flow. When there are more marks than fit, the column scrolls to keep the lit
+one in the middle. A session with one turn shows no marks.
+
+Resting the pointer on the column for a moment opens the list beside it: one
+row per turn with its number, message, age and how many files it changed. The
+row under the pointer's mark is highlighted, a click on a mark or a row scrolls
+to that turn and outlines it, and the ↺ on a row opens the rewind card. The
+list closes a moment after the pointer leaves it.
+
+Esc twice within half a second, over an empty composer between turns, opens
+the same list for the keyboard, with a filter and a line of keys. The composer
+has to be empty so a stray double press cannot cost a draft, and while a turn
+runs Esc stops it instead. A held Esc repeats and does not count as a second
+press, and nothing opens while a subagent's conversation is on screen. The
+list opens on the turn being read, and moving the selection scrolls the flow to
+that turn at once, so it doubles as a way to scroll back. Its keys:
+
+| Key | Does |
+|---|---|
+| ↑ ↓, j k | move one turn |
+| PageUp, PageDown | move eight turns |
+| Home, End | oldest, newest |
+| Enter | close and stay at the turn |
+| Esc | in the filter with text in it, clear it; otherwise close and scroll back to where the flow was |
+| / | filter by the message text or the turn number |
+| r | open the rewind card for the turn |
+
+Closing it gives the focus back to what had it. Moving the focus out of the
+list closes it where it is.
+
+Alt+↑ and Alt+↓ work anywhere in the window while no sheet is open and no text
+field with text in it has the focus, where Alt and an arrow move the caret.
+They jump to the start of the turn before or after the one being read; partway
+down a turn, Alt+↑ goes to its start first.
 
 ## Right-click
 

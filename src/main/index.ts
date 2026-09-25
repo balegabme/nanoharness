@@ -30,6 +30,7 @@ import { loadServers, mcpPaths } from '../mcp/config.js'
 import { hasUnknownSecret, secretsBlock } from '../core/secrets.js'
 import { flushSecrets, forgetSecret, secretList, secretVault } from './secret-store.js'
 import { Session } from '../core/session.js'
+import { CheckpointStore, REWIND_MODES, shownPath } from '../core/checkpoints.js'
 import { appendUsage, clearUsage, readUsage } from '../core/usage-log.js'
 import { buildReport } from '../core/usage-report.js'
 import type { UsageReport } from '../core/usage-report.js'
@@ -64,6 +65,7 @@ import {
   acceptImages,
   addWorkspace,
   appendApproval,
+  checkpointDir,
   createSession,
   deleteSession,
   loadNotes,
@@ -106,8 +108,11 @@ import type {
   PermissionModeView,
   ProviderSaveRequest,
   SessionOpenResponse,
+  SessionRewindRequest,
+  SessionRewindResponse,
   SessionSendRequest,
   SecretView,
+  SessionCheckpointsResponse,
   SessionCompactResponse,
   SessionView,
   SubagentOpenResponse,
@@ -124,6 +129,7 @@ const pkg = require('../../package.json') as { version: string }
  */
 const FORWARDED: Record<AppEvent['type'], true> = {
   'session.started': true,
+  'session.checkpoint': true,
   text_delta: true,
   thinking_delta: true,
   tool_call: true,
@@ -183,6 +189,21 @@ const hubs = new Map<string, McpHub>()
 
 /** Sessions being built right now, so two messages cannot build one twice. */
 const building = new Map<string, Promise<Session>>()
+
+// One checkpoint store per session for the whole launch. Retiring a session
+// leaves its background jobs running, and they keep writing through the store
+// they were given, so a rebuilt session has to share it and not open a second
+// one over the same index.
+const checkpointStores = new Map<string, CheckpointStore>()
+
+function checkpointsFor(sessionId: string): CheckpointStore {
+  let store = checkpointStores.get(sessionId)
+  if (store === undefined) {
+    store = new CheckpointStore(checkpointDir(sessionId))
+    checkpointStores.set(sessionId, store)
+  }
+  return store
+}
 
 /**
  * Which subagent ids belong to which window, so a child's own stream reaches
@@ -704,6 +725,10 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
     }
   }
 
+  // The session and every subagent it starts write through one store, so
+  // what a subagent writes goes back with whichever of the session's turns
+  // was the latest when it wrote.
+  const checkpoints = checkpointsFor(sessionId)
   const session = new Session(
     {
       sessionId,
@@ -719,6 +744,11 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
       history: await loadTranscript(sessionId),
       secrets,
       hooks,
+      checkpoints,
+      saveHistory: async () => {
+        await saveTranscript(sessionId, session.transcript, session.notes)
+        await setSessionState(sessionId, stateOf(session))
+      },
       autoCompact: auto,
       ...(limit === undefined ? {} : { contextLimit: limit }),
       ...(stored === null ? {} : { compactions: stored.compactions }),
@@ -737,6 +767,7 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
         jobs: jobsFor(sender),
         secrets,
         hooks,
+        guard: checkpoints,
         setup,
         // A subagent's stream goes to the same window, under the job's id. That
         // is the whole of what makes one watchable: the renderer already knows
@@ -1043,6 +1074,7 @@ app.whenReady().then(() => {
   ipcMain.handle(IPC_CHANNELS.sessionDelete, async (_event: IpcMainInvokeEvent, id: string): Promise<WorkspaceStatus> => {
     void retire(id)
     permissions.delete(id)
+    checkpointStores.delete(id)
     await deleteSession(id)
     return workspaceStatus()
   })
@@ -1159,6 +1191,36 @@ app.whenReady().then(() => {
     }
     if (updated === null) throw new Error('that session is gone; start a new one from the sidebar')
     return { compacted: outcome.compacted }
+  })
+
+  // The list is read from disk when the session is not built, since opening a
+  // session should not start a provider and a set of MCP servers.
+  ipcMain.handle(IPC_CHANNELS.sessionCheckpoints, async (_event: IpcMainInvokeEvent, sessionId: string): Promise<SessionCheckpointsResponse> => {
+    const root = await sessionRoot(sessionId)
+    if (root === null) throw new Error('that session is gone; start a new one from the sidebar')
+    const store = checkpointsFor(sessionId)
+    const { entries, held } = await store.list()
+    return {
+      checkpoints: entries.map(entry => ({ ...entry, files: entry.files.map(abs => shownPath(root, abs)) })),
+      held: held === null ? null : { checkpointId: held.id, mode: held.mode },
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.sessionRewind, async (event: IpcMainInvokeEvent, req: SessionRewindRequest): Promise<SessionRewindResponse> => {
+    if (!REWIND_MODES.includes(req.mode)) throw new Error(`unknown rewind mode: ${String(req.mode)}`)
+    // A background job still running could write a file straight after it was
+    // put back, or finish into a conversation that no longer asked for it.
+    const running = jobsFor(event.sender).list().some(job => job.sessionId === req.sessionId && job.state === 'running')
+    if (running) throw new Error('a background job in this session is still running; stop it or wait for it before rewinding')
+    const session = await sessionFor(event.sender, req.sessionId)
+    // The transcript is left whole until the next message or a compaction
+    // keeps the rewind.
+    const outcome = await session.rewind(req.checkpointId, req.mode)
+    const root = session.options.cwd
+    return {
+      failed: outcome.failed.map(miss => ({ path: shownPath(root, miss.path), reason: miss.reason })),
+      ...(outcome.prompt === undefined ? {} : { prompt: outcome.prompt }),
+    }
   })
 
   ipcMain.handle(IPC_CHANNELS.sessionSend, async (event: IpcMainInvokeEvent, req: SessionSendRequest) => {

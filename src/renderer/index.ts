@@ -24,6 +24,7 @@ import { enqueue, initPermission } from './permission.js'
 import { closePopover, Popover } from './popover.js'
 import { applyConfig, initSettings, latestConfig, openSettings, refreshConfig } from './settings.js'
 import { clampEffort, EFFORT_LABEL, EFFORTS, factGaps, resolveFacts, WARN } from './facts.js'
+import { closePreview, holding, initTurns, keepHeld, loadTurns, noteCheckpoint, openTurnIndex, rewinding } from './turns.js'
 import {
   currentStatus,
   initSidebar,
@@ -92,6 +93,9 @@ const diffCopy = must<HTMLButtonElement>('diff-copy')
 
 let activeSessionId: string | null = null
 let busy = false
+/** When Esc was last pressed over an empty composer, for telling a double press from two single ones. */
+let lastEscape = -Infinity
+const DOUBLE_ESCAPE_MS = 500
 let agents: AgentSummary[] = []
 /** The subagent on screen, or null when the conversation itself is. */
 let viewing: string | null = null
@@ -644,7 +648,7 @@ function renderShell(): void {
 
   composer.classList.remove('trigger')
   input.readOnly = false
-  input.placeholder = 'Message the agent. Enter sends, Shift+Enter makes a newline.'
+  input.placeholder = 'Message the agent. Enter sends, Shift+Enter makes a newline, Esc twice opens the turns.'
   sendButton.disabled = false
 
   const session = activeSessionId === null ? undefined : sessionById(activeSessionId)
@@ -735,6 +739,7 @@ async function openSession(id: string): Promise<void> {
     showing = null
     closeSubagent()
     chat.renderTranscript(opened.messages, opened.notes)
+    void loadTurns(id)
     renderMcp(null)
     void refreshMcp(id)
     // What this session has already spent. Without it a re-opened session reads
@@ -750,6 +755,7 @@ async function openSession(id: string): Promise<void> {
     // The session went away underneath us (deleted, or its folder removed).
     // Fall back to the hero, since a composer here could not send.
     activeSessionId = null
+    void loadTurns(null)
     renderMcp(null)
     await refreshSidebar()
     renderShell()
@@ -784,17 +790,20 @@ async function switchActive(): Promise<void> {
  * Summarise the older part of the conversation now. It runs between turns and
  * holds the session the way a turn does: the composer waits, and Stop ends it.
  * The transcript is drawn again afterwards, so what went into the summary is
- * dimmed the way it is when the session is reopened.
+ * dimmed the way it is when the session is reopened, and a rewind the
+ * compaction kept first is cut from the screen as it was from the history.
  */
 async function compactNow(): Promise<void> {
   const sessionId = activeSessionId
-  if (sessionId === null || busy) return
+  if (sessionId === null || busy || rewinding()) return
+  const kept = holding()
+  closePreview()
   setBusy(true)
   meter.setCompacting(true)
   try {
     const result = await nh.compact(sessionId)
     setStatus(await nh.workspaces())
-    if (result.compacted && activeSessionId === sessionId) await openSession(sessionId)
+    if ((result.compacted || kept) && activeSessionId === sessionId) await openSession(sessionId)
   } catch (err) {
     chat.errorBlock(message(err))
   } finally {
@@ -829,7 +838,7 @@ async function send(): Promise<void> {
   // A picture pasted just before Send may still be being read.
   const pictures = await attachments()
   const text = input.value.trim()
-  if ((text === '' && pictures.length === 0) || busy) return
+  if ((text === '' && pictures.length === 0) || busy || rewinding()) return
   const status = latestConfig()
   if (status?.configured !== true) {
     openSettings('providers')
@@ -858,11 +867,15 @@ async function send(): Promise<void> {
   const captured = await nh.captureSecrets(text).catch(() => ({ text, captured: [] }))
   const safe = captured.text
 
-  chat.userBlock(safe, pictures.map(picture => picture.view))
+  const kept = keepHeld()
+  const asked = chat.userBlock(safe, pictures.map(picture => picture.view))
   if (captured.captured.length > 0) {
     const names = captured.captured.map(name => `{{secret:${name}}}`).join(', ')
     chat.noteBlock(`Kept out of the transcript: ${names}. Tools get the real value; the model never sees it.`)
   }
+  // The note keeping the rewind comes before the turn starts, and belongs
+  // above the message that kept it.
+  if (kept) chat.aheadOf(asked)
   input.value = ''
   clearAttachments()
   autoGrow()
@@ -878,6 +891,7 @@ async function send(): Promise<void> {
     // something real to show.
     void refreshMcp(sessionId)
   } catch (err) {
+    chat.aheadOf(null)
     chat.errorBlock(message(err))
     // The settings may have gone stale mid-session (a key that no longer
     // decrypts, a config file edited underneath). Re-check, and reopen settings
@@ -886,6 +900,9 @@ async function send(): Promise<void> {
   } finally {
     setBusy(false)
     renderShell()
+    // The turn's files are counted once it has ended, and a message that
+    // failed before its turn began has left a held rewind held.
+    if (activeSessionId === sessionId) void loadTurns(sessionId)
   }
 }
 
@@ -898,6 +915,19 @@ input.addEventListener('keydown', event => {
   if (event.key === 'Escape' && busy) {
     event.preventDefault()
     stop()
+  }
+  // Twice over an empty composer between turns, it opens the turn index. The
+  // empty composer keeps a stray double press from costing a draft. A held key
+  // repeats and is not a second press, and a subagent's conversation on screen
+  // is not the one a rewind would change.
+  if (event.key === 'Escape' && !event.repeat && !busy && input.value === '' && activeSessionId !== null && viewing === null) {
+    event.preventDefault()
+    if (event.timeStamp - lastEscape < DOUBLE_ESCAPE_MS) {
+      lastEscape = -Infinity
+      openTurnIndex()
+    } else {
+      lastEscape = event.timeStamp
+    }
   }
 })
 composer.addEventListener('submit', event => {
@@ -954,6 +984,22 @@ settingsButton.addEventListener('click', () => openSettings('providers'))
 heroSettings.addEventListener('click', () => openSettings('providers'))
 
 initComposer(() => latestConfig()?.downscaleImages ?? true)
+initTurns({
+  bridge: nh,
+  stream,
+  tail: must<HTMLElement>('stream-tail'),
+  index: must<HTMLElement>('turn-index'),
+  ready: () => (activeSessionId !== null && !busy && viewing === null && !stream.hidden ? activeSessionId : null),
+  draft: {
+    get: () => input.value,
+    set: text => {
+      input.value = text
+      autoGrow()
+    },
+    focus: () => input.focus(),
+  },
+  report: text => chat.errorBlock(text),
+})
 initNotify()
 initPermission({ bridge: nh, report: text => chat.errorBlock(text) })
 initSidebar({
@@ -964,6 +1010,7 @@ initSidebar({
     if (activeSessionId !== null && sessionById(activeSessionId) === undefined) {
       activeSessionId = null
       chat.clear()
+      void loadTurns(null)
       renderMcp(null)
     }
     renderShell()
@@ -997,6 +1044,7 @@ nh.onEvent(event => {
     return
   }
   if (event.type === 'context') liveContexts.set(event.sessionId, event.ledger)
+  if (event.type === 'session.checkpoint') noteCheckpoint(event)
   if (event.type === 'session.finished' || event.type === 'session.stopped' || event.type === 'session.error') {
     const outcome = event.type === 'session.finished' ? 'finished' : event.type === 'session.stopped' ? 'stopped' : 'error'
     announce(outcome, sessionById(event.sessionId)?.title ?? 'Session')

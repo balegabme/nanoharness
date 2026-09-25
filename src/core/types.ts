@@ -191,6 +191,9 @@ export type ThinkingBlock =
 
 export type AppEvent =
   | { type: 'session.started'; sessionId: string; cwd: string; at: number }
+  // A turn's checkpoint was taken. `marker` is the transcript index its user
+  // message goes in at, which is how the window ties the turn on screen to it.
+  | { type: 'session.checkpoint'; sessionId: string; id: string; turn: number; marker: number; prompt: string; at: number }
   | { type: 'text_delta'; sessionId: string; text: string; at: number }
   | { type: 'thinking_delta'; sessionId: string; text: string; at: number }
   | { type: 'tool_call'; sessionId: string; call: ToolCall; at: number }

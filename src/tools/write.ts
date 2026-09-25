@@ -45,7 +45,7 @@ export const WRITE_TOOL = defineTool<WriteArgs>({
     },
   },
   parse: parseArgs,
-  async run({ path: rel, content }, { access, reads }) {
+  async run({ path: rel, content }, { access, reads, guard }) {
     const allowed = await access.check(rel, 'write')
     if (!allowed.ok) return { ok: false, summary: allowed.reason, content: allowed.reason, isError: true, prevented: true }
     const abs = allowed.path
@@ -57,6 +57,7 @@ export const WRITE_TOOL = defineTool<WriteArgs>({
     // missing file diffs against nothing; one that exists and cannot be read
     // is reported as that, never as a new file.
     const before = await previous(abs)
+    await guard?.before(abs)
     await mkdir(dirname(abs), { recursive: true })
     await writeFile(abs, content, 'utf8')
     reads.wrote(abs, await versionOf(abs))

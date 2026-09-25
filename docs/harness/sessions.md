@@ -97,6 +97,7 @@ then is kept.
 | transcript | one session's messages, and the notes beside them | `sessions/<id>.json` |
 | subagent transcript | one subagent's whole conversation | `sessions/<id>/subagents/<job id>.json` |
 | picture | one image sent with a message | `sessions/<id>/images/<image id>.<png, jpg, gif or webp>` |
+| checkpoints | the turns a session can be rewound to, and the file copies that takes | `sessions/<id>/checkpoints/` (`checkpoints.md`) |
 
 The index and the transcripts are deliberately separate files. The sidebar draws
 itself from the index alone, so opening the app reads one small file no matter

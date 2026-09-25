@@ -74,7 +74,7 @@ export const EDIT_TOOL = defineTool<EditArgs>({
     },
   },
   parse: parseArgs,
-  async run({ path: rel, old_string, new_string, replace_all }, { access, reads }): Promise<ToolResult> {
+  async run({ path: rel, old_string, new_string, replace_all }, { access, reads, guard }): Promise<ToolResult> {
     const allowed = await access.check(rel, 'write')
     if (!allowed.ok) return { ...failed(allowed.reason), prevented: true }
     const abs = allowed.path
@@ -113,6 +113,7 @@ export const EDIT_TOOL = defineTool<EditArgs>({
     }
 
     const edited = content.split(oldNorm).join(normalizeLineEndings(new_string))
+    await guard?.before(abs)
     try {
       await writeFile(abs, restoreLineEndings(edited, detectLineEndings(raw)), 'utf8')
     } catch (err) {

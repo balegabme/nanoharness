@@ -64,6 +64,8 @@ function spanText(span: Span): string {
  */
 export class ReadIndex {
   private readonly seen = new Map<string, Seen>()
+  /** Files a rewind took out of the conversation's view, refused until read again. */
+  private readonly unread = new Set<string>()
 
   constructor(private readonly resumed = false) {}
 
@@ -77,6 +79,7 @@ export class ReadIndex {
 
   /** Note that this span was served. A version that moved on replaces the record. */
   served(abs: string, span: Span, version: FileVersion): void {
+    this.unread.delete(abs)
     const prior = this.seen.get(abs)
     if (prior === undefined || !same(prior.version, version)) {
       this.seen.set(abs, { version, spans: [span] })
@@ -90,6 +93,7 @@ export class ReadIndex {
    * with no spans, since none of the new content is in the conversation.
    */
   wrote(abs: string, version: FileVersion | null): void {
+    this.unread.delete(abs)
     if (version === null) this.seen.delete(abs)
     else this.seen.set(abs, { version, spans: [] })
   }
@@ -111,6 +115,19 @@ export class ReadIndex {
   }
 
   /**
+   * The conversation was cut back to an earlier turn. The index cannot tell
+   * which of its reads and writes happened in the turns that were cut, so it
+   * forgets them all, and every file it knew of, with every file in `changed`,
+   * has to be read again before it is rewritten. The resumed rule does not
+   * cover these: the model may have seen them only in turns that are gone.
+   */
+  rewound(changed: Iterable<string>): void {
+    for (const abs of this.seen.keys()) this.unread.add(abs)
+    for (const abs of changed) this.unread.add(abs)
+    this.seen.clear()
+  }
+
+  /**
    * May a tool rewrite this file? Creating one is always allowed. Replacing
    * content nobody looked at, or content that has changed since, is refused:
    * both would write against a view of the file that is out of date.
@@ -119,6 +136,9 @@ export class ReadIndex {
     if (version === null) return { ok: true }
     const prior = this.seen.get(abs)
     if (prior === undefined) {
+      if (this.unread.has(abs)) {
+        return { ok: false, reason: `${label} has to be read again since the conversation was rewound. Read it, then make the change.` }
+      }
       if (this.resumed) return { ok: true }
       return { ok: false, reason: `${label} has not been read in this conversation. Read it, then make the change.` }
     }

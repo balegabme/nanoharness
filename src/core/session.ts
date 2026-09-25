@@ -12,6 +12,8 @@ import { workspaceGate } from './scope.js'
 import type { AccessGate } from './scope.js'
 import { emptyToolStats, emptyUsage } from './types.js'
 import { ReadIndex } from './read-index.js'
+import { applyMarks, marksOf, promptLine, shownPath } from './checkpoints.js'
+import type { Checkpoint, CheckpointStore, FileGuard, Kept, Restored, RewindMode } from './checkpoints.js'
 import { SecretVault } from './secrets.js'
 import type {
   ChatMessage,
@@ -51,6 +53,8 @@ export interface ToolContext {
   spawn?: SpawnHost
   /** Present when this session *is* a background job, so it can report progress. */
   job?: { id: string; jobs: JobRegistry }
+  /** Told before `edit` or `write` changes a file, so a rewind can put the file back. */
+  guard?: FileGuard
 }
 
 export interface Tool {
@@ -226,6 +230,24 @@ function turnSummary(tools: ToolStats, files: readonly string[], ms: number, spe
   return `${calls}${fileList(files)} · ${elapsedText(ms)}${cost}`
 }
 
+const REWOUND: Record<RewindMode, string> = {
+  both: 'Rewound the conversation and the files',
+  conversation: 'Rewound the conversation',
+  code: 'Put the files back',
+}
+
+/** The note a rewind leaves in the conversation, naming what went back and what could not. */
+function rewindText(kept: Kept, cwd: string): string {
+  const left = kept.mode === 'conversation' ? ' and left the files as they are' : ''
+  const parts = [`${REWOUND[kept.mode]} to before turn ${kept.point.turn}${left}.`]
+  if (kept.mode !== 'conversation') {
+    const restored = kept.restored.map(abs => shownPath(cwd, abs))
+    parts.push(restored.length === 0 ? 'No file had changed since.' : `Restored ${restored.join(', ')}.`)
+  }
+  for (const miss of kept.failed) parts.push(`Could not restore ${shownPath(cwd, miss.path)}: ${miss.reason}.`)
+  return parts.join(' ')
+}
+
 export interface SessionOptions {
   sessionId: string
   cwd: string
@@ -268,6 +290,21 @@ export interface SessionOptions {
   secrets?: SecretVault
   /** The user's hooks. A subagent gets the tool hooks alone; see `Hooks.forSubagent`. */
   hooks?: Hooks
+  /** A checkpoint at the start of each turn, which `rewind` goes back to. A subagent has none. */
+  checkpoints?: CheckpointStore
+  /** For a subagent: its parent's checkpoints, so what it writes goes back with the parent's turn that was latest then. */
+  guard?: FileGuard
+  /**
+   * Stores the history. Called once a kept rewind has cut it, so the cut is
+   * on disk before the turn that follows can fail.
+   */
+  saveHistory?: () => Promise<void>
+}
+
+/** What a rewind did to the files. The paths are absolute. */
+export interface RewindOutcome extends Omit<Restored, 'unsaved'> {
+  /** The message the rewound turn began with, when the rewind takes the conversation back past it. */
+  prompt?: string
 }
 
 /**
@@ -792,6 +829,10 @@ export class Session {
     if (images.length > 0 && this.facts?.vision === false) {
       throw new Error(`${this.options.model} does not take images. Send the message without them, or switch to a model that reads images.`)
     }
+    this.controller = new AbortController()
+    // A held rewind is kept before anything else, because it sets the turn
+    // number and the history this turn builds on.
+    await this.keepRewind()
     this.turn += 1
     this.turnUsage = emptyUsage()
     this.turnSubagentUsage = emptyUsage()
@@ -806,12 +847,12 @@ export class Session {
     this.turnStartedAt = Date.now()
     this.stopped = false
     this.compactionStuck = false
-    this.controller = new AbortController()
     const sessionId = this.options.sessionId
     this.bus.emit({ type: 'session.started', sessionId, cwd: this.options.cwd, at: Date.now() })
     // Anything a background job finished with between turns goes in first: it
     // happened before this message, and the model should read it that way.
     this.flushPending()
+    await this.checkpoint(userText)
     this.turnUser = this.messages.length
     const asked: ChatMessage = { role: 'user', content: userText, ...(images.length === 0 ? {} : { images: [...images] }) }
     this.messages.push(asked)
@@ -1100,6 +1141,7 @@ export class Session {
     this.controller = new AbortController()
     this.compactingByHand = true
     try {
+      await this.keepRewind()
       const compacted = await this.summarise('manual')
       const usage = subtract(this.harnessUsage, before)
       const priced = this.facts !== undefined && costOf(usage, this.facts) !== null
@@ -1109,6 +1151,128 @@ export class Session {
       this.compactingByHand = false
       this.flushPending()
     }
+  }
+
+  /**
+   * Where `edit` and `write` report a file they are about to change. The
+   * snapshot is taken in memory before the index is written, so a rewind in
+   * this run can still put the file back when the write fails. The change goes
+   * ahead and the failure is reported, where refusing it would stop every edit
+   * for as long as the data directory cannot be written.
+   */
+  private get guard(): FileGuard | undefined {
+    const guard = this.options.checkpoints ?? this.options.guard
+    if (guard === undefined) return undefined
+    return {
+      before: abs =>
+        guard.before(abs).catch((err: unknown) => {
+          const why = err instanceof Error ? err.message : String(err)
+          this.fault(`the checkpoint copy of ${shownPath(this.options.cwd, abs)} could not be saved: ${why}`)
+        }),
+    }
+  }
+
+  /**
+   * Mark where this turn begins, before its message goes in. The checkpoint
+   * is listed in memory before the index is written, so when the write fails
+   * it still works for this run, goes to disk with the next write that
+   * succeeds, and the turn goes ahead with the failure reported.
+   */
+  private async checkpoint(userText: string): Promise<void> {
+    const store = this.options.checkpoints
+    if (store === undefined) return
+    const transcript = this.transcript
+    const start = {
+      turn: this.turn,
+      at: Date.now(),
+      prompt: promptLine(userText),
+      marker: transcript.length,
+      marks: marksOf(transcript),
+      compactions: this.compactions.length,
+    }
+    const id = await store.begin(start).catch((err: unknown) => {
+      this.fault(`this turn's checkpoint could not be stored: ${err instanceof Error ? err.message : String(err)}`)
+      return null
+    })
+    if (id === null) return
+    const { turn, at, prompt, marker } = start
+    this.bus.emit({ type: 'session.checkpoint', sessionId: this.options.sessionId, id, turn, marker, prompt, at })
+  }
+
+  /**
+   * Go back to where a turn began: the conversation, the files `edit` and
+   * `write` changed since, or both. `id` null undoes a rewind instead.
+   *
+   * The files go back at once and the history is left whole, so the rewind
+   * can still be moved to another turn or undone. The next turn or compaction
+   * keeps it (`keepRewind`). Going back past the turn's message hands the
+   * message back, so the user can send it again or change it first.
+   */
+  async rewind(id: string | null, mode: RewindMode): Promise<RewindOutcome> {
+    const store = this.options.checkpoints
+    if (store === undefined) throw new Error('this session keeps no checkpoints')
+    if (this.running) throw new Error('this session is busy; wait for the turn or the compaction to finish')
+    // Held like a turn, so no turn starts while the files are half put back.
+    this.controller = new AbortController()
+    try {
+      const { point, ...files } = id === null ? { ...(await store.unstage()), point: null } : await store.stage(id, mode)
+      if (files.unsaved !== undefined) this.fault(`the checkpoint list could not be saved after the rewind: ${files.unsaved}`)
+      const asked = point === null || mode === 'code' ? undefined : this.messages[point.marker + 1]
+      return { restored: files.restored, failed: files.failed, ...(asked?.role === 'user' ? { prompt: asked.content } : {}) }
+    } finally {
+      this.controller = null
+    }
+  }
+
+  /**
+   * Keep the rewind the user left held, now that the session builds on it.
+   * Going back in the conversation cuts the history, and every file changed
+   * from that turn on may now differ from what the kept conversation last saw
+   * of it, so none of them may be rewritten until it has been read again. Going
+   * back in the code alone leaves the history holding changes that are no
+   * longer on disk, so the model is told which files went back. Tokens already
+   * spent stay spent.
+   */
+  private async keepRewind(): Promise<void> {
+    const store = this.options.checkpoints
+    if (store === undefined) return
+    const kept = await store.commit().catch((err: unknown) => {
+      this.fault(`the rewind could not be kept: ${err instanceof Error ? err.message : String(err)}`)
+      return null
+    })
+    if (kept === null) return
+    if (kept.mode !== 'code') {
+      this.cutTo(kept.point)
+      this.reads.rewound(kept.changed)
+    }
+    this.note(rewindText(kept, this.options.cwd))
+    if (kept.unsaved !== undefined) this.fault(`the checkpoint list could not be saved after the rewind: ${kept.unsaved}`)
+    if (kept.mode === 'code' && kept.restored.length > 0) {
+      const paths = kept.restored.map(abs => shownPath(this.options.cwd, abs)).join(', ')
+      this.deliver(
+        `The user put these files back to how they were before turn ${kept.point.turn}: ${paths}. What was changed in them since is gone from disk. Read a file again before you change it.`,
+      )
+    }
+    this.emitContext()
+    await this.options.saveHistory?.().catch((err: unknown) => {
+      this.fault(`the rewound conversation could not be stored: ${err instanceof Error ? err.message : String(err)}`)
+    })
+  }
+
+  /**
+   * Cut the conversation back to the checkpoint's marker, and everything that
+   * counts it with it: the notes, the compaction marks and records, the turn
+   * number.
+   */
+  private cutTo(point: Checkpoint): void {
+    this.messages.length = Math.min(this.messages.length, point.marker + 1)
+    applyMarks(this.transcript, point.marks)
+    const notes = this.journal.filter(note => note.turn < point.turn)
+    this.journal.splice(0, this.journal.length, ...notes)
+    this.compactions.splice(point.compactions)
+    this.turn = point.turn - 1
+    this.anchor = null
+    this.compactionStuck = false
   }
 
   /**
@@ -1547,6 +1711,7 @@ export class Session {
         reads: this.reads,
         ...(this.options.spawn === undefined ? {} : { spawn: this.options.spawn }),
         ...(this.options.job === undefined ? {} : { job: this.options.job }),
+        ...(this.guard === undefined ? {} : { guard: this.guard }),
       })
     } catch (err) {
       // A tool that threw is still a tool failure, and the loop needs a result

@@ -24,6 +24,8 @@ const SVG_NS = 'http://www.w3.org/2000/svg'
 export const GLYPH = {
   chevronDown: 'm6 9 6 6 6-6',
   close: 'M6.5 6.5l11 11M17.5 6.5l-11 11',
+  // An arrow turning back on itself, anticlockwise.
+  rewind: 'M3 12a9 9 0 1 0 2.64-6.36L3 8.3M3 3v5.3h5.3',
   // Twelve teeth around a hub, which is the settings mark everywhere else.
   gear:
     'M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 ' +
