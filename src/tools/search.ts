@@ -1,6 +1,7 @@
 // doc: docs/harness/tools.md
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { join, relative, resolve, sep } from 'node:path'
+import { plural } from '../shared/format.js'
 import { defineTool } from '../core/session.js'
 import { ignoredBy, parseIgnore } from './ignore.js'
 import { decodeText } from './text.js'
@@ -196,8 +197,8 @@ function excludedNote(walked: Walked, wide: boolean): string {
   const excluded =
     wide || walked.ignored === 0
       ? ''
-      : `\n[${walked.ignored} path${walked.ignored === 1 ? '' : 's'} excluded by .gitignore; pass ignored: true to search those too]`
-  const unread = walked.dropped === 0 ? '' : `\n[${walked.dropped} .gitignore line${walked.dropped === 1 ? '' : 's'} could not be read and ${walked.dropped === 1 ? 'was' : 'were'} not applied]`
+      : `\n[${plural(walked.ignored, 'path')} excluded by .gitignore; pass ignored: true to search those too]`
+  const unread = walked.dropped === 0 ? '' : `\n[${plural(walked.dropped, '.gitignore line')} could not be read and ${walked.dropped === 1 ? 'was' : 'were'} not applied]`
   return `${excluded}${unread}`
 }
 
@@ -334,7 +335,7 @@ export const GREP_TOOL = defineTool<GrepArgs>({
       }
     }
 
-    const note = skipped === 0 ? '' : `\n[${skipped} file${skipped === 1 ? '' : 's'} skipped: binary, or over ${MAX_FILE_BYTES / 1024 / 1024} MB]`
+    const note = skipped === 0 ? '' : `\n[${plural(skipped, 'file')} skipped: binary, or over ${MAX_FILE_BYTES / 1024 / 1024} MB]`
     const walkCut = walkNote(walked.capped)
     // A `path` naming one file is not a directory the answer is counted from.
     const where = info.isDirectory() ? baseNote(access.root, base) : ''
@@ -344,7 +345,7 @@ export const GREP_TOOL = defineTool<GrepArgs>({
     const cut = capped ? `\n[capped at ${MAX_MATCHES} matches; narrow the pattern or set include]` : ''
     return {
       ok: true,
-      summary: `${hits.length} match${hits.length === 1 ? '' : 'es'} in ${files} file${files === 1 ? '' : 's'}`,
+      summary: `${plural(hits.length, 'match', 'matches')} in ${plural(files, 'file')}`,
       content: `${hits.join('\n')}${cut}${walkCut}${note}${where}${excludedNote(walked, ignored)}`,
     }
   },

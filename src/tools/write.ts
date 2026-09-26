@@ -1,9 +1,9 @@
 // doc: docs/harness/tools.md
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
+import { diffBlock, statText, unifiedDiff } from '../shared/diff.js'
 import { versionOf } from '../core/read-index.js'
 import { defineTool } from '../core/session.js'
-import { diffBlock, statText, unifiedDiff } from '../core/diff.js'
 import { decodeText } from './text.js'
 import type { ArgsParse } from '../core/session.js'
 

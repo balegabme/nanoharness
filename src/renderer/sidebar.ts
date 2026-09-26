@@ -1,4 +1,5 @@
 // doc: docs/harness/ui.md
+import { plural } from '../shared/format.js'
 import { ask, askText } from './confirm.js'
 import { el, GLYPH, icon, message, must, relativeTime } from './dom.js'
 import { openMenu } from './menu.js'
@@ -223,7 +224,7 @@ async function removeWorkspace(workspace: WorkspaceView): Promise<void> {
   if (handlers === null) return
   // Removing a folder takes its sessions with it, so say so before it happens.
   const count = status.sessions.filter(s => s.workspaceId === workspace.id).length
-  const warning = count === 0 ? '' : ` and ${count} session${count === 1 ? '' : 's'}`
+  const warning = count === 0 ? '' : ` and ${plural(count, 'session')}`
   const go = await ask({
     title: `Remove ${workspace.name}?`,
     detail: `The folder${warning} leaves the sidebar. Files on disk are not touched.`,

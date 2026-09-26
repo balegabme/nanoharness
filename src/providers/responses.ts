@@ -1,8 +1,10 @@
 // doc: docs/harness/providers.md
+import { isJsonObject } from '../shared/json.js'
+import { emptyUsage } from '../shared/usage.js'
 import { BAD_SSE, NO_BODY, ProviderError, StreamBrokenError, retryAfterMs } from '../core/provider.js'
 import type { ChatProvider, ChatInput } from '../core/provider.js'
 import type { ChatChunk, ChatMessage, JsonSchema, ToolCall, ToolInput, TurnUsage } from '../core/types.js'
-import { dataUrl, emptyUsage } from '../core/types.js'
+import { dataUrl } from '../core/types.js'
 import { endpointURL } from '../core/config.js'
 import { wireHeaders } from './headers.js'
 
@@ -242,7 +244,7 @@ function toolCallOf(item: WireDoneItem | undefined): ToolCall | null {
  * response it ended.
  */
 function failureText(event: WireEvent): string {
-  const nested = isObject(event.response?.error) ? event.response.error.message : undefined
+  const nested = isJsonObject(event.response?.error) ? event.response.error.message : undefined
   const message = typeof nested === 'string' ? nested : event.message
   const code = event.code === undefined ? '' : ` (${event.code})`
   return `provider stream failed${code}: ${message ?? 'the provider gave no reason'}`
@@ -306,7 +308,7 @@ function readUsage(value: unknown): { usage?: TurnUsage; problem?: string } {
  * comes back as an error, because the cost goes to an append-only log.
  */
 function parseUsage(value: unknown): WireUsage {
-  if (!isObject(value)) throw new UsageError('the usage field was not an object')
+  if (!isJsonObject(value)) throw new UsageError('the usage field was not an object')
   const inputTokens = value.input_tokens
   const outputTokens = value.output_tokens
   if (typeof inputTokens !== 'number') throw new UsageError('usage arrived without input_tokens')
@@ -326,13 +328,9 @@ function parseUsage(value: unknown): WireUsage {
 
 /** One count out of a details object, where the object and the count are both optional. */
 function countIn(details: unknown, field: string): number {
-  if (!isObject(details)) return 0
+  if (!isJsonObject(details)) return 0
   const count = details[field]
   if (count === undefined || count === null) return 0
   if (typeof count !== 'number') throw new UsageError(`${field} was not a number`)
   return count
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

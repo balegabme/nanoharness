@@ -1,6 +1,6 @@
 // doc: docs/harness/ui.md
+import { countText, shortTokens } from '../shared/format.js'
 import { el, relativeTime } from './dom.js'
-import { shortTokens } from './metrics.js'
 import { Popover } from './popover.js'
 import type { CompactionReason, ContextLedger, ContextParts } from '../core/types.js'
 
@@ -62,15 +62,10 @@ function level(share: number, red: number): 'ok' | 'warn' | 'high' {
  */
 function sizes(ledger: ContextLedger, usable: number): string {
   const parts: string[] = []
-  if (ledger.window !== null) parts.push(`Window ${count(ledger.window)}`)
-  if (ledger.limit !== null && (ledger.window === null || ledger.limit < ledger.window)) parts.push(`limited to ${count(ledger.limit)}`)
-  parts.push(`${count(ledger.reserve)} kept for the answer`, `${count(usable)} usable`)
+  if (ledger.window !== null) parts.push(`Window ${countText(ledger.window)}`)
+  if (ledger.limit !== null && (ledger.window === null || ledger.limit < ledger.window)) parts.push(`limited to ${countText(ledger.limit)}`)
+  parts.push(`${countText(ledger.reserve)} kept for the answer`, `${countText(usable)} usable`)
   return parts.join(' · ')
-}
-
-/** A count in full, for the panel, where there is room for every digit. */
-function count(tokens: number): string {
-  return Math.round(tokens).toLocaleString('en-US')
 }
 
 export class ContextMeter {
@@ -170,7 +165,7 @@ export class ContextMeter {
       this.button.dataset.level = 'unknown'
       this.fill.setAttribute('stroke-dasharray', `0 ${CIRCUMFERENCE}`)
       this.label.textContent = shortTokens(ledger.tokens)
-      this.button.setAttribute('aria-label', `Context: ${count(ledger.tokens)} tokens, no usable space known`)
+      this.button.setAttribute('aria-label', `Context: ${countText(ledger.tokens)} tokens, no usable space known`)
       return
     }
     const share = ledger.tokens / usable
@@ -178,7 +173,7 @@ export class ContextMeter {
     this.button.dataset.level = level(share, (ledger.threshold ?? usable) / usable)
     this.fill.setAttribute('stroke-dasharray', `${drawn} ${CIRCUMFERENCE}`)
     this.label.textContent = `${Math.round(share * 100)}%`
-    this.button.setAttribute('aria-label', `Context: ${count(ledger.tokens)} of ${count(usable)} usable tokens`)
+    this.button.setAttribute('aria-label', `Context: ${countText(ledger.tokens)} of ${countText(usable)} usable tokens`)
   }
 
   private drawPanel(): void {
@@ -217,7 +212,7 @@ export class ContextMeter {
         el(
           'p',
           'pop-note warn',
-          `The ${count(ledger.reserve)} tokens kept for the answer fill the ${count(room)} token ${what}, so there is nothing to compact against. Check the ${what} and the model’s output limit.`,
+          `The ${countText(ledger.reserve)} tokens kept for the answer fill the ${countText(room)} token ${what}, so there is nothing to compact against. Check the ${what} and the model’s output limit.`,
         ),
       )
     } else if (!(this.actions?.auto() ?? ledger.auto)) {
@@ -243,13 +238,13 @@ export class ContextMeter {
       if (tokens <= 0) continue
       const segment = el('span', `ctx-seg part-${part.key}`)
       segment.style.width = `${Math.min(100, (tokens / scale) * 100)}%`
-      segment.title = `${part.label}: ${count(tokens)}`
+      segment.title = `${part.label}: ${countText(tokens)}`
       bar.append(segment)
     }
     if (ledger.threshold !== null && ledger.usable !== null) {
       const tick = el('span', 'ctx-tick')
       tick.style.left = `${(ledger.threshold / ledger.usable) * 100}%`
-      tick.title = `Automatic compaction runs at ${count(ledger.threshold)}`
+      tick.title = `Automatic compaction runs at ${countText(ledger.threshold)}`
       bar.append(tick)
     }
     return bar
@@ -264,7 +259,7 @@ export class ContextMeter {
       if (tokens <= 0 && (part.key === 'summary' || part.key === 'thinking')) continue
       const share = ledger.tokens > 0 ? `${Math.round((tokens / ledger.tokens) * 100)}%` : ''
       const row = el('div', 'ctx-row')
-      row.append(el('span', `ctx-swatch part-${part.key}`), el('span', 'ctx-name', part.label), el('b', undefined, count(tokens)), el('span', 'ctx-share', share))
+      row.append(el('span', `ctx-swatch part-${part.key}`), el('span', 'ctx-name', part.label), el('b', undefined, countText(tokens)), el('span', 'ctx-share', share))
       table.append(row)
     }
     return table
@@ -275,8 +270,8 @@ export class ContextMeter {
     if (ledger.measured === null) {
       return 'Estimated from the length of the text. The next response replaces the estimate with the provider’s own count.'
     }
-    if (ledger.estimated <= 0) return `${count(ledger.measured)} as the provider counted the last request.`
-    return `${count(ledger.measured)} as the provider counted the last request, and about ${count(ledger.estimated)} estimated for what has been added since.`
+    if (ledger.estimated <= 0) return `${countText(ledger.measured)} as the provider counted the last request.`
+    return `${countText(ledger.measured)} as the provider counted the last request, and about ${countText(ledger.estimated)} estimated for what has been added since.`
   }
 
   private history(ledger: ContextLedger): HTMLElement {

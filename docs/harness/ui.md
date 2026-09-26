@@ -12,9 +12,12 @@ Files:
 - src/renderer/images.ts: a pasted or dropped file read as a picture to send, shrunk first when the switch is on
 - src/renderer/jobs.ts: the running subagents and the buffered stream of each one
 - src/renderer/sidebar.ts: folders and their sessions, search, add and delete
-- src/renderer/metrics.ts: tokens per second, the cache hit rate and short token counts, kept away from the DOM so they can be tested
-- src/renderer/facts.ts: the effort scale, what a model takes and what it costs; a copy of what src/core/config.ts and src/core/cost.ts define, held against them by src/providers/model-facts.test.ts
+- src/renderer/metrics.ts: tokens per second, kept away from the DOM so it can be tested
+- src/renderer/facts.ts: the words the window puts on an effort level, a price and a missing fact
 - src/renderer/chat.ts: the message flow, drawn the same for the main agent and for an opened subagent, with streamed text, thinking, tool rows, notes and replayed transcripts
+- src/renderer/markdown.ts: an answer's Markdown turned into DOM nodes, with tables, lists, quotes and fenced code
+- src/renderer/highlight.ts: syntax colouring for fenced code and diff lines, one small grammar per language family
+- src/renderer/diff-rows.ts: a unified diff drawn as numbered rows, for the edit card, the diff pane and a `diff` fence
 - src/renderer/settings.ts: the settings sheet, with the provider list, form, probe and model ticking
 - src/renderer/permission.ts: the modal a tool waits on when it reaches outside its folder
 - src/renderer/confirm.ts: the app's own yes/no and one-line-of-text sheets, in place of the browser's `confirm()` and `prompt()`
@@ -445,7 +448,8 @@ the rule, the three answers and why a prompt per path stops being read.
 - The page is served over a registered `app://` scheme instead of `file://`.
   A file URL has an opaque origin, which makes `default-src 'self'` meaningless
   and blocks ES modules; the custom scheme gives the page a real origin. The
-  handler refuses any path that escapes `out/renderer`.
+  handler serves `out/renderer`, plus `out/shared` under `/shared/`
+  (`shared.md`), and refuses any path that escapes the one it resolved into.
 - `setWindowOpenHandler` denies every new window and `will-navigate` is
   cancelled, so the renderer cannot leave the app scheme.
 - `sandbox: false` is the one concession: Electron only loads an ES-module
@@ -542,20 +546,28 @@ a summary.
 ## Diffs
 
 An `edit` or a `write` hands back a unified diff of what it changed
-(`tools.md`), and the card in the flow keeps the line that says what happened,
-`edited src/core/session.ts (1 replacement, +12 −3)`, while the diff itself
-opens in a pane of its own. The card is clicked the same way a spawn card is:
-the whole head is the target, the fold is suppressed, and the topbar back button
-returns to the flow.
+(`tools.md`). The card's head counts it, a green `+12` for the lines added and a
+red `−3` for the lines removed, and stays folded like any other tool card.
+Opened, it shows the line the tool said, `edited src/core/session.ts (1
+replacement, +12 −3)`, over the diff itself. The arguments are left out, since
+the diff shows the same change more plainly.
 
-The pane draws one row per line, coloured by what the line is, with the two file
-headers and the hunk markers set back as scaffolding. Nothing wraps: a diff is a
-column, and a line that folds onto the next one breaks the only thing making it
-readable, so the pane scrolls sideways instead. The path is the title, the
-change is counted beside it, and a copy button hands over the diff as text.
+`diff-rows.ts` draws a diff the same way wherever it appears: in the card, in
+the full pane, and in a `diff` fence inside an answer. Each line is a row with
+the old and new line numbers, the sign, and the text coloured as the file's
+language, which is read from the path's extension. The background says which
+side a line is on, so the text keeps its colours. The two file headers are
+dropped, since the path is already on screen, and each hunk marker is set back
+as scaffolding. Nothing wraps: a diff is a column, and a line that folds onto
+the next one breaks the only thing making it readable, so the rows scroll
+sideways instead.
 
-A diff sits over whichever flow opened it, so an edit made by a subagent opens
-from the subagent's own view and back goes there, not all the way home.
+A card's diff stops at a fixed height and scrolls. Its Full view button opens
+the same rows in a pane of their own, where the path is the title, the change is
+counted beside it, and a copy button hands over the diff as text. The topbar
+back button returns to the flow. A diff sits over whichever flow opened it, so
+an edit made by a subagent opens from the subagent's own view and back goes
+there, not all the way home.
 The text comes out of the stored tool result, which means a session reopened
 next week opens its diffs the same way it opens its subagents.
 
@@ -591,6 +603,41 @@ itself took up. Text that was only whitespace leaves no block at all, where it
 used to leave a labelled empty one. What survives sits close to the call it
 introduces, since commentary belongs with its tool card and not spaced off as a
 block of its own.
+
+## Markdown
+
+What the model writes is drawn from its Markdown: an assistant block in the
+live flow and in a replayed transcript, and the summary a compaction leaves.
+`markdown.ts` covers what models actually write. That means headings, paragraphs,
+bullet, numbered and task lists nested by indent, quotes, rules, pipe tables
+with column alignment, and fenced code. Inline, it covers emphasis, strike,
+code spans, links, bare URLs and backslash escapes. Setext headings, indented
+code blocks and reference links are left out. Models rarely write them, and an
+indented line read as code would swallow a list's continuation.
+
+The renderer builds elements and text nodes and never assigns `innerHTML`, so
+HTML in an answer is shown as the characters it is made of. A link to `http` or
+`https` opens in the user's browser through the same `openExternal` call the
+rest of the window uses. Any other address is drawn as text, with the address in
+its tooltip, so the model cannot make a click reach a `file:` or `javascript:`
+URL. An image is drawn as a link to its address, labelled with its alt text or
+with "image" when it has none, because the CSP loads nothing from outside the
+app.
+
+A fenced block carries its language and a copy button above the code. The code
+is coloured by `highlight.ts`, which knows a keyword, a string, a comment, a
+number and a call for each language family it has a grammar for. A language it
+does not know is shown plain. A `diff` or `patch` fence is drawn as diff rows.
+
+While an answer streams, it is redrawn at most once per animation frame.
+Everything up to the last blank line outside a fence is settled, since more
+text cannot change how it is drawn, so it is drawn once and kept. Each frame
+parses only the part after it, which keeps a long answer as cheap as a short
+one and leaves a selection or a scrolled table in the settled part alone. A
+fence that has not closed yet is drawn as code up to the end of the text, so
+the block does not flicker between prose and code as it arrives. When the
+answer ends it is drawn once more from the whole text, which joins a list that
+a blank line had split while it streamed.
 
 ## Turns and rewind
 

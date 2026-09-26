@@ -1,8 +1,10 @@
 // doc: docs/harness/providers.md
+import { isJsonObject } from '../shared/json.js'
+import { emptyUsage } from '../shared/usage.js'
 import { BAD_SSE, NO_BODY, ProviderError, StreamBrokenError, retryAfterMs } from '../core/provider.js'
 import type { ChatProvider, ChatInput } from '../core/provider.js'
 import type { ChatChunk, ChatMessage, JsonSchema, ToolInput, TurnUsage } from '../core/types.js'
-import { dataUrl, emptyUsage } from '../core/types.js'
+import { dataUrl } from '../core/types.js'
 import { endpointURL } from '../core/config.js'
 import { readOffers } from './model-facts.js'
 import { wireHeaders } from './headers.js'
@@ -269,7 +271,7 @@ class UsageError extends Error {}
  * append-only log.
  */
 function parseUsage(value: unknown): WireUsage {
-  if (!isObject(value)) throw new UsageError('the usage field was not an object')
+  if (!isJsonObject(value)) throw new UsageError('the usage field was not an object')
   const prompt = value.prompt_tokens
   const completion = value.completion_tokens
   if (typeof prompt !== 'number') throw new UsageError('usage arrived without prompt_tokens')
@@ -280,7 +282,7 @@ function parseUsage(value: unknown): WireUsage {
     throw new UsageError(`provider reported ${cached} cached tokens against a prompt of ${prompt}`)
   }
   const completionDetails = value.completion_tokens_details
-  const reasoning = isObject(completionDetails) ? completionDetails.reasoning_tokens : undefined
+  const reasoning = isJsonObject(completionDetails) ? completionDetails.reasoning_tokens : undefined
   return {
     prompt_tokens: prompt,
     completion_tokens: completion,
@@ -294,7 +296,7 @@ function parseUsage(value: unknown): WireUsage {
  */
 function cachedTokens(u: Record<string, unknown>): number {
   const details = u.prompt_tokens_details
-  const standard = isObject(details) ? details.cached_tokens : undefined
+  const standard = isJsonObject(details) ? details.cached_tokens : undefined
   if (standard !== undefined) {
     if (typeof standard !== 'number') throw new UsageError('cached_tokens was not a number')
     return standard
@@ -307,9 +309,6 @@ function cachedTokens(u: Record<string, unknown>): number {
   return 0
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
 /**
  * `GET {baseURL}/v1/models`, the setup screen's test call. It doubles as a
  * connection check, because reaching it proves the endpoint answers and the key

@@ -9,7 +9,6 @@ Files:
 - src/tools/edit.ts: literal replace in an existing file
 - src/tools/text.ts: whether a file's bytes are text a tool may rewrite
 - src/core/read-index.ts: what the session has read, and at which version
-- src/core/diff.ts: the unified diff a write or an edit hands back
 - src/tools/log-improvement.ts: append an entry to the improvement ledger
 
 A Tool wraps a JSON schema (ToolInput) plus a `run` function. The tool list is
@@ -252,7 +251,7 @@ so the file can be put back (`checkpoints.md`).
 
 Both writing tools answer with a line saying what they did and a fenced unified
 diff of the change: `edited src/core/session.ts (1 replacement, +12 −3)`, then
-the hunks. `src/core/diff.ts` builds it, in about two hundred lines of line-LCS
+the hunks. `src/shared/diff.ts` builds it, in about two hundred lines of line-LCS
 and hunk formatting.
 
 The diff is read twice, by the window that draws it and by the model that is

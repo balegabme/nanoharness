@@ -1,4 +1,4 @@
-// doc: docs/harness/tools.md
+// doc: docs/harness/shared.md
 
 /**
  * A unified diff of what an edit did: a line LCS and a hunk formatter.
@@ -208,7 +208,41 @@ export function diffBlock(diff: FileDiff): string {
   return diff.text === '' ? '' : `\`\`\`diff\n${diff.text}\n\`\`\``
 }
 
+/** The fence `diffBlock` writes, at the end of the result it closes. */
+const DIFF_FENCE = /```diff\n([\s\S]*?)\n```\s*$/
+
 /** "+12 −3", the shape a card's corner shows. */
 export function statText(stat: DiffStat): string {
   return `+${stat.added} −${stat.removed}`
+}
+
+/** `statText` read back. */
+const STAT = /\+(\d+) −(\d+)/
+
+/** A diff read back out of a tool result: the file, the unified text, and the count. */
+export interface ToolDiff {
+  path: string
+  text: string
+  stat: DiffStat
+}
+
+/**
+ * The diff an `edit` or `write` result ends in, or null when it ends in none.
+ * The count comes from the result's first line, which `statText` wrote from
+ * the whole change, so it stays right when the diff itself was cut short.
+ */
+export function readToolDiff(result: string): ToolDiff | null {
+  const text = DIFF_FENCE.exec(result)?.[1]
+  if (text === undefined) return null
+  const counted = STAT.exec(result.split('\n', 1)[0] ?? '')
+  return {
+    path: /^--- a\/(.*)$/m.exec(text)?.[1] ?? 'file',
+    text,
+    stat: { added: Number(counted?.[1] ?? 0), removed: Number(counted?.[2] ?? 0) },
+  }
+}
+
+/** The result with its diff taken off the end. */
+export function withoutToolDiff(result: string): string {
+  return result.replace(DIFF_FENCE, '').trimEnd()
 }

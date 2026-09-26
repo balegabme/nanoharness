@@ -1,6 +1,6 @@
 // doc: docs/harness/cli.md
-import { moneyText } from '../core/cost.js'
-import { cacheHitRate } from '../core/types.js'
+import { cacheHitRate, tokensPerSecond } from '../shared/usage.js'
+import { countText, moneyText, percentText, plural, rateText, skippedText } from '../shared/format.js'
 import type { SpendRow, SpendTotals, UsageReport } from '../core/usage-report.js'
 
 /**
@@ -15,12 +15,12 @@ const ROWS = 8
 export function formatReport(report: UsageReport, logPath: string): string {
   const lines = [`usage log: ${logPath}`]
   if (report.totals.turns === 0) {
-    lines.push(report.skipped > 0 ? `no turns this build can read (${skippedText(report.skipped)})` : 'no turns recorded yet')
+    lines.push(report.skipped > 0 ? `no turns to show (${skippedText(report.skipped)})` : 'no turns recorded yet')
     return lines.join('\n')
   }
 
   const window = report.days === null ? 'all time' : `last ${report.days} days`
-  lines.push(`${report.totals.turns} turn${report.totals.turns === 1 ? '' : 's'} across ${report.bySession.length} sessions, ${window}`, '')
+  lines.push(`${plural(report.totals.turns, 'turn')} across ${report.bySession.length} sessions, ${window}`, '')
   lines.push(...totalRows(report.totals))
 
   lines.push(...table('per day', report.byDay.filter(row => row.turns > 0)))
@@ -30,7 +30,7 @@ export function formatReport(report: UsageReport, logPath: string): string {
   lines.push(...table('per agent', report.byAgent))
   lines.push(...table('where it went', report.byPhase))
 
-  if (report.outside > 0) lines.push('', `${report.outside} turn${report.outside === 1 ? '' : 's'} outside the window`)
+  if (report.outside > 0) lines.push('', `${plural(report.outside, 'turn')} outside the window`)
   if (report.skipped > 0) lines.push('', skippedText(report.skipped))
   return lines.join('\n')
 }
@@ -39,16 +39,16 @@ export function formatReport(report: UsageReport, logPath: string): string {
 // unindented rows add up to what the turn cost.
 function totalRows(totals: SpendTotals): string[] {
   const rows: [string, string][] = [
-    ['input', count(totals.usage.input)],
-    ['cache read', count(totals.usage.cacheRead)],
-    ['cache write', count(totals.usage.cacheWrite)],
-    ['output', count(totals.usage.output)],
-    ['  of which reasoning', count(totals.usage.reasoning)],
-    ['cache hit', percent(cacheHitRate(totals.usage))],
+    ['input', countText(totals.usage.input)],
+    ['cache read', countText(totals.usage.cacheRead)],
+    ['cache write', countText(totals.usage.cacheWrite)],
+    ['output', countText(totals.usage.output)],
+    ['  of which reasoning', countText(totals.usage.reasoning)],
+    ['cache hit', percentText(cacheHitRate(totals.usage))],
     ['spent', moneyText(totals.costUsd)],
   ]
-  const rate = throughput(totals)
-  if (rate !== null) rows.push(['throughput', `${rate.toFixed(rate < 10 ? 1 : 0)} tok/s`])
+  const rate = tokensPerSecond(totals.usage.output, totals.streamMs)
+  if (rate !== null) rows.push(['throughput', `${rateText(rate)} tok/s`])
 
   const lines = rows.map(([label, value]) => `  ${label.padEnd(20)} ${value.padStart(9)}`)
   // A total with unpriced turns under it is a floor, and saying so is the
@@ -78,24 +78,7 @@ function table(title: string, rows: readonly SpendRow[]): string[] {
 }
 
 function rowText(row: SpendRow): string {
-  const hit = percent(cacheHitRate(row.usage))
+  const hit = percentText(cacheHitRate(row.usage))
   const unpriced = row.unpriced > 0 ? `  ${row.unpriced} unpriced` : ''
   return `${String(row.turns).padStart(4)} turns  ${moneyText(row.costUsd).padStart(9)}  hit ${hit.padStart(5)}${unpriced}`
-}
-
-/** Output tokens per second over the time the models actually generated for. */
-function throughput(totals: SpendTotals): number | null {
-  return totals.streamMs === 0 ? null : totals.usage.output / (totals.streamMs / 1000)
-}
-
-function skippedText(skipped: number): string {
-  return `${skipped} line${skipped === 1 ? '' : 's'} skipped (another schema version or unreadable)`
-}
-
-function count(value: number): string {
-  return value.toLocaleString('en-US')
-}
-
-function percent(rate: number | null): string {
-  return rate === null ? 'n/a' : `${(rate * 100).toFixed(1)}%`
 }

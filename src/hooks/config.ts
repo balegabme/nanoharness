@@ -2,6 +2,7 @@
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { isJsonObject } from '../shared/json.js'
 import { hashText } from '../core/project-trust.js'
 import type { ProjectFile } from '../core/project-trust.js'
 
@@ -55,10 +56,6 @@ export function hookPaths(root: string, env: NodeJS.ProcessEnv = process.env): {
   return { global: join(home, '.nanoharness', 'hooks.json'), project: join(root, '.nanoharness', 'hooks.json') }
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
 /**
  * Parse one file's text. A broken entry is skipped with a problem and the rest
  * of the file still loads, so one typo does not switch off every hook a person
@@ -71,7 +68,7 @@ export function parseHooks(text: string, source: string): { hooks: HookSpec[]; p
   } catch (err) {
     return { hooks: [], problems: [`${source} is not valid JSON: ${err instanceof Error ? err.message : String(err)}`] }
   }
-  if (!isObject(parsed)) return { hooks: [], problems: [`${source} must hold a JSON object keyed by event name`] }
+  if (!isJsonObject(parsed)) return { hooks: [], problems: [`${source} must hold a JSON object keyed by event name`] }
 
   const hooks: HookSpec[] = []
   const problems: string[] = []
@@ -97,7 +94,7 @@ export function parseHooks(text: string, source: string): { hooks: HookSpec[]; p
 
 /** One entry, or what is wrong with it. */
 function parseEntry(entry: unknown, event: HookEvent, source: string): HookSpec | string {
-  if (!isObject(entry)) return 'must be an object with a "command"'
+  if (!isJsonObject(entry)) return 'must be an object with a "command"'
   const { command, match, timeout } = entry
   if (typeof command !== 'string' || command.trim() === '') return 'has no "command"'
   if (Buffer.byteLength(command) > MAX_COMMAND_BYTES) {

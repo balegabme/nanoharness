@@ -1,7 +1,9 @@
 // doc: docs/harness/ui.md
+import { EFFORTS, factGaps, isProviderKind, PRICES, resolveFacts } from '../shared/facts.js'
+import { plural } from '../shared/format.js'
 import { ask } from './confirm.js'
 import { el, GLYPH, icon, message, must, relativeTime } from './dom.js'
-import { EFFORTS, factGaps, gapText, isProviderKind, PRICE_LABEL, PRICES, priceText, resolveFacts, WARN } from './facts.js'
+import { gapText, PRICE_LABEL, priceText, WARN } from './facts.js'
 import { matches } from './match.js'
 import type { ApprovalCandidate, ApprovalConfig } from '../core/approval.js'
 import type { ConfigStatus, NanoBridge, ProviderSaveRequest, ProviderView, SecretView } from '../ipc/contract.js'
@@ -320,10 +322,6 @@ function currentKind(): ProviderKind {
  * Which half of the URL to paste. The two ecosystems disagree about who owns
  * the version segment, and nobody can tell from an empty field whether the
  * endpoint path belongs in it, so the field says so.
- *
- * The text lives here and not in `core/config.ts` because the renderer is
- * served over `app://` and may only load modules from its own directory: a
- * runtime import from `../core/` fails to fetch and takes the whole page down.
  */
 const BASE_HINT: Record<ProviderKind, string> = {
   anthropic:
@@ -635,7 +633,7 @@ function renderProviders(status: ConfigStatus): void {
     row.classList.toggle('editing', provider.id === editing)
     row.classList.toggle('active', provider.id === status.active?.providerId)
 
-    const count = `${provider.models.length} model${provider.models.length === 1 ? '' : 's'}`
+    const count = plural(provider.models.length, 'model')
     const open = el('button', 'provider-open')
     open.type = 'button'
     open.append(
@@ -786,7 +784,7 @@ async function probe(intent: 'test' | 'fetch'): Promise<void> {
       return
     }
     const ids = result.models.map(offer => offer.id)
-    const count = `${ids.length} model${ids.length === 1 ? '' : 's'}`
+    const count = plural(ids.length, 'model')
     if (intent === 'test') {
       setupProbeNote.textContent = `Connected. ${count} available.`
       return

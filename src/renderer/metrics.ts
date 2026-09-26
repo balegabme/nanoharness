@@ -1,56 +1,6 @@
 // doc: docs/harness/ui.md
+import { tokensPerSecond } from '../shared/usage.js'
 import type { TurnRate, TurnUsage } from '../core/types.js'
-
-/**
- * The two numbers in the corner of the window, kept in one place where they can
- * be tested.
- *
- * The cache hit rate lives here and not in `chat.ts` for a second reason:
- * it is a copy. `cacheHitRate` in src/core/types.ts is the definition, and the
- * CLI and the main process use that one, but eslint.config.js forbids the
- * renderer a runtime import from core because the renderer is a separate
- * bundle. The formula exists twice on purpose, and the two copies are pinned
- * against each other in src/providers/usage.test.ts.
- */
-
-/**
- * Everything the provider charged for reading a prompt: what it read in full,
- * what it served from cache, and what it wrote to cache. The pills show all
- * three, so the percentage can be checked against the numbers beside it.
- */
-export function promptTokens(usage: TurnUsage): number {
-  return usage.cacheRead + usage.input + usage.cacheWrite
-}
-
-/** The cached share of the prompt, or `null` when nothing was sent. */
-export function hitRate(usage: TurnUsage): number | null {
-  const prompt = promptTokens(usage)
-  return prompt === 0 ? null : usage.cacheRead / prompt
-}
-
-/** The same, as the pill says it. */
-export function hitText(usage: TurnUsage): string {
-  const rate = hitRate(usage)
-  return rate === null ? 'n/a' : `${(rate * 100).toFixed(0)}%`
-}
-
-/**
- * A token count short enough for a button: 950, 1.2k, 152k, 1.2M. One decimal
- * below ten of a unit, where it still says something, and none above it.
- */
-export function shortTokens(tokens: number): string {
-  const n = Math.max(0, Math.round(tokens))
-  if (n < 1000) return String(n)
-  const [size, unit] = n < 1_000_000 ? [n / 1000, 'k'] : [n / 1_000_000, 'M']
-  // 999,950 rounds to 1000k, which is a million written the long way.
-  if (unit === 'k' && size >= 999.5) return '1M'
-  return `${size < 10 ? size.toFixed(1).replace(/\.0$/, '') : Math.round(size)}${unit}`
-}
-
-/** Everything a session has been billed for, read and written, as one count. */
-export function totalTokens(usage: TurnUsage): number {
-  return usage.input + usage.output + usage.cacheRead + usage.cacheWrite
-}
 
 /**
  * Tokens per second for the turn on screen.
@@ -94,7 +44,7 @@ export class Throughput {
     if (streamMs === undefined || produced <= 0) return
     this.tokens += produced
     this.ms += streamMs
-    if (this.ms >= Throughput.FLOOR_MS) this.answer = this.tokens / (this.ms / 1000)
+    if (this.ms >= Throughput.FLOOR_MS) this.answer = tokensPerSecond(this.tokens, this.ms)
   }
 
   /** A new turn. The rate is per turn, so the old one does not carry over. */
@@ -114,6 +64,6 @@ export class Throughput {
     this.startTurn()
     this.lastOutput = output
     if (rate === undefined || rate.output <= 0 || rate.streamMs < Throughput.FLOOR_MS) return
-    this.answer = rate.output / (rate.streamMs / 1000)
+    this.answer = tokensPerSecond(rate.output, rate.streamMs)
   }
 }

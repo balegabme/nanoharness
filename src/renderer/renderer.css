@@ -5,7 +5,7 @@
  *   1. ramp    --nh-warm-*, --nh-accent-*, --nh-green/red/amber-*
  *              Raw colour. Never referenced by a component.
  *   2. alias   --nh-bg-*, --nh-border-*, --nh-label-*, --nh-button-*, --nh-state-*,
- *              --nh-part-*
+ *              --nh-part-*, --nh-code-*
  *              What a colour is FOR. The only layer a theme redefines.
  *   3. component
  *              Reads alias tokens only.
@@ -119,6 +119,7 @@
   --nh-label-inverted: var(--nh-warm-950);
 
   --nh-hover: rgb(255 255 255 / 6%);
+  --nh-row-stripe: rgb(255 255 255 / 2%);
   --nh-hover-solid: var(--nh-warm-850);
   --nh-active: rgb(255 255 255 / 11%);
   --nh-hover-danger: rgb(212 99 90 / 14%);
@@ -135,6 +136,16 @@
   --nh-state-ok: var(--nh-green-300);
   --nh-state-error: var(--nh-red-300);
   --nh-state-warn: var(--nh-amber-400);
+
+  /* Code, in answers and diffs. Strings take the green and numbers the amber,
+     so the accent is left to the words that shape the code. */
+  --nh-code-text: var(--nh-warm-200);
+  --nh-code-keyword: var(--nh-accent-300);
+  --nh-code-string: var(--nh-green-300);
+  --nh-code-number: var(--nh-amber-400);
+  --nh-code-comment: var(--nh-warm-500);
+  --nh-code-function: var(--nh-accent-100);
+  --nh-code-type: var(--nh-accent-200);
 
   /* The parts of the context, in the bar and the table under it. The fixed
      parts are neutral and the conversation is shades of the accent, so the
@@ -758,32 +769,68 @@ body {
   font: 400 12px/1.6 var(--nh-font-mono);
 }
 
+.diff-rows {
+  min-width: max-content;
+}
+
+/* Two line numbers, the sign, then the text coloured as its language. The
+   background says which side a line is on, so the text keeps its colours. */
 .diff-line {
-  padding: 0 var(--s3);
+  display: flex;
   white-space: pre;
-  color: var(--nh-label-secondary);
+  color: var(--nh-code-text);
+}
+
+.diff-num {
+  flex: none;
+  width: 5ch;
+  padding-right: 1ch;
+  color: var(--nh-label-caption);
+  text-align: right;
+  user-select: none;
+  opacity: 0.7;
+}
+
+.diff-sign {
+  flex: none;
+  width: 2ch;
+  text-align: center;
+  user-select: none;
+}
+
+.diff-text {
+  padding-right: var(--s3);
 }
 
 .diff-line.add {
   background: color-mix(in srgb, var(--nh-state-ok) 14%, transparent);
+}
+
+.diff-line.add .diff-sign {
   color: var(--nh-state-ok);
 }
 
 .diff-line.del {
   background: color-mix(in srgb, var(--nh-state-error) 14%, transparent);
+}
+
+.diff-line.del .diff-sign {
   color: var(--nh-state-error);
 }
 
-/* The two lines naming the file, and the ones counting off each hunk. They are
-   scaffolding and not content, so they sit back. */
-.diff-line.meta,
+/* The line counting off each hunk. It is scaffolding and not content, so it
+   sits back. */
 .diff-line.hunk {
+  display: block;
+  margin-top: var(--s1);
+  padding: 0 var(--s3);
+  border-top: 1px solid var(--nh-border-l1);
   color: var(--nh-label-caption);
 }
 
-.diff-line.hunk {
-  margin-top: var(--s1);
-  border-top: 1px solid var(--nh-border-l1);
+.diff-rows > .diff-line.hunk:first-child {
+  margin-top: 0;
+  border-top: none;
 }
 
 /* The thread from "an agent did something here" to the conversation it had.
@@ -811,17 +858,84 @@ body {
   background: var(--nh-hover);
 }
 
-/* A spawn card opens its subagent and an edit card opens its diff. Neither
-   folds open on arguments nobody reads. The whole head is the target, so
-   neither carries a button of its own. */
-.block.tool[data-subagent] > summary,
-.block.tool[data-diff] > summary {
+/* A spawn card opens its subagent and does not fold open on arguments nobody
+   reads. The whole head is the target, so it carries no button of its own. */
+.block.tool[data-subagent] > summary {
   cursor: pointer;
 }
 
-.block.tool[data-subagent] > summary:hover,
-.block.tool[data-diff] > summary:hover {
+.block.tool[data-subagent] > summary:hover {
   background: var(--nh-hover);
+}
+
+/* What an edit or write changed, counted in the card's head: green for the
+   lines added and red for the lines removed. */
+.tool-stat {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tool-stat .added {
+  color: var(--nh-state-ok);
+}
+
+.tool-stat .removed {
+  color: var(--nh-state-error);
+}
+
+/* The diff itself, when the card is opened. Long lines scroll sideways, for
+   the reason the full view gives. */
+.tool-diff {
+  max-height: 420px;
+  overflow: auto;
+  background: var(--nh-bg-code);
+  border-radius: 0 0 var(--nh-radius-card) var(--nh-radius-card);
+  font: 400 12px/1.6 var(--nh-font-mono);
+  --nh-thumb: var(--nh-scrollbar-l2);
+  --nh-thumb-hover: var(--nh-scrollbar-l2-hover);
+}
+
+.tool-diff-head {
+  position: sticky;
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s1) var(--s3);
+  border-bottom: 1px solid var(--nh-border-l1);
+  color: var(--nh-label-caption);
+}
+
+.tool-diff-said {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.tool-diff-open,
+.md-code-copy {
+  flex: none;
+  padding: 1px 8px;
+  border: 1px solid var(--nh-border-l2);
+  border-radius: var(--nh-radius-pill);
+  background: transparent;
+  color: var(--nh-label-tertiary);
+  font: 500 10.5px var(--nh-font-sans);
+  cursor: pointer;
+  transition:
+    background var(--nh-fast) var(--nh-ease),
+    color var(--nh-fast) var(--nh-ease);
+}
+
+.tool-diff-open:hover,
+.md-code-copy:hover {
+  background: var(--nh-hover);
+  color: var(--nh-label-primary);
 }
 
 /* What has been spent, drawn in the same place and the same frame as the two
@@ -1621,6 +1735,255 @@ body {
   color: var(--nh-label-primary);
 }
 
+/* ── Markdown ──
+   An answer drawn from its Markdown. The blocks space themselves, so the
+   pre-wrap every other body keeps would double each gap. */
+.md {
+  white-space: normal;
+}
+
+.md > :first-child,
+.md li > :first-child,
+.md blockquote > :first-child {
+  margin-top: 0;
+}
+
+.md > :last-child,
+.md li > :last-child,
+.md blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+.md p {
+  margin: 0 0 var(--s2);
+}
+
+.md h1,
+.md h2,
+.md h3,
+.md h4,
+.md h5,
+.md h6 {
+  margin: var(--s4) 0 var(--s2);
+  color: var(--nh-label-primary);
+  font-family: var(--nh-font-sans);
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.md h1 {
+  font-size: 19px;
+}
+
+.md h2 {
+  font-size: 17px;
+}
+
+.md h3 {
+  font-size: 15px;
+}
+
+.md h4,
+.md h5,
+.md h6 {
+  font-size: 14px;
+  color: var(--nh-label-secondary);
+}
+
+.md ul,
+.md ol {
+  margin: 0 0 var(--s2);
+  padding-left: 2.2ch;
+}
+
+.md li + li {
+  margin-top: 2px;
+}
+
+.md li > ul,
+.md li > ol {
+  margin: 2px 0 0;
+}
+
+/* A tight list's items are one line each and are not spaced like paragraphs. */
+.md .tight > li > p {
+  margin: 0;
+}
+
+.md li::marker {
+  color: var(--nh-label-caption);
+}
+
+.md li.task {
+  list-style: none;
+}
+
+.md li.task input {
+  margin: 0 6px 0 -2.4ch;
+  vertical-align: middle;
+  accent-color: var(--nh-accent);
+}
+
+.md blockquote {
+  margin: 0 0 var(--s2);
+  padding: 2px var(--s3);
+  border-left: 2px solid var(--nh-border-l3);
+  color: var(--nh-label-secondary);
+}
+
+.md hr {
+  margin: var(--s3) 0;
+  border: none;
+  border-top: 1px solid var(--nh-border-l2);
+}
+
+.md strong {
+  color: var(--nh-label-primary);
+  font-weight: 600;
+}
+
+.md del {
+  color: var(--nh-label-caption);
+}
+
+.md :not(pre) > code {
+  padding: 1px 5px;
+  border: 1px solid var(--nh-border-l1);
+  border-radius: 5px;
+  background: var(--nh-bg-code);
+  color: var(--nh-code-function);
+  font-size: 0.92em;
+}
+
+.md-link {
+  color: var(--nh-accent);
+  text-decoration: underline;
+  text-decoration-color: var(--nh-accent-line);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.md-link:hover {
+  text-decoration-color: var(--nh-accent);
+}
+
+.md-ref {
+  text-decoration: underline dotted var(--nh-border-l4);
+  text-underline-offset: 2px;
+}
+
+/* A wide table scrolls inside this frame and leaves the flow its width. */
+.md-table {
+  margin: 0 0 var(--s2);
+  overflow-x: auto;
+  border: 1px solid var(--nh-border-l2);
+  border-radius: var(--nh-radius-chip);
+}
+
+.md table {
+  border-collapse: collapse;
+  min-width: 100%;
+  font-size: 13px;
+}
+
+.md th,
+.md td {
+  padding: 5px var(--s3);
+  /* The body breaks a long word anywhere, which would let a cell shrink below
+     its words and the table never reach the width its frame scrolls at. */
+  overflow-wrap: break-word;
+  border-bottom: 1px solid var(--nh-border-l1);
+  text-align: left;
+  vertical-align: top;
+}
+
+.md th {
+  background: var(--nh-bg-layer-2);
+  color: var(--nh-label-primary);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.md tr:last-child > td {
+  border-bottom: none;
+}
+
+.md tbody tr:nth-child(even) {
+  background: var(--nh-row-stripe);
+}
+
+/* A fenced block: the language and a copy button over the code. */
+.md-code {
+  margin: 0 0 var(--s2);
+  overflow: hidden;
+  border: 1px solid var(--nh-border-l1);
+  border-radius: var(--nh-radius-chip);
+  background: var(--nh-bg-code);
+}
+
+.md-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 6px 3px var(--s3);
+  border-bottom: 1px solid var(--nh-border-l1);
+}
+
+.md-code-lang {
+  color: var(--nh-label-caption);
+  font: 500 10.5px var(--nh-font-sans);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.md-code pre {
+  margin: 0;
+  padding: var(--s2) var(--s3);
+  max-height: 480px;
+  overflow: auto;
+  color: var(--nh-code-text);
+  font: 400 12.5px/1.6 var(--nh-font-mono);
+  white-space: pre;
+  --nh-thumb: var(--nh-scrollbar-l2);
+  --nh-thumb-hover: var(--nh-scrollbar-l2-hover);
+}
+
+.md-code > .diff-rows {
+  padding: var(--s1) 0;
+  font: 400 12px/1.6 var(--nh-font-mono);
+}
+
+.md-code:has(> .diff-rows) {
+  overflow-x: auto;
+}
+
+.tok-kw,
+.tok-tag {
+  color: var(--nh-code-keyword);
+}
+
+.tok-str {
+  color: var(--nh-code-string);
+}
+
+.tok-num,
+.tok-lit {
+  color: var(--nh-code-number);
+}
+
+.tok-com {
+  color: var(--nh-code-comment);
+  font-style: italic;
+}
+
+.tok-fn {
+  color: var(--nh-code-function);
+}
+
+.tok-type {
+  color: var(--nh-code-type);
+}
+
 /* Commentary sits with the call it introduces. A half-sentence before a tool
    card is not a block of its own and is not spaced off like one. */
 .block.assistant:not(.final) {
@@ -1836,16 +2199,13 @@ details.block pre + pre {
   display: none;
 }
 
-.compaction-summary pre {
-  margin: 0;
+.compaction-body {
   padding: var(--s2) var(--s3);
   max-height: 420px;
   overflow: auto;
   border-top: 1px solid var(--nh-border-l1);
   color: var(--nh-label-tertiary);
-  font: 400 12px/1.55 var(--nh-font-mono);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  font-size: 12px;
 }
 
 /* What went into a summary. Still the conversation the user had, and dimmed

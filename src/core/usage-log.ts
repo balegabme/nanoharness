@@ -2,8 +2,9 @@
 import { appendFile, mkdir, readFile, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { isJsonObject } from '../shared/json.js'
+import { emptyUsage } from '../shared/usage.js'
 import { isAgentRole } from './agents.js'
-import { emptyUsage } from './types.js'
 import type { AgentRole } from './agents.js'
 import type { TurnUsage } from './types.js'
 
@@ -130,7 +131,7 @@ function parseRecord(line: string): UsageRecord | null {
   } catch {
     return null
   }
-  if (!isObject(value)) return null
+  if (!isJsonObject(value)) return null
   const { v, at, sessionId, workspaceId, turn, role, model, streamMs } = value
   if (typeof v !== 'number') return null
   if (typeof at !== 'number' || typeof sessionId !== 'string' || typeof turn !== 'number') return null
@@ -169,7 +170,7 @@ function parseRecord(line: string): UsageRecord | null {
 }
 
 function parseUsage(value: unknown): TurnUsage | null {
-  if (!isObject(value)) return null
+  if (!isJsonObject(value)) return null
   const parsed = emptyUsage()
   for (const key of USAGE_KEYS) {
     const n = value[key]
@@ -182,8 +183,4 @@ function parseUsage(value: unknown): TurnUsage | null {
 /** A dollar figure as the log may carry it, or `undefined` for anything else. */
 function money(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

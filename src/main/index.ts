@@ -5,6 +5,9 @@ import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { toolsText } from '../shared/format.js'
+import { emptyUsage, totalTokens } from '../shared/usage.js'
+import { resolveFacts } from '../shared/facts.js'
 import { createProvider } from '../providers/factory.js'
 import { BASH_TOOL, GUARDED_BASH_TOOL } from '../tools/bash.js'
 import { warmShell } from '../env/shell.js'
@@ -16,7 +19,7 @@ import { GLOB_TOOL, GREP_TOOL } from '../tools/search.js'
 import { WRITE_TOOL } from '../tools/write.js'
 import { EDIT_TOOL } from '../tools/edit.js'
 import { LOG_IMPROVEMENT_TOOL } from '../tools/log-improvement.js'
-import { SPAWN_TOOL, toolsText } from '../tools/spawn.js'
+import { SPAWN_TOOL } from '../tools/spawn.js'
 import { JOB_UPDATE_TOOL } from '../tools/job-update.js'
 import { AGENTS, AGENT_ROLES, HARNESS_HANDOFF, agentPrompt, isAgentRole, roleContext } from '../core/agents.js'
 import { EventBus } from '../core/event-bus.js'
@@ -36,9 +39,7 @@ import { buildReport } from '../core/usage-report.js'
 import type { UsageReport } from '../core/usage-report.js'
 import { Judge, approvalProblem, goalsFrom, mergeRules } from '../core/approval.js'
 import type { ApprovalConfig, PermissionMode } from '../core/approval.js'
-import { resolveFacts } from '../core/config.js'
 import type { SwitchName } from '../core/config.js'
-import { emptyUsage } from '../core/types.js'
 import { IPC_CHANNELS } from '../ipc/contract.js'
 import {
   approvalEndpoints,
@@ -1169,7 +1170,7 @@ app.whenReady().then(() => {
     const updated = await setSessionState(sessionId, stateOf(session))
     // The summary requests are the harness's own spend and belong to no turn,
     // so they get a line of their own under the turn they followed.
-    if (outcome.usage.input + outcome.usage.output + outcome.usage.cacheRead + outcome.usage.cacheWrite > 0) {
+    if (totalTokens(outcome.usage) > 0) {
       await appendUsage({
         at: Date.now(),
         sessionId,

@@ -1,8 +1,8 @@
 // doc: docs/harness/cost.md
+import { cacheHitRate, promptTokens, tokensPerSecond } from '../shared/usage.js'
+import { countText, moneyText, percentText, plural, rateText, shortTokens, skippedText } from '../shared/format.js'
 import { ask } from './confirm.js'
-import { el, message, must } from './dom.js'
-import { moneyText } from './facts.js'
-import { hitRate, promptTokens } from './metrics.js'
+import { el, message, metric, must } from './dom.js'
 import type { SpendRow, SpendTotals, UsageReport } from '../core/usage-report.js'
 import type { NanoBridge } from '../ipc/contract.js'
 
@@ -92,7 +92,7 @@ function draw(report: UsageReport): void {
   page.append(headline(report))
 
   if (ranNothing(report.totals)) {
-    page.append(el('p', 'cost-empty', report.skipped > 0 ? skippedText(report.skipped) : 'Nothing spent in this window.'))
+    page.append(el('p', 'cost-empty', report.skipped > 0 ? `${skippedText(report.skipped)}.` : 'Nothing spent in this window.'))
     body.replaceChildren(page)
     return
   }
@@ -122,26 +122,20 @@ function headline(report: UsageReport): HTMLElement {
   block.append(el('p', 'cost-figure', moneyText(totals.costUsd)))
 
   const line = el('div', 'usage-line')
-  line.append(metric('turns', count(totals.turns)))
-  line.append(metric('cache hit', hitText(totals.usage), 'hit'))
-  line.append(metric('in', tokens(promptTokens(totals.usage))))
-  line.append(metric('out', tokens(totals.usage.output)))
-  const rate = throughput(totals)
-  if (rate !== null) line.append(metric('tok/s', rate.toFixed(rate < 10 ? 1 : 0), 'rate'))
+  line.append(metric('turns', countText(totals.turns)))
+  line.append(metric('cache hit', percentText(cacheHitRate(totals.usage)), 'hit'))
+  line.append(metric('in', shortTokens(promptTokens(totals.usage))))
+  line.append(metric('out', shortTokens(totals.usage.output)))
+  const rate = tokensPerSecond(totals.usage.output, totals.streamMs)
+  if (rate !== null) line.append(metric('tok/s', rateText(rate), 'rate'))
   block.append(line)
 
   // A total with unpriced turns under it is a floor, and saying so is the
   // difference between a bill and a guess.
   if (totals.unpriced > 0) {
-    block.append(el('p', 'cost-floor', `At least: ${count(totals.unpriced)} of these turns ran on a model with no prices set.`))
+    block.append(el('p', 'cost-floor', `At least: ${countText(totals.unpriced)} of these turns ran on a model with no prices set.`))
   }
   return block
-}
-
-function metric(name: string, value: string, kind = ''): HTMLElement {
-  const pill = el('span', `metric ${kind}`.trim())
-  pill.append(el('span', undefined, name), el('b', undefined, value))
-  return pill
 }
 
 /**
@@ -227,7 +221,7 @@ function hitRuns(rows: readonly SpendRow[], slot: number): SVGElement[] {
   }
 
   for (const [index, row] of rows.entries()) {
-    const rate = hitRate(row.usage)
+    const rate = cacheHitRate(row.usage)
     if (rate === null) {
       flush()
       continue
@@ -294,7 +288,7 @@ function table(title: string, rows: readonly SpendRow[]): HTMLElement {
   const rest = rows.slice(ROWS)
   if (rest.length > 0) {
     const more = el('div', 'cost-row rest')
-    more.append(el('span', 'cost-label', `+ ${count(rest.length)} more`))
+    more.append(el('span', 'cost-label', `+ ${countText(rest.length)} more`))
     more.append(el('span', 'cost-turns', turnsText(rest.reduce((sum, row) => sum + row.turns, 0))))
     more.append(el('span', 'cost-hit', ''))
     more.append(el('span', 'cost-money', moneyText(rest.reduce((sum, row) => sum + row.costUsd, 0))))
@@ -314,8 +308,8 @@ function spendRow(row: SpendRow, dearest: number): HTMLElement {
   const label = el('span', 'cost-label', row.label)
   label.title = row.gone === true ? 'The id is all the log kept of this one.' : row.label
   line.append(label)
-  line.append(el('span', 'cost-turns', turnsText(row.turns) + (row.unpriced > 0 ? ` · ${count(row.unpriced)} unpriced` : '')))
-  line.append(el('span', 'cost-hit', hitText(row.usage)))
+  line.append(el('span', 'cost-turns', turnsText(row.turns) + (row.unpriced > 0 ? ` · ${countText(row.unpriced)} unpriced` : '')))
+  line.append(el('span', 'cost-hit', percentText(cacheHitRate(row.usage))))
   line.append(el('span', 'cost-money', moneyText(row.costUsd)))
   return line
 }
@@ -324,36 +318,22 @@ function spendRow(row: SpendRow, dearest: number): HTMLElement {
 function notes(report: UsageReport): HTMLElement | null {
   const lines: string[] = []
   if (report.outside > 0) lines.push(`${turnsText(report.outside)} outside this window.`)
-  if (report.skipped > 0) lines.push(skippedText(report.skipped))
+  if (report.skipped > 0) lines.push(`${skippedText(report.skipped)}.`)
   if (lines.length === 0) return null
   return el('p', 'cost-note', lines.join(' '))
 }
 
-function skippedText(skipped: number): string {
-  return `${count(skipped)} line${skipped === 1 ? '' : 's'} in the log this build cannot read: another schema version, or damaged.`
-}
-
 function windowText(window: number | null): string {
-  return window === null ? 'all time' : `last ${count(window)} days`
+  return window === null ? 'all time' : `last ${countText(window)} days`
 }
 
 function turnsText(turns: number): string {
-  return `${count(turns)} turn${turns === 1 ? '' : 's'}`
-}
-
-function hitText(usage: SpendTotals['usage']): string {
-  const rate = hitRate(usage)
-  return rate === null ? 'n/a' : `${(rate * 100).toFixed(0)}%`
-}
-
-/** Output tokens per second over the time the models actually generated for. */
-function throughput(totals: SpendTotals): number | null {
-  return totals.streamMs === 0 ? null : totals.usage.output / (totals.streamMs / 1000)
+  return plural(turns, 'turn')
 }
 
 function dayDetail(row: SpendRow): string {
   const spent = `${dayText(row.id)} · ${moneyText(row.costUsd)}`
-  return ranNothing(row) ? `${spent} · nothing ran` : `${spent} · ${turnsText(row.turns)} · cache hit ${hitText(row.usage)}`
+  return ranNothing(row) ? `${spent} · nothing ran` : `${spent} · ${turnsText(row.turns)} · cache hit ${percentText(cacheHitRate(row.usage))}`
 }
 
 /**
@@ -369,14 +349,4 @@ function dayText(day: string): string {
   const [year, month, date] = day.split('-').map(Number)
   if (year === undefined || month === undefined || date === undefined) return day
   return new Date(year, month - 1, date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-}
-
-const COMPACT = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 })
-
-function tokens(value: number): string {
-  return value < 1000 ? count(value) : COMPACT.format(value)
-}
-
-function count(value: number): string {
-  return value.toLocaleString('en-US')
 }

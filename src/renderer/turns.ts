@@ -1,4 +1,5 @@
 // doc: docs/harness/ui.md
+import { plural } from '../shared/format.js'
 import { GLYPH, el, icon, message, relativeTime } from './dom.js'
 import { openMenu } from './menu.js'
 import type { MenuItem } from './menu.js'
@@ -210,10 +211,6 @@ function following(turn: CheckpointView): HTMLElement[] {
 /** Where a node sits in the flow's scrolled content. */
 function offsetOf(node: HTMLElement): number {
   return node.getBoundingClientRect().top - host.stream.getBoundingClientRect().top + host.stream.scrollTop
-}
-
-function plural(count: number, word: string): string {
-  return `${count} ${word}${count === 1 ? '' : 's'}`
 }
 
 // ── the turns in the flow ──────────────────────────────────────────────

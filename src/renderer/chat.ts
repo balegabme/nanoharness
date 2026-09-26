@@ -1,11 +1,17 @@
 // doc: docs/harness/ui.md
-import { el, pretty } from './dom.js'
-import { costOf, moneyText } from './facts.js'
-import { hitText, promptTokens, shortTokens, Throughput, totalTokens } from './metrics.js'
+import { readToolDiff, withoutToolDiff } from '../shared/diff.js'
+import { costOf } from '../shared/facts.js'
+import { moneyText, percentText, rateText, shortTokens } from '../shared/format.js'
+import { cacheHitRate, floorUsage, promptTokens, subtractUsage, totalTokens } from '../shared/usage.js'
+import { diffRows } from './diff-rows.js'
+import { el, metric, pretty } from './dom.js'
+import { renderMarkdown, settledLength } from './markdown.js'
+import { Throughput } from './metrics.js'
 import type { ContextMeter } from './context-meter.js'
 import type { ImageView, TranscriptMessage } from '../ipc/contract.js'
 import type { AppEvent, PreventedCall, SessionNote, TurnRate, TurnUsage } from '../core/types.js'
 import type { ModelFacts } from '../core/config.js'
+import type { ToolDiff } from '../shared/diff.js'
 
 /**
  * The message flow. It is append-only and streams as the turn runs: thinking
@@ -38,7 +44,9 @@ export interface ChatHost {
    * Show the change an edit or write made, on its own and full width. Absent
    * where there is nowhere to put it.
    */
-  openDiff?(diff: DiffOpen): void
+  openDiff?(diff: ToolDiff): void
+  /** Open an http(s) link from an answer in the user's browser. */
+  openLink(url: string): void
 }
 
 /**
@@ -64,12 +72,6 @@ export interface StoredSpend {
   harnessUsage?: TurnUsage | undefined
   harnessCostUsd?: number | undefined
   rate?: TurnRate | undefined
-}
-
-/** A diff a tool result carried: the file it changed, and the unified text. */
-export interface DiffOpen {
-  path: string
-  text: string
 }
 
 /**
@@ -103,49 +105,12 @@ function withoutMarker(text: string): string {
 /** The tools whose result ends in a diff of what they changed. */
 const WRITES = new Set(['edit', 'write'])
 
-/** The fence `diffBlock` in `core/diff.ts` wraps a diff in. */
-const DIFF_FENCE = /```diff\n([\s\S]*?)\n```\s*$/
-
-/** The diff an edit or write put at the end of its result, if it did. */
-function toolDiff(text: string): DiffOpen | null {
-  const body = DIFF_FENCE.exec(text)?.[1]
-  if (body === undefined) return null
-  return { path: /^--- a\/(.*)$/m.exec(body)?.[1] ?? 'file', text: body }
-}
-
-/** The result with the diff taken out: the card opens it in a view of its own. */
-function withoutDiff(text: string): string {
-  return text.replace(DIFF_FENCE, '').trimEnd()
-}
-
 /**
  * What a shortened tool result looks like to the model. `core/compaction.ts`
  * does the cutting and these are its two lengths.
  */
 const PRUNED_TITLE =
   'The model now gets the first 4,096 and the last 1,024 characters of this output. The whole of it is kept here.'
-
-/**
- * One running total minus a share of it, so the remainder can be priced on its
- * own. Every field is clamped at zero: the two totals arrive in separate events
- * and a share that is momentarily ahead of the total it belongs to would
- * otherwise show as a negative token count.
- */
-function without(total: TurnUsage, share: TurnUsage): TurnUsage {
-  return {
-    input: Math.max(0, total.input - share.input),
-    output: Math.max(0, total.output - share.output),
-    cacheRead: Math.max(0, total.cacheRead - share.cacheRead),
-    cacheWrite: Math.max(0, total.cacheWrite - share.cacheWrite),
-    reasoning: Math.max(0, total.reasoning - share.reasoning),
-  }
-}
-
-function metric(name: string, value: string, kind?: string): HTMLElement {
-  const pill = el('span', kind === undefined ? 'metric' : `metric ${kind}`)
-  pill.append(el('b', undefined, value), el('span', undefined, name))
-  return pill
-}
 
 /**
  * The one argument worth showing beside the tool name, a path or a command,
@@ -184,6 +149,14 @@ export class ChatView {
    * marked then.
    */
   private assistantBlock: HTMLElement | null = null
+  /** The Markdown `assistantBody` is drawn from, as it has arrived so far. */
+  private assistantText = ''
+  /** How much of `assistantText` is drawn for good, up to a blank line outside a fence. */
+  private assistantSettled = 0
+  /** The nodes drawn from the rest, which the next frame replaces. */
+  private assistantTail: ChildNode[] = []
+  /** The frame the next redraw of the streaming answer is booked for. */
+  private assistantFrame: number | null = null
   private thinkingBody: HTMLElement | null = null
   private thinkingCard: HTMLDetailsElement | null = null
   /**
@@ -283,7 +256,7 @@ export class ChatView {
     const { rate, button, pills: line, note } = this.host.usage
     const tps = this.throughput.value
     rate.hidden = tps === null
-    if (tps !== null) rate.replaceChildren(el('b', undefined, tps.toFixed(tps < 10 ? 1 : 0)), el('span', undefined, 'tok/s'))
+    if (tps !== null) rate.replaceChildren(el('b', undefined, rateText(tps)), el('span', undefined, 'tok/s'))
     line.replaceChildren()
     button.hidden = usage === null
     if (usage === null) {
@@ -309,11 +282,11 @@ export class ChatView {
     // The conversation's own tokens are what the session's model priced, so the
     // harness's share comes out before the multiplication and its dollars go
     // back in afterwards.
-    const conversation = this.harnessSpend === null ? usage : without(usage, this.harnessSpend)
+    const conversation = this.harnessSpend === null ? usage : floorUsage(subtractUsage(usage, this.harnessSpend))
     const priced = this.facts === null ? null : costOf(conversation, this.facts)
     const spent = priced === null ? (this.harnessCostUsd > 0 ? this.harnessCostUsd : null) : priced + this.harnessCostUsd
     if (spent !== null) line.append(metric('spent', moneyText(spent), 'cost'))
-    if (promptTokens(usage) > 0) line.append(metric('hit', hitText(usage), 'hit'))
+    if (promptTokens(usage) > 0) line.append(metric('hit', percentText(cacheHitRate(usage)), 'hit'))
     if (usage.reasoning > 0) line.append(metric('reasoning', String(usage.reasoning)))
     const lines = ['Every turn added up, subagents included.']
     if (byAgents > 0) lines.push(`${byAgents} of the output was written by subagents this session started.`)
@@ -454,7 +427,9 @@ export class ChatView {
   compactionBlock(summary: string): void {
     const block = el('div', 'block compaction')
     const card = el('details', 'compaction-summary')
-    card.append(el('summary', undefined, 'summary of the conversation so far'), el('pre', undefined, summary))
+    const body = el('div', 'compaction-body md')
+    body.append(renderMarkdown(summary, this.host))
+    card.append(el('summary', undefined, 'summary of the conversation so far'), body)
     block.append(el('div', 'compaction-rule'), card)
     this.append(block)
   }
@@ -526,22 +501,6 @@ export class ChatView {
   }
 
   /**
-   * Make an edit or write card open its diff. The change is the whole of what
-   * the card is about, so the head of it opens the change, the same way a spawn
-   * card opens the agent it started.
-   */
-  private linkDiff(card: HTMLDetailsElement, diff: DiffOpen): void {
-    if (this.host.openDiff === undefined || card.dataset.diff !== undefined) return
-    card.dataset.diff = diff.path
-    const summary = card.querySelector('summary')
-    if (!(summary instanceof HTMLElement)) return
-    summary.addEventListener('click', event => {
-      event.preventDefault()
-      this.host.openDiff?.(diff)
-    })
-  }
-
-  /**
    * Take back what this round drew. The request failed part way through and is
    * being made again from the top, so the half a paragraph and the tool cards
    * already on screen belong to an answer that no longer exists.
@@ -577,6 +536,11 @@ export class ChatView {
     else this.host.stream.replaceChildren(this.host.mark, this.host.tail)
     if (this.host.mark !== undefined) this.host.mark.hidden = false
     this.toolCards.clear()
+    if (this.assistantFrame !== null) cancelAnimationFrame(this.assistantFrame)
+    this.assistantFrame = null
+    this.assistantText = ''
+    this.assistantSettled = 0
+    this.assistantTail = []
     this.assistantBody = null
     this.assistantBlock = null
     this.thinkingBody = null
@@ -613,36 +577,61 @@ export class ChatView {
   }
 
   /**
-   * The answer, told apart from the running commentary above it: a turn is
-   * mostly tool cards and half-sentences, and the thing the user asked for is
-   * the last block. Marked at the end of the turn and not while it streams,
-   * because a block followed by another tool call was never the answer.
-   */
-  /**
-   * The end of a piece of assistant text, and the block it leaves behind.
-   *
-   * Deltas arrive with whatever whitespace the model wrote around them, and
-   * `.body` is `pre-wrap`, so a trailing blank line is a blank line on screen:
-   * text that ends `.
-
-` between two tool calls draws a gap the width of the
-   * commentary itself. Text that was only whitespace leaves no block at all.
+   * The end of a piece of assistant text, and the block it leaves behind. The
+   * last redraw was a frame behind the text, so the block is drawn once more
+   * from all of it. Text that was only whitespace leaves no block at all.
    */
   private sealAssistant(): HTMLElement | null {
     const body = this.assistantBody
     const block = this.assistantBlock
+    const text = this.assistantText.trim()
+    if (this.assistantFrame !== null) cancelAnimationFrame(this.assistantFrame)
+    this.assistantFrame = null
     this.assistantBody = null
     this.assistantBlock = null
+    this.assistantText = ''
+    this.assistantSettled = 0
+    this.assistantTail = []
     if (body === null) return block
-    const text = (body.textContent ?? '').trim()
     if (text !== '') {
-      body.textContent = text
+      body.replaceChildren(renderMarkdown(text, this.host))
       return block
     }
     block?.remove()
     return null
   }
 
+  /**
+   * Redraw the streaming answer, following it down if the reader was at the
+   * bottom. Blocks that more text cannot change are drawn once and kept, so a
+   * selection or a scrolled table in them survives, and each frame parses only
+   * the paragraph still arriving.
+   */
+  private drawAssistant(): void {
+    this.assistantFrame = null
+    const body = this.assistantBody
+    if (body === null) return
+    const stream = this.host.stream
+    const pinned = stream.scrollHeight - stream.scrollTop - stream.clientHeight < 80
+    const text = this.assistantText
+    for (const node of this.assistantTail) node.remove()
+    const settled = settledLength(text, this.assistantSettled)
+    if (settled > this.assistantSettled) {
+      body.append(renderMarkdown(text.slice(this.assistantSettled, settled), this.host))
+      this.assistantSettled = settled
+    }
+    const tail = renderMarkdown(text.slice(settled), this.host)
+    this.assistantTail = [...tail.childNodes]
+    body.append(tail)
+    if (pinned) stream.scrollTop = stream.scrollHeight
+  }
+
+  /**
+   * The answer, told apart from the running commentary above it: a turn is
+   * mostly tool cards and half-sentences, and the thing the user asked for is
+   * the last block. Marked at the end of the turn and not while it streams,
+   * because a block followed by another tool call was never the answer.
+   */
   private markFinal(wrapper: HTMLElement | null): void {
     if (wrapper === null) return
     wrapper.classList.add('final')
@@ -655,11 +644,10 @@ export class ChatView {
     const summary = card.querySelector('summary')
     if (summary instanceof HTMLElement) summary.dataset.state = ok ? 'done' : 'failed'
     const id = subagentId(text)
-    // The card keeps the line that says what changed and hands the diff to
-    // the view that can show it properly. Only the two tools that write one
-    // are asked: a `read` of a patch file ends in a diff fence too, and that
-    // card is showing a file and not a change it made.
-    const diff = ok && WRITES.has(card.querySelector('.tool-name')?.textContent ?? '') ? toolDiff(text) : null
+    // Only the two tools that write a diff are asked for one: a `read` of a
+    // patch file ends in a diff fence too, and that card is showing a file and
+    // not a change it made.
+    const diff = ok && WRITES.has(card.querySelector('.tool-name')?.textContent ?? '') ? readToolDiff(text) : null
     if (id !== null) {
       const body = withoutMarker(text)
       const spent = subagentCost(body)
@@ -667,11 +655,38 @@ export class ChatView {
       // What the subagent came to goes under its card, in the flow, the same
       // line a turn's own total is drawn in under the answer.
       if (spent !== null) this.appendAfter(el('div', 'block summary', spent), card)
-    } else card.append(el('pre', undefined, diff === null ? text : withoutDiff(text)))
-    // A foreground spawn was already linked when its job started; `linkCard`
-    // leaves that one alone.
-    if (id !== null) this.linkCard(card, id)
-    else if (diff !== null) this.linkDiff(card, diff)
+      // A foreground spawn was already linked when its job started; `linkCard`
+      // leaves that one alone.
+      this.linkCard(card, id)
+    } else if (diff !== null) this.showDiff(card, diff, withoutToolDiff(text))
+    else card.append(el('pre', undefined, text))
+  }
+
+  /**
+   * An edit or write card, drawn as the change it made. The head counts the
+   * lines added and removed; opened, the card shows the diff itself in place
+   * of the arguments, which only repeat it, under the line the tool answered.
+   */
+  private showDiff(card: HTMLDetailsElement, diff: ToolDiff, said: string): void {
+    card.querySelector(':scope > pre')?.remove()
+    const summary = card.querySelector('summary')
+    if (summary instanceof HTMLElement) {
+      const stat = el('span', 'tool-stat')
+      stat.append(el('span', 'added', `+${diff.stat.added}`), el('span', 'removed', `−${diff.stat.removed}`))
+      summary.append(stat)
+    }
+    const head = el('div', 'tool-diff-head')
+    head.append(el('span', 'tool-diff-said', said))
+    const open = this.host.openDiff
+    if (open !== undefined) {
+      const full = el('button', 'tool-diff-open', 'Full view')
+      full.type = 'button'
+      full.addEventListener('click', () => open(diff))
+      head.append(full)
+    }
+    const body = el('div', 'tool-diff')
+    body.append(head, diffRows(diff.text, diff.path))
+    card.append(body)
   }
 
   /**
@@ -736,7 +751,8 @@ export class ChatView {
     if (message.thinking !== undefined && message.thinking !== '') this.thinkingBlock(message.thinking)
     if (message.text.trim() !== '') {
       const pair = this.blockPair('assistant', 'assistant')
-      pair.body.textContent = message.text.trim()
+      pair.body.classList.add('md')
+      pair.body.append(renderMarkdown(message.text.trim(), this.host))
       // An assistant message with text and no tool calls is where a turn
       // stopped, which is the same rule the live path uses: the loop runs
       // until the model asks for nothing more.
@@ -772,10 +788,14 @@ export class ChatView {
         if (this.thinkingCard !== null) this.thinkingCard.open = false
         if (this.assistantBody === null) {
           const pair = this.blockPair('assistant', 'assistant')
+          pair.body.classList.add('md')
           this.assistantBlock = pair.wrapper
           this.assistantBody = pair.body
         }
-        this.assistantBody.textContent += event.text
+        this.assistantText += event.text
+        // Deltas come faster than frames, so one redraw per frame is all that
+        // is ever seen.
+        this.assistantFrame ??= requestAnimationFrame(() => this.drawAssistant())
         break
       }
       case 'tool_call':

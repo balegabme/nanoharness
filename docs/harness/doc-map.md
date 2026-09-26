@@ -47,6 +47,7 @@ pnpm doc-check
 - `approval.md`: auto mode, its rules, its ladder, and what a verdict costs
 - `hooks.md`: the user's commands around a session, and trusting a project's hooks and MCP servers
 - `env-detection.md`: the shell, its PATH, and the machine facts in the prompt
+- `shared.md`: the pure helpers the main process, the CLI and the window all load
 - `improvements.md`: the flaw and improvement ledger (living doc)
 - `doc-map.md`: this page
 

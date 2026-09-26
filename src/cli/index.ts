@@ -6,6 +6,7 @@ import { runMcp } from './mcp.js'
 import { formatReport } from './usage.js'
 import { readUsage, usageLogPath } from '../core/usage-log.js'
 import { buildReport } from '../core/usage-report.js'
+import { plural } from '../shared/format.js'
 
 const require = createRequire(import.meta.url)
 const pkg = require('../../package.json') as { version: string }
@@ -62,7 +63,7 @@ async function runDocCheck(root: string): Promise<number> {
     return 0
   }
   for (const error of errors) process.stderr.write(`doc-check: ${error}\n`)
-  process.stderr.write(`doc-check: ${errors.length} problem${errors.length === 1 ? '' : 's'}\n`)
+  process.stderr.write(`doc-check: ${plural(errors.length, 'problem')}\n`)
   return 1
 }
 

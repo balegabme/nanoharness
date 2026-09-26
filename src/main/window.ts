@@ -5,6 +5,7 @@ import { dirname, join, normalize, sep } from 'node:path'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const RENDERER_DIR = join(HERE, '..', 'renderer')
+const SHARED_DIR = join(HERE, '..', 'shared')
 const PRELOAD = join(HERE, 'preload.mjs')
 const ICON = join(HERE, '..', 'assets', 'app-icon-256.png')
 
@@ -19,12 +20,21 @@ protocol.registerSchemesAsPrivileged([
   { scheme: SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } },
 ])
 
+/**
+ * The page is out/renderer, and /shared/ is out/shared, the pure helpers the
+ * window uses alongside the main process and the CLI. A renderer module at the
+ * root imports `../shared/x.js`, and a URL cannot climb above the root, so the
+ * browser asks for `/shared/x.js`. Nothing else outside out/renderer is served.
+ */
 export function serveRenderer(): void {
   protocol.handle(SCHEME, request => {
     const url = new URL(request.url)
     if (url.hostname !== HOST) return new Response('not found', { status: 404 })
-    const target = normalize(join(RENDERER_DIR, decodeURIComponent(url.pathname)))
-    if (target !== RENDERER_DIR && !target.startsWith(RENDERER_DIR + sep)) {
+    const path = decodeURIComponent(url.pathname)
+    const shared = path.startsWith('/shared/')
+    const root = shared ? SHARED_DIR : RENDERER_DIR
+    const target = normalize(join(root, shared ? path.slice('/shared'.length) : path))
+    if (target !== root && !target.startsWith(root + sep)) {
       return new Response('forbidden', { status: 403 })
     }
     return net.fetch(pathToFileURL(target).toString())

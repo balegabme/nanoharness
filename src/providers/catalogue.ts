@@ -1,5 +1,6 @@
 // doc: docs/harness/providers.md
-import { isEffort, sortEfforts } from '../core/config.js'
+import { isJsonObject } from '../shared/json.js'
+import { isEffort, sortEfforts } from '../shared/facts.js'
 import type { Effort, ModelFacts, ModelOffer, PriceTier, ProviderKind } from '../core/config.js'
 import { USER_AGENT } from './headers.js'
 
@@ -59,14 +60,14 @@ export async function catalogueFor(baseURL: string, timeoutMs = 15_000): Promise
 /** The same reading, over a catalogue already in hand. */
 export function readCatalogue(body: unknown, baseURL: string): Record<string, ModelFacts> {
   const address = addressOf(baseURL)
-  if (address === undefined || !isObject(body)) return {}
+  if (address === undefined || !isJsonObject(body)) return {}
   // Longest match wins. One host can front several endpoints that differ only
   // by path, and `https://host/api/v1` is a prefix of nothing under
   // `/api/team/v1`, so the deeper address is the one that answers for itself.
   let best: CatalogueProvider | undefined
   let reach = 0
   for (const entry of Object.values(body)) {
-    if (!isObject(entry)) continue
+    if (!isJsonObject(entry)) continue
     const provider = entry as CatalogueProvider
     const listed = addressOf(provider.api ?? '')
     if (listed === undefined || !address.startsWith(listed) || listed.length <= reach) continue
@@ -159,8 +160,4 @@ function addressOf(baseURL: string): string | undefined {
   } catch {
     return undefined
   }
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

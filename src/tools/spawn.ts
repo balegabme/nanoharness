@@ -1,12 +1,12 @@
 // doc: docs/harness/agents.md
-import { moneyText } from '../core/cost.js'
+import { moneyText, toolsText } from '../shared/format.js'
 import { defineTool, elapsedText } from '../core/session.js'
 import { AGENTS, AGENT_ROLES, isAgentRole } from '../core/agents.js'
 import { SPAWN_MODES, isSpawnMode } from '../core/spawn.js'
 import type { ArgsParse } from '../core/session.js'
 import type { AgentRole } from '../core/agents.js'
 import type { SpawnMode } from '../core/spawn.js'
-import type { ToolResult, ToolStats } from '../core/types.js'
+import type { ToolResult } from '../core/types.js'
 
 type SpawnArgs = { role: AgentRole; mode: SpawnMode; task: string; background: boolean }
 
@@ -24,18 +24,6 @@ function parseArgs(args: Record<string, unknown>): ArgsParse<SpawnArgs> {
 }
 
 const roles = AGENT_ROLES.map(role => `${role} (${AGENTS[role].purpose})`).join('; ')
-
-/**
- * What the subagent did to reach its answer: how many calls it made, how many
- * worked, how many came back an error. `docs/harness/agents.md` says why an
- * answer alone is not enough to go on.
- */
-export function toolsText(tools: ToolStats): string {
-  if (tools.calls === 0) return 'no tool calls'
-  const plural = tools.calls === 1 ? 'tool call' : 'tool calls'
-  const stopped = tools.prevented === 0 ? '' : `, ${tools.prevented} prevented`
-  return `${tools.calls} ${plural}, ${tools.ok} ok, ${tools.failed} failed${stopped}`
-}
 
 export const SPAWN_TOOL = defineTool<SpawnArgs>({
   input: {

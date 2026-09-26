@@ -2,7 +2,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { isJsonObject } from './protocol.js'
+import { isJsonObject, trimmedText } from '../shared/json.js'
 import { hashText } from '../core/project-trust.js'
 import type { ProjectFile } from '../core/project-trust.js'
 
@@ -55,12 +55,6 @@ export function mcpPaths(cwd: string, env: NodeJS.ProcessEnv = process.env): { g
   return { global: join(home, '.nanoharness', 'mcp.json'), project: join(cwd, '.nanoharness', 'mcp.json') }
 }
 
-function text(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined
-  const trimmed = value.trim()
-  return trimmed === '' ? undefined : trimmed
-}
-
 function strings(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
 }
@@ -68,14 +62,14 @@ function strings(value: unknown): string[] {
 export function parseServer(name: string, value: unknown): McpServer | null {
   if (!isJsonObject(value)) return null
   const enabled = value.enabled !== false
-  const url = text(value.url)
+  const url = trimmedText(value.url)
   if (url !== undefined) {
     const server: HttpServer = { name, transport: 'http', url, enabled }
-    const tokenEnv = text(value.tokenEnv)
+    const tokenEnv = trimmedText(value.tokenEnv)
     if (tokenEnv !== undefined) server.tokenEnv = tokenEnv
     return server
   }
-  const command = text(value.command)
+  const command = trimmedText(value.command)
   if (command === undefined) return null
   return {
     name,

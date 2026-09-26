@@ -1,8 +1,7 @@
+import { cacheHitRate, emptyUsage } from '../shared/usage.js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createAnthropicProvider } from './anthropic.js'
 import { createOpenAIProvider } from './openai.js'
-import { cacheHitRate, emptyUsage } from '../core/types.js'
-import { hitRate, hitText } from '../renderer/metrics.js'
 import type { ChatChunk, TurnUsage } from '../core/types.js'
 
 /**
@@ -174,48 +173,3 @@ describe('what a turn cost', () => {
   })
 })
 
-
-/**
- * The cache hit rate exists twice. `cacheHitRate` in src/core/types.ts is the
- * definition and is what `nh usage` and the main process divide; `hitRate` in
- * src/renderer/metrics.ts is a copy, because eslint.config.js forbids the
- * renderer a runtime import from core and the renderer ships as its own
- * bundle. A copy that nothing compares is a copy that drifts, and a window
- * that disagrees with `nh usage` about a turn they both watched is worse than
- * either number. So the two are run against the same spend, taken off the
- * wire and never made up, and have to answer the same.
- *
- * This test lives outside src/renderer because the same eslint rule would stop
- * it importing core from in there.
- */
-describe('the window and the CLI dividing the same turn', () => {
-  it('agree on an OpenAI turn, where the cached half had to be subtracted out', async () => {
-    const usage = await openai([
-      'data: {"usage":{"prompt_tokens":10000,"completion_tokens":50,"prompt_tokens_details":{"cached_tokens":9000}}}',
-      'data: [DONE]',
-    ])
-    expect(hitRate(usage)).toBe(cacheHitRate(usage))
-    expect(hitText(usage)).toBe('90%')
-  })
-
-  it('agree on an Anthropic turn, where a cache write is in the denominator', async () => {
-    const usage = await anthropic([
-      'event: message_start',
-      'data: {"type":"message_start","message":{"usage":{"input_tokens":10,"cache_read_input_tokens":20000,"cache_creation_input_tokens":5000}}}',
-      'event: message_delta',
-      'data: {"type":"message_delta","usage":{"output_tokens":8}}',
-      'event: message_stop',
-      'data: {"type":"message_stop"}',
-    ])
-    // A copy that forgot cacheWrite would say 100% here, and the CLI 80%.
-    expect(hitRate(usage)).toBe(cacheHitRate(usage))
-    expect(hitText(usage)).toBe('80%')
-  })
-
-  it('agree that a turn which sent nothing has no rate, with neither showing 0%', async () => {
-    const usage = await openai(['data: {"usage":{"prompt_tokens":0,"completion_tokens":0}}', 'data: [DONE]'])
-    expect(hitRate(usage)).toBeNull()
-    expect(cacheHitRate(usage)).toBeNull()
-    expect(hitText(usage)).toBe('n/a')
-  })
-})

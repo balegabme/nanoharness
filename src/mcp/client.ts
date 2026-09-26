@@ -1,13 +1,6 @@
 // doc: docs/harness/mcp.md
-import {
-  ConnectionClosedError,
-  McpProtocolError,
-  PROTOCOL_VERSION,
-  RequestTimeoutError,
-  SUPPORTED_VERSIONS,
-  isJsonObject,
-  isResponse,
-} from './protocol.js'
+import { isJsonObject } from '../shared/json.js'
+import { ConnectionClosedError, McpProtocolError, PROTOCOL_VERSION, RequestTimeoutError, SUPPORTED_VERSIONS, isResponse } from './protocol.js'
 import type { Transport } from './transport.js'
 import type { JsonRpcMessage } from './protocol.js'
 

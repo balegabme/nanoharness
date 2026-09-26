@@ -1,5 +1,5 @@
 // doc: docs/harness/mcp.md
-import { isJsonObject } from './protocol.js'
+import { isJsonObject } from '../shared/json.js'
 import type { JsonSchema } from '../core/types.js'
 
 /**

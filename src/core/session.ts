@@ -1,16 +1,19 @@
 // doc: docs/harness/overview.md
+import { isJsonObject } from '../shared/json.js'
+import { addUsage, emptyUsage, promptTokens, subtractUsage, totalTokens } from '../shared/usage.js'
+import { moneyText, plural, shortTokens, toolsText } from '../shared/format.js'
+import { costOf } from '../shared/facts.js'
 import { EventBus } from './event-bus.js'
 import { ProviderError, backoffFor, isContextOverflow, isRetryable, sleep } from './provider.js'
 import type { ChatInput, ChatProvider } from './provider.js'
 import type { Effort, ModelFacts } from './config.js'
-import { costOf, moneyText } from './cost.js'
 import { Calibration, KEEP_RATIO, buildLedger, estimateParts, partsTotal, reserveFor, toolTokens } from './context.js'
 import type { Anchor } from './context.js'
 import { FLAT_SYSTEM, SUMMARY_INSTRUCTION, flatInstruction, flatten, planCut, prunable, prunedText, wrapSummary } from './compaction.js'
 import type { Cut } from './compaction.js'
 import { workspaceGate } from './scope.js'
 import type { AccessGate } from './scope.js'
-import { emptyToolStats, emptyUsage } from './types.js'
+import { emptyToolStats } from './types.js'
 import { ReadIndex } from './read-index.js'
 import { applyMarks, marksOf, promptLine, shownPath } from './checkpoints.js'
 import type { Checkpoint, CheckpointStore, FileGuard, Kept, Restored, RewindMode } from './checkpoints.js'
@@ -101,10 +104,6 @@ export function defineTool<A>(spec: ToolSpec<A>): Tool {
       return { ok: false, summary: error, content: error, isError: true }
     },
   }
-}
-
-function isJsonObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 /**
@@ -211,7 +210,7 @@ function fileList(files: readonly string[]): string {
   const head = files.slice(0, FILES_LISTED).join(', ')
   const rest = files.length - FILES_LISTED
   const named = rest > 0 ? `${head}, and ${rest} more` : head
-  return ` · ${files.length} file${files.length === 1 ? '' : 's'} changed: ${named}`
+  return ` · ${plural(files.length, 'file')} changed: ${named}`
 }
 
 /**
@@ -220,14 +219,8 @@ function fileList(files: readonly string[]): string {
  * re-opened session shows the line it showed live. The model is never sent it.
  */
 function turnSummary(tools: ToolStats, files: readonly string[], ms: number, spent: number | null): string {
-  // "prevented" is only ever shown when there is one.
-  const stopped = tools.prevented === 0 ? '' : `, ${tools.prevented} prevented`
-  const calls =
-    tools.calls === 0
-      ? 'no tool calls'
-      : `${tools.calls} tool call${tools.calls === 1 ? '' : 's'}, ${tools.ok} ok, ${tools.failed} failed${stopped}`
   const cost = spent === null ? '' : ` · ${moneyText(spent)}`
-  return `${calls}${fileList(files)} · ${elapsedText(ms)}${cost}`
+  return `${toolsText(tools)}${fileList(files)} · ${elapsedText(ms)}${cost}`
 }
 
 const REWOUND: Record<RewindMode, string> = {
@@ -727,8 +720,8 @@ export class Session {
    */
   addSubagentUsage(delta: TurnUsage): void {
     this.addUsage(delta)
-    addInto(this.subagentUsage, delta)
-    addInto(this.turnSubagentUsage, delta)
+    addUsage(this.subagentUsage, delta)
+    addUsage(this.turnSubagentUsage, delta)
     this.emitUsage()
   }
 
@@ -739,8 +732,8 @@ export class Session {
    */
   addHarnessUsage(delta: TurnUsage, costUsd: number | null): void {
     this.addUsage(delta)
-    addInto(this.harnessUsage, delta)
-    addInto(this.turnHarnessUsage, delta)
+    addUsage(this.harnessUsage, delta)
+    addUsage(this.turnHarnessUsage, delta)
     if (costUsd !== null) {
       this.harnessCostUsd += costUsd
       this.turnHarnessCostUsd += costUsd
@@ -809,7 +802,7 @@ export class Session {
    * a turn that cost nothing.
    */
   private turnCost(): number | null {
-    const conversation = this.priced(subtract(this.turnUsage, this.turnHarnessUsage))
+    const conversation = this.priced(subtractUsage(this.turnUsage, this.turnHarnessUsage))
     return conversation === null ? null : conversation + this.turnHarnessCostUsd
   }
 
@@ -882,8 +875,7 @@ export class Session {
       // and not in the window: the window knows only what is selected now.
       // A turn whose usage nobody reported is not a turn that cost nothing, so
       // the cost is left off the line and never printed as $0.
-      const counted = this.turnUsage.input + this.turnUsage.output + this.turnUsage.cacheRead + this.turnUsage.cacheWrite
-      const spent = counted > 0 ? this.turnCost() : null
+      const spent = totalTokens(this.turnUsage) > 0 ? this.turnCost() : null
       this.summarize(turnSummary(this.turnTally, [...this.turnFiles], Date.now() - this.turnStartedAt, spent))
       // A job that finished during the last round queued its answer and found
       // no round left to be folded into. The transcript is balanced here on
@@ -999,11 +991,11 @@ export class Session {
         // A fresh total and not a running one: `round.usage` is the object
         // the provider handed over, and the caller reads it again.
         const usage = emptyUsage()
-        addInto(usage, round.usage)
-        addInto(usage, carried)
+        addUsage(usage, round.usage)
+        addUsage(usage, carried)
         return { ...round, usage }
       } catch (err) {
-        addInto(carried, spent)
+        addUsage(carried, spent)
         // The rescue is not a retry of the same bytes, so it spends no attempt.
         if (!this.stopped && !rescued && this.autoCompact && isContextOverflow(err)) {
           rescued = true
@@ -1118,7 +1110,7 @@ export class Session {
    * sends no usage, and is no measurement.
    */
   private measured(usage: TurnUsage, estimated: number): void {
-    const reported = usage.input + usage.cacheRead + usage.cacheWrite
+    const reported = promptTokens(usage)
     if (reported <= 0) return
     this.calibration.sample(reported, estimated)
     this.anchor = { reported, estimated }
@@ -1143,7 +1135,7 @@ export class Session {
     try {
       await this.keepRewind()
       const compacted = await this.summarise('manual')
-      const usage = subtract(this.harnessUsage, before)
+      const usage = subtractUsage(this.harnessUsage, before)
       const priced = this.facts !== undefined && costOf(usage, this.facts) !== null
       return { compacted, usage, costUsd: priced ? this.harnessCostUsd - cost : null }
     } finally {
@@ -1386,7 +1378,7 @@ export class Session {
       const estimated = partsTotal(estimateParts(messages, this.toolSize))
       const answer = await this.ask(this.request(messages, this.tools.map(t => t.input)))
       if (answer === null) continue
-      if (answer.usageRead) this.calibration.sample(answer.usage.input + answer.usage.cacheRead + answer.usage.cacheWrite, estimated)
+      if (answer.usageRead) this.calibration.sample(promptTokens(answer.usage), estimated)
       if (answer.toolCalls === 0 && answer.text !== '') return answer.text
     }
     return null
@@ -1482,10 +1474,10 @@ export class Session {
     })
     const how = HOW[reason]
     const what = [
-      compacted > 0 ? `${compacted} message${compacted === 1 ? '' : 's'} summarised` : '',
-      pruned.length > 0 ? `${pruned.length} tool result${pruned.length === 1 ? '' : 's'} shortened` : '',
+      compacted > 0 ? `${plural(compacted, 'message')} summarised` : '',
+      pruned.length > 0 ? `${plural(pruned.length, 'tool result')} shortened` : '',
     ].filter(part => part !== '')
-    this.note(`${how}: ${what.join(', ')}, context ${tokensText(before)} to ${tokensText(after)} tokens.`)
+    this.note(`${how}: ${what.join(', ')}, context ${shortTokens(before)} to ${shortTokens(after)} tokens.`)
     this.emitContext()
   }
 
@@ -1723,8 +1715,8 @@ export class Session {
   }
 
   private addUsage(u: TurnUsage): void {
-    addInto(this.totalUsage, u)
-    addInto(this.turnUsage, u)
+    addUsage(this.totalUsage, u)
+    addUsage(this.turnUsage, u)
   }
 }
 
@@ -1774,11 +1766,6 @@ function wireCopy(m: ChatMessage, blind: boolean): ChatMessage {
   }
 }
 
-/** A token count for a sentence: `152k` from ten thousand up, the plain number below. */
-function tokensText(tokens: number): string {
-  return tokens >= 10_000 ? `${Math.round(tokens / 1000)}k` : tokens.toLocaleString('en-US')
-}
-
 /** Overwrite a usage report with another, in place. */
 function copyInto(target: TurnUsage, source: TurnUsage): void {
   target.input = source.input
@@ -1786,24 +1773,4 @@ function copyInto(target: TurnUsage, source: TurnUsage): void {
   target.cacheRead = source.cacheRead
   target.cacheWrite = source.cacheWrite
   target.reasoning = source.reasoning
-}
-
-/** A usage report with one of its shares taken out. */
-function subtract(total: TurnUsage, share: TurnUsage): TurnUsage {
-  return {
-    input: total.input - share.input,
-    output: total.output - share.output,
-    cacheRead: total.cacheRead - share.cacheRead,
-    cacheWrite: total.cacheWrite - share.cacheWrite,
-    reasoning: total.reasoning - share.reasoning,
-  }
-}
-
-/** Add one usage report into a running total, in place. */
-function addInto(target: TurnUsage, delta: TurnUsage): void {
-  target.input += delta.input
-  target.output += delta.output
-  target.cacheRead += delta.cacheRead
-  target.cacheWrite += delta.cacheWrite
-  target.reasoning += delta.reasoning
 }

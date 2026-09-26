@@ -1,18 +1,9 @@
 import { describe, expect, it } from 'vitest'
+import { clampEffort, costOf, EFFORTS, factGaps, resolveFacts } from '../shared/facts.js'
+import { moneyText } from '../shared/format.js'
+import { priceText } from '../renderer/facts.js'
 import { readFacts, readOffers } from './model-facts.js'
-import { clampEffort as coreClamp, EFFORTS as CORE_EFFORTS, factGaps, PRICES as CORE_PRICES, resolveFacts } from '../core/config.js'
-import { costOf, moneyText } from '../core/cost.js'
-import {
-  clampEffort,
-  costOf as windowCost,
-  EFFORTS,
-  PRICES,
-  factGaps as windowGaps,
-  moneyText as windowMoney,
-  priceText,
-  resolveFacts as windowResolve,
-} from '../renderer/facts.js'
-import type { Effort, ModelFacts, ProviderRecord } from '../core/config.js'
+import type { ModelFacts, ProviderRecord } from '../core/config.js'
 import type { TurnUsage } from '../core/types.js'
 
 /**
@@ -95,28 +86,6 @@ describe('what the harness believes about a model', () => {
     expect(factGaps(resolveFacts(filled, 'm'))).toEqual([])
   })
 })
-
-/**
- * The window keeps its own copy of the scale and of these two functions.
- * `src/core/config.ts` holds the definitions and the main process uses those,
- * but eslint.config.js forbids the renderer a runtime import from core, so the
- * copies are held against each other here.
- */
-
-const CASES: ModelFacts[] = [
-  {},
-  { efforts: [] },
-  { efforts: ['low', 'high'] },
-  { input: 0, output: 0 },
-  { input: 1.25 },
-  { input: 1.25, output: 10, cacheRead: 0.125 },
-  { efforts: ['none', 'medium'], input: 3, output: 15 },
-  { maxOutput: 64_000 },
-  { efforts: ['low', 'medium'], maxOutput: 8_192 },
-  { vision: true },
-  { vision: false },
-  { input: 3, vision: true },
-]
 
 function record(facts?: ModelFacts, overrides?: ModelFacts): ProviderRecord {
   return {
@@ -222,38 +191,7 @@ describe('whether a model takes images', () => {
   })
 })
 
-describe('the window and the main process describing the same model', () => {
-  it('offers the same effort scale, in the same order', () => {
-    expect(EFFORTS).toEqual(CORE_EFFORTS)
-  })
-
-  it('prices the same halves of a model', () => {
-    expect(PRICES).toEqual(CORE_PRICES)
-  })
-
-  it('agrees on what is missing, for every shape a model can arrive in', () => {
-    for (const facts of CASES) expect(windowGaps(facts)).toEqual(factGaps(facts))
-    expect(windowGaps(undefined)).toEqual(factGaps(undefined))
-  })
-
-  it('agrees on what a typed correction does to an endpoint answer', () => {
-    for (const reported of CASES) {
-      for (const typed of CASES) {
-        const provider = record(reported, typed)
-        expect(windowResolve(provider, 'm')).toEqual(resolveFacts(provider, 'm'))
-      }
-    }
-  })
-})
-
 describe('an effort the model does not take', () => {
-  it('lands on the same level in the window as in the main process', () => {
-    const lists: Effort[][] = [['none', 'low', 'medium', 'high'], ['low', 'medium', 'high'], ['none', 'high'], ['low', 'high'], ['max']]
-    for (const offered of lists) {
-      for (const wanted of EFFORTS) expect(clampEffort(offered, wanted)).toBe(coreClamp(offered, wanted))
-    }
-  })
-
   it('steps down the scale and never falls to the bottom', () => {
     expect(clampEffort(['none', 'low', 'medium', 'high'], 'max')).toBe('high')
     expect(clampEffort(['low', 'medium', 'high'], 'minimal')).toBe('low')
@@ -338,12 +276,6 @@ describe('a model that charges more for a long prompt', () => {
     expect(costOf(usage({ input: 600_000 }), steps)).toBeCloseTo(4.8, 10)
   })
 
-  it('is priced the same in the window as in the main process', () => {
-    for (const run of [usage({ input: 199_999 }), usage({ input: 200_001, output: 5 }), usage({ cacheRead: 400_000 })]) {
-      expect(windowCost(run, TIERED)).toEqual(costOf(run, TIERED))
-    }
-  })
-
   it('drops the tiers when the user has typed a price of their own', () => {
     const record: ProviderRecord = {
       id: 'p',
@@ -357,7 +289,6 @@ describe('a model that charges more for a long prompt', () => {
     // The form offers no way to edit a tier, so keeping one would double a
     // number the user had just corrected.
     expect(resolveFacts(record, 'm').tiers).toBeUndefined()
-    expect(windowResolve(record, 'm').tiers).toBeUndefined()
     // A correction that says nothing about price leaves them alone.
     expect(resolveFacts({ ...record, overrides: { m: { vision: true } } }, 'm').tiers).toEqual(TIERED.tiers)
   })
@@ -392,22 +323,5 @@ describe('what a turn cost', () => {
     expect(moneyText(0.000_02)).toBe('<$0.0001')
     expect(moneyText(0.0123)).toBe('$0.012')
     expect(moneyText(12.345)).toBe('$12.35')
-  })
-
-  it('is priced the same in the window as in the main process', () => {
-    const runs = [
-      usage({}),
-      usage({ input: 1, output: 1 }),
-      usage({ input: 12_345, output: 678, cacheRead: 90_000, cacheWrite: 1_234, reasoning: 500 }),
-    ]
-    for (const run of runs) {
-      for (const facts of [...CASES, PRICED]) expect(windowCost(run, facts)).toEqual(costOf(run, facts))
-    }
-  })
-
-  it('writes a figure the same way in the window as in the main process', () => {
-    for (const usd of [0, 0.000_02, 0.000_1, 0.005, 0.0123, 0.5, 1, 12.345, 980.4]) {
-      expect(windowMoney(usd)).toBe(moneyText(usd))
-    }
   })
 })

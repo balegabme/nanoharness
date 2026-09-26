@@ -2,6 +2,7 @@
 import { loadServers, mcpPaths, parseServer, readEntries, removeEntry, writeEntry } from '../mcp/config.js'
 import { McpHub } from '../mcp/hub.js'
 import { ProjectTrust, projectTrustPath } from '../core/project-trust.js'
+import { plural } from '../shared/format.js'
 import type { McpServer } from '../mcp/config.js'
 
 /** `nh mcp`: manage MCP servers. */
@@ -293,7 +294,7 @@ async function check(flags: Flags): Promise<number> {
     for (const status of hub.status) {
       process.stdout.write(
         status.connected
-          ? `ok    ${status.name}  ${status.toolCount} tool${status.toolCount === 1 ? '' : 's'}\n`
+          ? `ok    ${status.name}  ${plural(status.toolCount, 'tool')}\n`
           : `fail  ${status.name}  ${status.error ?? 'unknown reason'}\n`,
       )
     }

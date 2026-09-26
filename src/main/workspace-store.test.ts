@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { emptyUsage } from '../shared/usage.js'
 import { Session } from '../core/session.js'
-import { emptyUsage } from '../core/types.js'
 import { Throughput } from '../renderer/metrics.js'
 import {
   acceptImages,

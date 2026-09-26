@@ -1,6 +1,6 @@
 // doc: docs/harness/cost.md
+import { addUsage, emptyUsage, subtractUsage, totalTokens } from '../shared/usage.js'
 import { AGENTS } from './agents.js'
-import { emptyUsage } from './types.js'
 import type { AgentRole } from './agents.js'
 import type { TurnUsage } from './types.js'
 import type { UsageRecord } from './usage-log.js'
@@ -122,7 +122,7 @@ function totalsOf(records: readonly UsageRecord[]): SpendTotals {
 }
 
 function addTurn(totals: SpendTotals, record: UsageRecord): void {
-  addInto(totals.usage, record.usage)
+  addUsage(totals.usage, record.usage)
   // An unpriced turn still ran the harness's own requests, which are priced at
   // their model's rate: that dollar was spent and is named here. The rest of
   // the turn is not guessed at, and `unpriced` is what says the figure is short.
@@ -168,12 +168,8 @@ function group(
 /** Dearest first; a tie on money is broken by tokens, then by which ran last. */
 function bySpend(a: SpendRow, b: SpendRow): number {
   if (b.costUsd !== a.costUsd) return b.costUsd - a.costUsd
-  const tokens = promptAndOutput(b.usage) - promptAndOutput(a.usage)
+  const tokens = totalTokens(b.usage) - totalTokens(a.usage)
   return tokens !== 0 ? tokens : b.at - a.at
-}
-
-function promptAndOutput(usage: TurnUsage): number {
-  return usage.input + usage.cacheRead + usage.cacheWrite + usage.output
 }
 
 /**
@@ -190,7 +186,7 @@ function phaseRows(records: readonly UsageRecord[]): SpendRow[] {
   }
 
   for (const record of records) {
-    const conversation = subtract(record.usage, record.subagent, record.harness)
+    const conversation = subtractUsage(record.usage, record.subagent, record.harness)
     // What the session's own model charged, which is the turn less the two
     // shares that were priced elsewhere. Zero on an unpriced turn, where
     // `unpriced` on the row is what says the column is short.
@@ -203,7 +199,7 @@ function phaseRows(records: readonly UsageRecord[]): SpendRow[] {
   }
 
   // A harness row can hold nothing but compactions, which are no turns.
-  return [rows.conversation, rows.subagents, rows.harness].filter(row => row.turns > 0 || promptAndOutput(row.usage) > 0)
+  return [rows.conversation, rows.subagents, rows.harness].filter(row => row.turns > 0 || totalTokens(row.usage) > 0)
 }
 
 function blankRow(id: string, label: string): SpendRow {
@@ -211,8 +207,8 @@ function blankRow(id: string, label: string): SpendRow {
 }
 
 function note(row: SpendRow, usage: TurnUsage, costUsd: number, record: UsageRecord): void {
-  if (promptAndOutput(usage) === 0 && costUsd === 0) return
-  addInto(row.usage, usage)
+  if (totalTokens(usage) === 0 && costUsd === 0) return
+  addUsage(row.usage, usage)
   row.costUsd += costUsd
   row.at = Math.max(row.at, record.at)
   if (record.betweenTurns === true) return
@@ -253,25 +249,4 @@ function endOfDay(at: number): number {
   const date = new Date(at)
   date.setHours(23, 59, 59, 999)
   return date.getTime()
-}
-
-/** `total` with the named shares taken out, field by field. */
-function subtract(total: TurnUsage, ...shares: TurnUsage[]): TurnUsage {
-  const left = { ...total }
-  for (const share of shares) {
-    left.input -= share.input
-    left.output -= share.output
-    left.cacheRead -= share.cacheRead
-    left.cacheWrite -= share.cacheWrite
-    left.reasoning -= share.reasoning
-  }
-  return left
-}
-
-function addInto(target: TurnUsage, delta: TurnUsage): void {
-  target.input += delta.input
-  target.output += delta.output
-  target.cacheRead += delta.cacheRead
-  target.cacheWrite += delta.cacheWrite
-  target.reasoning += delta.reasoning
 }

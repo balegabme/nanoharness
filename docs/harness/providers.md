@@ -20,7 +20,6 @@ Files:
 - src/providers/profiles.ts: the endpoints the harness has met before, and the one file allowed to name them
 - src/providers/catalogue.ts: what the public model catalogue says about the models at an address
 - src/providers/model-facts.ts: what a `/models` answer says about each model, where it says anything
-- src/core/cost.ts: what a run of tokens came to, at one model's prices
 
 ## OpenAI provider
 
@@ -303,7 +302,7 @@ reads the list top to bottom.
 
 ## What a turn cost
 
-`costOf` (`src/core/cost.ts`) prices a `TurnUsage` against one model's
+`costOf` (`src/shared/facts.ts`) prices a `TurnUsage` against one model's
 `ModelFacts` and returns dollars, or `null` when the model has no price. Input,
 output and both halves of the cache are charged at their own rate; a cache rate
 nobody has given falls back to the input rate, which is what a provider that
@@ -439,9 +438,9 @@ staging address like any other. Nothing about it is a separate kind of provider.
 What each of its models costs is not in this file. That is the catalogue's
 answer, read live, and the section below has it.
 
-The window cannot import this layer, because `app://` serves `out/renderer`
-alone. The list travels on `ConfigStatus` instead of being written down twice,
-which is the difference between this and `src/renderer/facts.ts`.
+The window cannot import this layer, because `app://` serves only
+`out/renderer` and `out/shared` (`shared.md`). The list travels on
+`ConfigStatus` instead of being written down twice.
 
 The value is the session's own id, which is already stable across its turns and
 distinct between sessions. The approval judge sends `<session id>-approval`

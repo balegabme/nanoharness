@@ -1,8 +1,7 @@
 // doc: docs/harness/approval.md
-import { costOf } from './cost.js'
-import { clampEffort, resolveFacts } from './config.js'
+import { emptyUsage } from '../shared/usage.js'
+import { clampEffort, costOf, resolveFacts } from '../shared/facts.js'
 import { backoffFor, isRetryable, sleep } from './provider.js'
-import { emptyUsage } from './types.js'
 import type { Effort, ProviderRecord } from './config.js'
 import type { ChatProvider } from './provider.js'
 import type { AccessIntent } from './scope.js'

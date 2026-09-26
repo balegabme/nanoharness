@@ -1,6 +1,6 @@
 // doc: docs/harness/agents.md
 import { randomUUID } from 'node:crypto'
-import { emptyUsage } from './types.js'
+import { emptyUsage } from '../shared/usage.js'
 import type { EventBus } from './event-bus.js'
 import type { ToolStats, TurnUsage } from './types.js'
 import type { AgentRole } from './agents.js'

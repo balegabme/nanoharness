@@ -1,5 +1,5 @@
 // doc: docs/harness/agents.md
-import { costOf } from './cost.js'
+import { costOf } from '../shared/facts.js'
 import { EventBus } from './event-bus.js'
 import { Session } from './session.js'
 import type { Tool } from './session.js'

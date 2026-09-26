@@ -1,8 +1,8 @@
 // doc: docs/harness/providers.md
+import { emptyUsage } from '../shared/usage.js'
 import { BAD_SSE, NO_BODY, ProviderError, StreamBrokenError, retryAfterMs } from '../core/provider.js'
 import type { ChatProvider, ChatInput } from '../core/provider.js'
 import type { ChatChunk, ChatMessage, ImageType, JsonSchema, ThinkingBlock, ToolCall, ToolInput, TurnUsage } from '../core/types.js'
-import { emptyUsage } from '../core/types.js'
 import { endpointURL } from '../core/config.js'
 import { readOffers } from './model-facts.js'
 import { wireHeaders } from './headers.js'

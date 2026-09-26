@@ -1,5 +1,6 @@
 // doc: docs/harness/providers.md
-import { isEffort, sortEfforts } from '../core/config.js'
+import { isEffort, sortEfforts } from '../shared/facts.js'
+import { jsonObject } from '../shared/json.js'
 import type { Effort, ModelFacts, ModelOffer } from '../core/config.js'
 
 /**
@@ -10,7 +11,7 @@ import type { Effort, ModelFacts, ModelOffer } from '../core/config.js'
 export function readOffers(data: readonly unknown[]): ModelOffer[] {
   const byId = new Map<string, ModelOffer>()
   for (const entry of data) {
-    const record = object(entry)
+    const record = jsonObject(entry)
     if (record === undefined) continue
     const id = record.id
     if (typeof id !== 'string' || id.trim() === '') continue
@@ -69,7 +70,7 @@ export function readFacts(entry: Record<string, unknown>): ModelFacts {
  * question and not as a no.
  */
 function readVision(entry: Record<string, unknown>): boolean | undefined {
-  const architecture = object(entry.architecture)
+  const architecture = jsonObject(entry.architecture)
   const modalities = architecture?.input_modalities ?? entry.input_modalities
   if (Array.isArray(modalities)) return modalities.some(one => one === 'image')
   // `text+image->text`, the older spelling of the same list.
@@ -78,12 +79,12 @@ function readVision(entry: Record<string, unknown>): boolean | undefined {
 
   const capabilities = entry.capabilities
   if (Array.isArray(capabilities)) return capabilities.some(one => one === 'vision')
-  const declared = object(capabilities)?.vision
+  const declared = jsonObject(capabilities)?.vision
   if (typeof declared === 'boolean') return declared
-  const supported = object(declared)?.supported
+  const supported = jsonObject(declared)?.supported
   if (typeof supported === 'boolean') return supported
 
-  const flag = entry.supports_vision ?? object(entry.model_info)?.supports_vision
+  const flag = entry.supports_vision ?? jsonObject(entry.model_info)?.supports_vision
   return typeof flag === 'boolean' ? flag : undefined
 }
 
@@ -100,15 +101,15 @@ function readVision(entry: Record<string, unknown>): boolean | undefined {
  * compaction run a little early and nothing worse.
  */
 function readWindow(entry: Record<string, unknown>): number | undefined {
-  const info = object(entry.model_info)
+  const info = jsonObject(entry.model_info)
   const candidates = [
     entry.context_length,
     entry.context_window,
     entry.max_context_length,
     entry.max_input_tokens,
     info?.max_input_tokens,
-    object(entry.top_provider)?.context_length,
-    object(entry.limit)?.context,
+    jsonObject(entry.top_provider)?.context_length,
+    jsonObject(entry.limit)?.context,
   ]
   for (const value of candidates) {
     if (typeof value === 'number' && Number.isFinite(value) && value > 0) return Math.floor(value)
@@ -131,12 +132,12 @@ const PER_MILLION = 1_000_000
 function readEfforts(entry: Record<string, unknown>): Effort[] {
   const declared = readCapabilities(entry)
   if (declared !== undefined) return declared
-  const reasoning = object(object(entry.metadata)?.reasoning)
+  const reasoning = jsonObject(jsonObject(entry.metadata)?.reasoning)
   const lists = [
     reasoning?.supported_efforts,
     entry.supported_reasoning_efforts,
     entry.supported_efforts,
-    object(entry.reasoning)?.supported_efforts,
+    jsonObject(entry.reasoning)?.supported_efforts,
   ]
   for (const list of lists) {
     if (!Array.isArray(list)) continue
@@ -153,8 +154,8 @@ function readEfforts(entry: Record<string, unknown>): Effort[] {
  * `model_info`.
  */
 function firstPrice(entry: Record<string, unknown>, nested: readonly string[], flat: readonly string[]): number | undefined {
-  const pricing = object(entry.pricing)
-  const info = object(entry.model_info)
+  const pricing = jsonObject(entry.pricing)
+  const info = jsonObject(entry.model_info)
   for (const key of nested) {
     const value = price(pricing?.[key])
     if (value !== undefined) return value * PER_MILLION
@@ -182,13 +183,13 @@ function firstPrice(entry: Record<string, unknown>, nested: readonly string[], f
  * back undefined and the other shapes below get their turn.
  */
 function readCapabilities(entry: Record<string, unknown>): Effort[] | undefined {
-  const capabilities = object(entry.capabilities)
+  const capabilities = jsonObject(entry.capabilities)
   if (capabilities === undefined) return undefined
-  if (object(capabilities.thinking)?.supported === false) return ['none']
-  const effort = object(capabilities.effort)
+  if (jsonObject(capabilities.thinking)?.supported === false) return ['none']
+  const effort = jsonObject(capabilities.effort)
   if (effort === undefined || effort.supported === false) return undefined
   const named = Object.entries(effort)
-    .filter(([name, value]) => isEffort(name) && object(value)?.supported === true)
+    .filter(([name, value]) => isEffort(name) && jsonObject(value)?.supported === true)
     .map(([name]) => name)
     .filter(isEffort)
   // These arrive in whatever order the endpoint wrote them, often alphabetical,
@@ -206,8 +207,4 @@ function price(value: unknown): number | undefined {
   const parsed = typeof value === 'string' ? Number(value.trim()) : value
   if (typeof parsed !== 'number' || !Number.isFinite(parsed) || parsed < 0) return undefined
   return parsed
-}
-
-function object(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined
 }

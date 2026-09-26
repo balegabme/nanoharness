@@ -1,10 +1,14 @@
 // doc: docs/harness/ui.md
+import { statText } from '../shared/diff.js'
+import { clampEffort, EFFORTS, factGaps, resolveFacts } from '../shared/facts.js'
+import { plural, toolsText } from '../shared/format.js'
 import { ChatView } from './chat.js'
 import { attachments, attachNote, autoGrow, clearAttachments, initComposer, seat, showDock } from './composer.js'
 import { ask } from './confirm.js'
 import { ContextMeter } from './context-meter.js'
 import { initCost, refreshCost } from './cost.js'
-import { el, message, must, relativeTime } from './dom.js'
+import { diffRows } from './diff-rows.js'
+import { message, must, relativeTime } from './dom.js'
 import {
   bufferOf,
   contextOf,
@@ -17,13 +21,12 @@ import {
   jobById,
   spendingOf,
   stateLabel,
-  toolsText,
 } from './jobs.js'
 import { announce, initNotify } from './notify.js'
 import { enqueue, initPermission } from './permission.js'
 import { closePopover, Popover } from './popover.js'
 import { applyConfig, initSettings, latestConfig, openSettings, refreshConfig } from './settings.js'
-import { clampEffort, EFFORT_LABEL, EFFORTS, factGaps, resolveFacts, WARN } from './facts.js'
+import { EFFORT_LABEL, WARN } from './facts.js'
 import { closePreview, holding, initTurns, keepHeld, loadTurns, noteCheckpoint, openTurnIndex, rewinding } from './turns.js'
 import {
   currentStatus,
@@ -37,7 +40,7 @@ import {
   workspaceOf,
 } from './sidebar.js'
 import type { AgentSummary, ConfigStatus, NanoBridge, PermissionModeView } from '../ipc/contract.js'
-import type { DiffOpen } from './chat.js'
+import type { ToolDiff } from '../shared/diff.js'
 import type { JobView } from '../core/jobs.js'
 import type { AppEvent, ContextLedger, McpServerStatus, ProjectFileKind, ToolStats } from '../core/types.js'
 import type { AgentRole } from '../core/agents.js'
@@ -100,7 +103,7 @@ let agents: AgentSummary[] = []
 /** The subagent on screen, or null when the conversation itself is. */
 let viewing: string | null = null
 /** The diff on screen, or null. It sits over whichever flow opened it. */
-let showing: DiffOpen | null = null
+let showing: ToolDiff | null = null
 /**
  * True while the spend view is on screen. It is the window's, not a
  * session's, so it covers whatever was open and back returns to it.
@@ -151,6 +154,7 @@ const chat = new ChatView({
   meter,
   openSubagent: id => void openSubagent(id),
   openDiff,
+  openLink: url => openLink(url, chat),
 })
 
 const sub = new ChatView({
@@ -164,43 +168,24 @@ const sub = new ChatView({
   },
   meter: subMeter,
   openDiff,
+  openLink: url => openLink(url, sub),
 })
 
 /**
- * One diff, drawn a line at a time so the pane can colour what changed. The
- * text came from `core/diff.ts` by way of the tool result, so the shapes here
- * are the ones a unified diff has and nothing else has to be guessed.
+ * A link in an answer, handed to the user's browser. The main process refuses
+ * anything but http(s). A failure is told in the view the link was clicked in.
  */
-function drawDiff(diff: DiffOpen): void {
-  diffPath.textContent = diff.path
-  let added = 0
-  let removed = 0
-  const rows = document.createDocumentFragment()
-  for (const line of diff.text.split('\n')) {
-    const kind = lineKind(line)
-    if (kind === 'add') added += 1
-    if (kind === 'del') removed += 1
-    // An empty line with nothing in it collapses to no height, which breaks the
-    // column of the diff; a space keeps the row.
-    rows.append(el('div', `diff-line ${kind}`, line === '' ? ' ' : line))
-  }
-  diffStat.textContent = `+${added} −${removed}`
-  diffStream.replaceChildren(rows)
-  diffStream.scrollTop = 0
+function openLink(url: string, view: ChatView): void {
+  void nh.openExternal(url).catch((err: unknown) => view.errorBlock(message(err)))
 }
 
-function lineKind(line: string): string {
-  if (line.startsWith('@@')) return 'hunk'
-  if (line.startsWith('+++') || line.startsWith('---')) return 'meta'
-  if (line.startsWith('+')) return 'add'
-  if (line.startsWith('-')) return 'del'
-  return 'same'
-}
-
-function openDiff(diff: DiffOpen): void {
+function openDiff(diff: ToolDiff): void {
   showing = diff
   diffCopy.textContent = 'Copy diff'
-  drawDiff(diff)
+  diffPath.textContent = diff.path
+  diffStat.textContent = statText(diff.stat)
+  diffStream.replaceChildren(diffRows(diff.text, diff.path))
+  diffStream.scrollTop = 0
   renderShell()
 }
 
@@ -250,7 +235,7 @@ function renderMcp(status: { live: boolean; servers: McpServerStatus[] } | null)
 
   const lines = status.servers.map(server => {
     if (!status.live) return `${server.name}: not started yet`
-    if (server.connected) return `${server.name}: ${server.toolCount} tool${server.toolCount === 1 ? '' : 's'}`
+    if (server.connected) return `${server.name}: ${plural(server.toolCount, 'tool')}`
     return `${server.name}: ${server.error ?? 'not connected'}`
   })
   const head = status.live

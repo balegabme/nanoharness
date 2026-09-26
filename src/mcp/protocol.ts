@@ -1,4 +1,5 @@
 // doc: docs/harness/mcp.md
+import { isJsonObject } from '../shared/json.js'
 
 /**
  * JSON-RPC 2.0 as MCP uses it, and the two failure kinds that must never be
@@ -71,10 +72,6 @@ export class ConnectionClosedError extends Error {
     super(reason)
     this.name = 'ConnectionClosedError'
   }
-}
-
-export function isJsonObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 /**

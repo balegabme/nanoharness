@@ -2,20 +2,8 @@
 import { safeStorage } from 'electron'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import {
-  ConfigError,
-  hostOf,
-  isUsableBaseURL,
-  newProviderId,
-  normalizeBaseURL,
-  parseFacts,
-  parseStored,
-  clampEffort,
-  resolveConfig,
-  parseHeaderName,
-  resolveFacts,
-  SWITCH_NAMES,
-} from '../core/config.js'
+import { clampEffort, resolveFacts } from '../shared/facts.js'
+import { ConfigError, hostOf, isUsableBaseURL, newProviderId, normalizeBaseURL, parseFacts, parseStored, resolveConfig, parseHeaderName, SWITCH_NAMES } from '../core/config.js'
 import { approvalProblem } from '../core/approval.js'
 import { causeCode } from '../core/provider.js'
 import { createProvider, listModelsFor } from '../providers/factory.js'

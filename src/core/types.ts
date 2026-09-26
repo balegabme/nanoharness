@@ -97,21 +97,6 @@ export interface McpServerStatus {
 /** A file in a project that asks before it is used: `hooks.json` or `mcp.json`. */
 export type ProjectFileKind = 'hooks' | 'mcp'
 
-export function emptyUsage(): TurnUsage {
-  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0 }
-}
-
-/**
- * Cached input over all the input that went into the prompt. Cache writes count
- * in the denominator because the provider read them in full and charged a
- * premium: a turn that read 20k cached and wrote 5k new is four fifths cache,
- * not 99.9%. `null` is "no prompt yet", which is not the same as a 0% hit.
- */
-export function cacheHitRate(usage: TurnUsage): number | null {
-  const prompt = usage.cacheRead + usage.input + usage.cacheWrite
-  return prompt === 0 ? null : usage.cacheRead / prompt
-}
-
 /**
  * Where the next request's tokens go, part by part. Estimated per part and
  * scaled so the parts add up to `ContextLedger.tokens`.

@@ -1,5 +1,5 @@
 // doc: docs/harness/ui.md
-import type { AppEvent, ContextLedger, ToolStats, TurnUsage } from '../core/types.js'
+import type { AppEvent, ContextLedger, TurnUsage } from '../core/types.js'
 import type { JobView } from '../core/jobs.js'
 import type { NanoBridge } from '../ipc/contract.js'
 
@@ -73,20 +73,6 @@ export function agentName(role: JobView['role']): string {
 
 export function stateLabel(state: JobView['state']): string {
   return LABEL[state]
-}
-
-/**
- * What a subagent did to reach its answer, as the line under its card.
- * `docs/harness/agents.md` says why an answer alone is not enough to go on.
- *
- * `tools/spawn.ts` writes the same line for the model. The renderer is its own
- * bundle and takes no runtime import from `core/`, so this exists twice.
- * Change one and change the other.
- */
-export function toolsText(tools: ToolStats): string {
-  if (tools.calls === 0) return 'no tool calls'
-  const stopped = tools.prevented === 0 ? '' : `, ${tools.prevented} prevented`
-  return `${tools.calls} tool call${tools.calls === 1 ? '' : 's'}, ${tools.ok} ok, ${tools.failed} failed${stopped}`
 }
 
 /** True when this id is a subagent's, so its stream is not the open session's. */

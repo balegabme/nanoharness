@@ -1,16 +1,12 @@
 // doc: docs/harness/providers.md
 import { randomUUID } from 'node:crypto'
+import { trimmedText } from '../shared/json.js'
+import { isEffort, isProviderKind, PRICES, sortEfforts } from '../shared/facts.js'
 import { isPermissionMode } from './approval.js'
 import type { ApprovalCandidate, ApprovalConfig, ApprovalRules, PermissionMode } from './approval.js'
 
 /** The wire formats NanoHarness speaks. */
 export type ProviderKind = 'openai' | 'anthropic' | 'responses'
-
-export const PROVIDER_KINDS: readonly ProviderKind[] = ['openai', 'anthropic', 'responses']
-
-export function isProviderKind(value: unknown): value is ProviderKind {
-  return typeof value === 'string' && (PROVIDER_KINDS as readonly string[]).includes(value)
-}
 
 /**
  * How hard the model should think. One neutral scale across vendors: OpenAI
@@ -20,48 +16,6 @@ export function isProviderKind(value: unknown): value is ProviderKind {
  * per model from `ModelFacts`.
  */
 export type Effort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
-
-export const EFFORTS: readonly Effort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
-
-export function isEffort(value: unknown): value is Effort {
-  return typeof value === 'string' && (EFFORTS as readonly string[]).includes(value)
-}
-
-/**
- * A list of levels in the order the scale runs, low to high. Endpoints answer
- * in whatever order they please (Anthropic's block is alphabetical), and this
- * list is what orders the picker in the composer.
- */
-export function sortEfforts(efforts: readonly Effort[]): Effort[] {
-  return EFFORTS.filter(effort => efforts.includes(effort))
-}
-
-/**
- * The nearest level a model actually takes, when the one in hand is not one.
- * A level the provider does not know is a 400 mid-turn, so nothing sends an
- * unclamped one. src/renderer/facts.ts holds a copy for the window, which
- * cannot import this file; src/providers/model-facts.test.ts pins the two.
- */
-export function clampEffort(offered: readonly Effort[], wanted: Effort): Effort {
-  if (offered.includes(wanted)) return wanted
-  const from = EFFORTS.indexOf(wanted)
-  let best: Effort | undefined
-  let nearest = Number.POSITIVE_INFINITY
-  // The nearest level on the scale in either direction, so leaving a model for
-  // one with no `max` lands on `high`, and `minimal` on a model whose lowest
-  // level is `low` moves up to it.
-  for (const effort of EFFORTS) {
-    if (!offered.includes(effort)) continue
-    const distance = Math.abs(EFFORTS.indexOf(effort) - from)
-    // Ties go to the quieter level: EFFORTS is walked low to high and only a
-    // strictly nearer level replaces the one already found.
-    if (distance < nearest) {
-      best = effort
-      nearest = distance
-    }
-  }
-  return best ?? wanted
-}
 
 /**
  * The rates a model charges once a prompt passes `over` tokens, replacing the
@@ -127,10 +81,8 @@ export interface ModelFacts {
   vision?: boolean
 }
 
-/** The priced halves of a model, in the order the settings screen shows them. */
-export const PRICES = ['input', 'output', 'cacheRead', 'cacheWrite'] as const
-
-export type PriceKey = (typeof PRICES)[number]
+/** The priced halves of a model. `PRICES` in `shared/facts.ts` lists them in order. */
+export type PriceKey = 'input' | 'output' | 'cacheRead' | 'cacheWrite'
 
 /** One model an endpoint offers, with whatever it said about it. */
 export interface ModelOffer {
@@ -144,45 +96,6 @@ export interface ModelOffer {
  * extra, so it gets no warning mark.
  */
 export type FactGap = 'efforts' | 'cost'
-
-export function factGaps(facts: ModelFacts | undefined): FactGap[] {
-  const gaps: FactGap[] = []
-  if (facts?.efforts === undefined || facts.efforts.length === 0) gaps.push('efforts')
-  if (facts?.input === undefined || facts.output === undefined) gaps.push('cost')
-  return gaps
-}
-
-/**
- * What to believe about a model. The endpoint's answer is the base and the
- * user's typing wins field by field, so correcting a wrong price by hand does
- * not throw away an effort list the endpoint got right, and a later fetch does
- * not throw away the correction.
- */
-export function resolveFacts(provider: ProviderRecord, model: string): ModelFacts {
-  const reported = provider.facts?.[model] ?? {}
-  const typed = provider.overrides?.[model] ?? {}
-  const merged: ModelFacts = {}
-  const efforts = typed.efforts ?? reported.efforts
-  if (efforts !== undefined && efforts.length > 0) merged.efforts = [...efforts]
-  for (const key of PRICES) {
-    const value = typed[key] ?? reported[key]
-    if (value !== undefined) merged[key] = value
-  }
-  // A price typed by hand is the price, not a base rate for something else to
-  // scale. The form offers no way to edit a tier, so keeping the endpoint's
-  // would double a number the user had just corrected.
-  const tiers = typed.tiers ?? (typed.input === undefined && typed.output === undefined ? reported.tiers : undefined)
-  if (tiers !== undefined && tiers.length > 0) merged.tiers = tiers.map(tier => ({ ...tier }))
-  const maxOutput = typed.maxOutput ?? reported.maxOutput
-  if (maxOutput !== undefined) merged.maxOutput = maxOutput
-  const context = typed.context ?? reported.context
-  if (context !== undefined) merged.context = context
-  const vision = typed.vision ?? reported.vision
-  if (vision !== undefined) merged.vision = vision
-  const wire = typed.wire ?? reported.wire
-  if (wire !== undefined) merged.wire = wire
-  return merged
-}
 
 /**
  * One configured endpoint. The key is absent by design: it lives in the
@@ -291,12 +204,6 @@ export interface ConfigSources {
   secrets?: Readonly<Record<string, string>> | undefined
 }
 
-function text(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined
-  const trimmed = value.trim()
-  return trimmed === '' ? undefined : trimmed
-}
-
 /** Strip trailing slashes so a joined `/v1/...` path never doubles up. */
 export function normalizeBaseURL(value: string): string {
   return value.replace(/\/+$/, '')
@@ -361,7 +268,7 @@ export function resolveConfig(sources: ConfigSources = {}): ProviderConfig {
     reasons.push(`base URL ${provider.baseURL} is not an absolute http(s) URL`)
   }
 
-  const selected = stored.active?.providerId === provider.id ? text(stored.active.model) : undefined
+  const selected = stored.active?.providerId === provider.id ? trimmedText(stored.active.model) : undefined
   const model = selected ?? provider.models[0]
   if (model === undefined) {
     missing.push('model')
@@ -371,7 +278,7 @@ export function resolveConfig(sources: ConfigSources = {}): ProviderConfig {
     reasons.push(`${model} is not one of the models selected for ${provider.name}`)
   }
 
-  const apiKey = text(secrets[provider.id])
+  const apiKey = trimmedText(secrets[provider.id])
   if (apiKey === undefined) {
     missing.push('apiKey')
     reasons.push(`no API key stored for ${provider.name}`)
@@ -423,11 +330,11 @@ export function parseStored(parsed: unknown): StoredConfig {
     return stored
   }
 
-  const baseURL = text(record.baseURL)
+  const baseURL = trimmedText(record.baseURL)
   if (baseURL === undefined) return { providers: [] }
   const models = Array.isArray(record.models) ? record.models.filter((m): m is string => typeof m === 'string') : []
   const provider: ProviderRecord = { id: LEGACY_ID, name: hostOf(baseURL), kind: 'openai', baseURL, models }
-  const model = text(record.model)
+  const model = trimmedText(record.model)
   const stored: StoredConfig = { providers: [provider] }
   if (model !== undefined) stored.active = { providerId: provider.id, model, effort: 'medium' }
   return stored
@@ -436,12 +343,12 @@ export function parseStored(parsed: unknown): StoredConfig {
 function parseProvider(value: unknown): ProviderRecord | null {
   if (typeof value !== 'object' || value === null) return null
   const record = value as Record<string, unknown>
-  const id = text(record.id)
-  const baseURL = text(record.baseURL)
+  const id = trimmedText(record.id)
+  const baseURL = trimmedText(record.baseURL)
   if (id === undefined || baseURL === undefined) return null
   const kind: ProviderKind = isProviderKind(record.kind) ? record.kind : 'openai'
   const models = Array.isArray(record.models) ? record.models.filter((m): m is string => typeof m === 'string') : []
-  const provider: ProviderRecord = { id, name: text(record.name) ?? hostOf(baseURL), kind, baseURL, models }
+  const provider: ProviderRecord = { id, name: trimmedText(record.name) ?? hostOf(baseURL), kind, baseURL, models }
   const facts = parseFactsMap(record.facts)
   const overrides = parseFactsMap(record.overrides)
   if (facts !== undefined) provider.facts = facts
@@ -460,7 +367,7 @@ function parseProvider(value: unknown): ProviderRecord | null {
 const HEADER_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
 
 export function parseHeaderName(value: unknown): string | undefined {
-  const name = text(value)?.trim()
+  const name = trimmedText(value)
   return name !== undefined && HEADER_NAME.test(name) ? name : undefined
 }
 
@@ -556,8 +463,8 @@ export function parseApproval(value: unknown): ApprovalConfig | undefined {
     for (const raw of record.candidates) {
       if (typeof raw !== 'object' || raw === null) continue
       const { providerId, model } = raw as Record<string, unknown>
-      const id = text(providerId)
-      const name = text(model)
+      const id = trimmedText(providerId)
+      const name = trimmedText(model)
       if (id === undefined || name === undefined) continue
       candidates.push({ providerId: id, model: name })
     }
@@ -582,7 +489,7 @@ function parseRules(value: unknown): ApprovalRules | undefined {
   for (const key of ['hardDeny', 'softDeny', 'allow', 'environment'] as const) {
     const list = record[key]
     if (!Array.isArray(list)) continue
-    const lines = list.map(text).filter((line): line is string => line !== undefined)
+    const lines = list.map(trimmedText).filter((line): line is string => line !== undefined)
     if (lines.length > 0) any = true
     rules[key] = lines
   }
@@ -592,8 +499,8 @@ function parseRules(value: unknown): ApprovalRules | undefined {
 function parseActive(value: unknown, providers: readonly ProviderRecord[]): ActiveSelection | undefined {
   if (typeof value !== 'object' || value === null) return undefined
   const record = value as Record<string, unknown>
-  const providerId = text(record.providerId)
-  const model = text(record.model)
+  const providerId = trimmedText(record.providerId)
+  const model = trimmedText(record.model)
   if (providerId === undefined || model === undefined) return undefined
   if (!providers.some(p => p.id === providerId)) return undefined
   return { providerId, model, effort: isEffort(record.effort) ? record.effort : 'medium' }

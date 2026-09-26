@@ -1,30 +1,11 @@
 // doc: docs/harness/ui.md
-import type { Effort, FactGap, ModelFacts, PriceKey, PriceTier, ProviderKind } from '../core/config.js'
-import type { TurnUsage } from '../core/types.js'
-import type { ProviderView } from '../ipc/contract.js'
-
-/** A saved provider, or the two maps the settings form is holding for one. */
-type Described = Pick<ProviderView, 'facts' | 'overrides'>
+import type { Effort, FactGap, ModelFacts, PriceKey } from '../core/config.js'
 
 /**
- * What the window knows about a model: which effort levels it takes and what it
- * charges, plus the wording for both.
- *
- * `EFFORTS`, `PRICES`, `PROVIDER_KINDS`, `resolveFacts`, `factGaps`,
- * `clampEffort`, `costOf` and `moneyText` are copies. src/core/config.ts and src/core/cost.ts hold the definitions, and the
- * main process uses those, but eslint.config.js forbids the renderer a runtime
- * import from core because the renderer is a separate bundle. Change one and
- * change the other; src/providers/model-facts.test.ts fails when they drift.
+ * What the window says about a model's facts: the labels on the effort chip and
+ * the price fields, and the warning on a model nobody has described. The facts
+ * themselves and the arithmetic on them are in `shared/facts.ts`.
  */
-export const EFFORTS: readonly Effort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
-
-export const PRICES: readonly PriceKey[] = ['input', 'output', 'cacheRead', 'cacheWrite']
-
-export const PROVIDER_KINDS: readonly ProviderKind[] = ['openai', 'anthropic', 'responses']
-
-export function isProviderKind(value: unknown): value is ProviderKind {
-  return typeof value === 'string' && (PROVIDER_KINDS as readonly string[]).includes(value)
-}
 
 /** What each priced half is called on the row where it is typed. */
 export const PRICE_LABEL: Record<PriceKey, string> = {
@@ -32,62 +13,6 @@ export const PRICE_LABEL: Record<PriceKey, string> = {
   output: 'out',
   cacheRead: 'cached in',
   cacheWrite: 'cache write',
-}
-
-export function resolveFacts(provider: Described | undefined, model: string): ModelFacts {
-  const reported = provider?.facts?.[model] ?? {}
-  const typed = provider?.overrides?.[model] ?? {}
-  const merged: ModelFacts = {}
-  const efforts = typed.efforts ?? reported.efforts
-  if (efforts !== undefined && efforts.length > 0) merged.efforts = [...efforts]
-  for (const key of PRICES) {
-    const value = typed[key] ?? reported[key]
-    if (value !== undefined) merged[key] = value
-  }
-  // A price typed by hand is the price, not a base rate for something else to
-  // scale. The form offers no way to edit a tier, so keeping the endpoint's
-  // would double a number the user had just corrected.
-  const tiers = typed.tiers ?? (typed.input === undefined && typed.output === undefined ? reported.tiers : undefined)
-  if (tiers !== undefined && tiers.length > 0) merged.tiers = tiers.map(tier => ({ ...tier }))
-  const maxOutput = typed.maxOutput ?? reported.maxOutput
-  if (maxOutput !== undefined) merged.maxOutput = maxOutput
-  const context = typed.context ?? reported.context
-  if (context !== undefined) merged.context = context
-  const vision = typed.vision ?? reported.vision
-  if (vision !== undefined) merged.vision = vision
-  const wire = typed.wire ?? reported.wire
-  if (wire !== undefined) merged.wire = wire
-  return merged
-}
-
-export function factGaps(facts: ModelFacts | undefined): FactGap[] {
-  const gaps: FactGap[] = []
-  if (facts?.efforts === undefined || facts.efforts.length === 0) gaps.push('efforts')
-  if (facts?.input === undefined || facts.output === undefined) gaps.push('cost')
-  return gaps
-}
-
-/** The nearest level a model actually takes, when the one in hand is not one. */
-export function clampEffort(offered: readonly Effort[], wanted: Effort): Effort {
-  if (offered.includes(wanted)) return wanted
-  const from = EFFORTS.indexOf(wanted)
-  let best: Effort | undefined
-  let nearest = Number.POSITIVE_INFINITY
-  // The nearest level on the scale, so leaving a model for one with no `max`
-  // lands on `high` and not back at `none`. Walking only downwards would
-  // strand `minimal` at the bottom on a model whose lowest level is `low`.
-  for (const effort of EFFORTS) {
-    if (!offered.includes(effort)) continue
-    const distance = Math.abs(EFFORTS.indexOf(effort) - from)
-    // Ties go to the quieter level, since EFFORTS is walked low to high and the
-    // cheaper of two equally close levels is the safer thing to pick for
-    // somebody who did not choose it.
-    if (distance < nearest) {
-      best = effort
-      nearest = distance
-    }
-  }
-  return best ?? wanted
 }
 
 /** What the effort chip calls each level. */
@@ -126,35 +51,4 @@ function money(usd: number): string {
   if (usd === 0) return '0'
   const places = usd < 0.01 ? 4 : usd < 1 ? 3 : 2
   return usd.toFixed(places).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '')
-}
-
-/** The highest tier this prompt reaches, or undefined when it reaches none. */
-function tierFor(facts: ModelFacts, prompt: number): PriceTier | undefined {
-  let best: PriceTier | undefined
-  for (const tier of facts.tiers ?? []) {
-    if (prompt > tier.over && (best === undefined || tier.over > best.over)) best = tier
-  }
-  return best
-}
-
-/** What a run of tokens came to on this model, or null when it has no prices. */
-export function costOf(usage: TurnUsage, facts: ModelFacts): number | null {
-  if (facts.input === undefined || facts.output === undefined) return null
-  // Everything the model was asked to read counts towards the tier, cached or
-  // not: the endpoint sizes the whole request, and a cache hit is still context.
-  const tier = tierFor(facts, usage.input + usage.cacheRead + usage.cacheWrite)
-  const input = tier?.input ?? facts.input
-  const output = tier?.output ?? facts.output
-  const read = tier?.cacheRead ?? facts.cacheRead ?? input
-  const write = tier?.cacheWrite ?? facts.cacheWrite ?? input
-  const total = usage.input * input + usage.output * output + usage.cacheRead * read + usage.cacheWrite * write
-  return total / 1_000_000
-}
-
-export function moneyText(usd: number): string {
-  if (usd === 0) return '$0'
-  if (usd < 0.0001) return '<$0.0001'
-  if (usd < 0.01) return `$${usd.toFixed(4)}`
-  if (usd < 1) return `$${usd.toFixed(3)}`
-  return `$${usd.toFixed(2)}`
 }

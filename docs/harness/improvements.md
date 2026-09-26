@@ -71,7 +71,6 @@ only what is still open.
 
 ## 2026-09-12
 
-- [ ] src/renderer/facts.ts is a second copy of core, larger than the first one: `EFFORTS`, `PRICES`, `resolveFacts`, `factGaps`, `clampEffort`, `costOf` and `moneyText` all exist twice. Same cause as the cache-hit copy above, since eslint.config.js forbids the renderer a runtime import from core, and the same guard: src/providers/model-facts.test.ts runs the two against each other and fails when they drift. Worth watching, and not worth fixing, since each copy added is one more thing the pin has to cover.
 - [ ] Nothing sends `cache_control` on the Anthropic wire, so `cacheRead` stays zero there and the hit rate reads 0.0% no matter what the prompt looks like. The metric is now correct and still has nothing to measure on that provider (src/providers/anthropic.ts). Same entry as 2026-09-04; it is what makes the cache-hit work above half-finished.
 
 ## 2026-09-13
@@ -101,7 +100,7 @@ only what is still open.
 
 ## 2026-09-20
 
-- [ ] The spend view's chart is untested. The report behind it is pinned by src/core/usage-report.test.ts, but the day filling into bars, the hit-rate line breaking across quiet days, and the axis label stride are renderer arithmetic with no test under them, which is the shape of the copies this ledger already watches (src/renderer/cost.ts).
+- [ ] The spend view's chart is untested. The report behind it is pinned by src/core/usage-report.test.ts, but the day filling into bars, the hit-rate line breaking across quiet days, and the axis label stride are renderer arithmetic with no test under them (src/renderer/cost.ts).
 - [ ] Every open of the spend view, and every change of its range, reads and parses the whole log. That is nothing at a few thousand lines and is the same read the rotation entry above is about; it becomes the reason to care about it (src/core/usage-log.ts, src/main/index.ts).
 - [ ] The window shows spend by session but cannot open one of those sessions from its row, and a session deleted from the sidebar keeps its row here with nothing to click. The tables are a report, not a way around the app (src/renderer/cost.ts).
 

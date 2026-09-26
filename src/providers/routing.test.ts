@@ -1,8 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { PROVIDER_KINDS, resolveFacts } from '../shared/facts.js'
 import { createProvider } from './factory.js'
-import { parseStored, resolveFacts } from '../core/config.js'
-import { isProviderKind as rendererGuard, PROVIDER_KINDS as RENDERER_KINDS } from '../renderer/facts.js'
-import { isProviderKind, PROVIDER_KINDS } from '../core/config.js'
+import { parseStored } from '../core/config.js'
 import type { ProviderRecord } from '../core/config.js'
 
 /**
@@ -76,16 +75,5 @@ describe('a wire named in a settings file', () => {
     const stored = (wire: unknown): unknown => ({ providers: [{ id: 'p', baseURL: GO, kind: 'openai', models: ['m'], facts: { m: { input: 1, output: 2, wire } } }] })
     expect(parseStored(stored('responses')).providers[0]?.facts?.m?.wire).toBe('responses')
     expect(parseStored(stored('grpc')).providers[0]?.facts?.m?.wire).toBeUndefined()
-  })
-})
-
-describe('the window’s copy of the wire list', () => {
-  it('holds the same wires the main process does', () => {
-    // The renderer may not import core at runtime, so it keeps a copy. This is
-    // what fails when the two drift.
-    expect(RENDERER_KINDS).toEqual(PROVIDER_KINDS)
-    for (const kind of [...PROVIDER_KINDS, 'grpc', '', undefined]) {
-      expect(rendererGuard(kind)).toBe(isProviderKind(kind))
-    }
   })
 })

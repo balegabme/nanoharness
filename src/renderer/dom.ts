@@ -18,6 +18,13 @@ export function el<K extends keyof HTMLElementTagNameMap>(
   return node
 }
 
+/** A pill with a number in bold and its name beside it, dimmer. `kind` adds a class for the pills that carry a colour. */
+export function metric(name: string, value: string, kind?: string): HTMLElement {
+  const pill = el('span', kind === undefined ? 'metric' : `metric ${kind}`)
+  pill.append(el('b', undefined, value), el('span', undefined, name))
+  return pill
+}
+
 const SVG_NS = 'http://www.w3.org/2000/svg'
 
 /** Stroked 24-grid glyphs, the one shape language the chrome uses. */

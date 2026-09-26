@@ -18,9 +18,11 @@ calls it for the window over the `usage:report` channel and `nh usage` calls it
 for the terminal, so a figure on screen and a figure in a shell cannot
 disagree. Nothing downstream adds up a token or a dollar of its own.
 
-It lives in core and not in the renderer because the renderer is a separate
-bundle that may not import core at runtime (`ui.md`), and a second copy of the
-grouping would be a second set of numbers to keep true.
+It runs in the main process, where the log is read, and the window is sent the
+finished report. The window formats the numbers with the same helpers `nh
+usage` uses, from `src/shared/format.ts` (`shared.md`), so a dollar figure or a
+cache hit is written the same way in both. Token counts differ on purpose: the
+terminal prints the full count and the window's pills print the short form.
 
 ## Prices are frozen when the money is spent
 
