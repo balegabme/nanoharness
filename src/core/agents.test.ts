@@ -587,6 +587,17 @@ describe('the planner\'s shell', () => {
       await rm(cwd, { recursive: true, force: true })
     }
   })
+
+  it('is never told to save a file, which it would be refused', () => {
+    const env = { root: '/work', platform: 'win32' as const, host: HOST, today: '2026-01-01' }
+    const planner = agentPrompt('planner', env)
+    // The rule that would have it redirect a fetch into a file is swapped for
+    // one its shell can follow.
+    expect(planner).not.toContain('to a file')
+    expect(planner).not.toContain('scratch file')
+    expect(planner).toContain('`curl -f`')
+    expect(agentPrompt('builder', env)).toContain('Save what a fetch')
+  })
 })
 
 describe('a job the app outlives', () => {

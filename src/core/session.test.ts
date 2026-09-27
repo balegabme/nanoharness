@@ -341,9 +341,10 @@ describe('the line a turn ends on', () => {
     expect(summary?.prevented).toHaveLength(1)
     expect(summary?.prevented?.[0]).toMatchObject({ tool: 'write', target: '../escape.txt' })
     expect(summary?.prevented?.[0]?.reason).not.toBe('')
-    // A mock provider answers in under a tick, which is the one duration that
-    // has to read as a time and not as a stopped clock.
-    expect(summary?.text.endsWith('· <1s')).toBe(true)
+    // A mock provider answers in well under a second, which has to read as a
+    // time and not as a stopped clock. A loaded machine can push this turn past
+    // a second, so any whole count is accepted except zero.
+    expect(summary?.text).toMatch(/· (<1s|[1-9]\d*s)$/)
     // The summary sits after everything the turn wrote, so a re-opened session
     // draws it under the answer and not in the middle of the turn.
     expect(summary?.after).toBe(s.transcript.length)

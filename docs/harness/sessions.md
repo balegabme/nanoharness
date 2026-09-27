@@ -19,7 +19,11 @@ workspace root, the machine, the shell and the tools on its PATH
 On Windows it says outright that `bash` is Git Bash and not WSL, with no
 `/mnt/c` and no `/proc`, because a model without that line reasons from its
 training set, decides it is on Linux, and spends a turn probing a filesystem
-that does not exist.
+that does not exist. It also says that Git Bash converts a path given as an
+argument and not one written inside a python or node script, where `/tmp` is a
+folder at the root of the drive and not the folder Git Bash calls `/tmp`. An
+agent that wrote `/tmp/data.json` with `curl` and opened it from a python
+one-liner found nothing there, twice in one turn.
 
 The rules that follow are short on purpose: every token is paid for on every
 request of every turn. Stay in the workspace and say why when you cannot. Prefer
@@ -67,6 +71,22 @@ can do, an agent answers from its tools and its configuration, and something
 unconfigured is unconfigured and not forbidden. A model with nothing to go
 on fills that gap from its training set, and a plausible invented policy is much
 harder to catch than an error.
+
+Three more come from the same research turn as the `/tmp` note, in which a
+quarter of the shell calls failed. The plan is written with `todo_write` before the first step of
+any task with three or more, asked for or not, because an agent told to "use
+todo for this" still wrote its plan sixteen rounds in, after the research it
+was meant to track. What a fetch returns is saved to a file and checked before
+anything parses it, because `curl ... | python -c "json.load(...)"` turns an
+error page or an empty answer into a traceback and the fetch has to run again.
+And a script longer than a line or two is written to a file and run from
+there, because quotes and backslashes nested inside `bash -c` and `python -c`
+break in ways that take a round to find.
+
+The last two need a role that can write files, and the planner's shell refuses
+a redirect and `curl -o`. `buildSystemPrompt` takes whether the role has
+`write`, and a read-only role is told instead to check a fetch before parsing
+it, with `curl -f` to turn an error status into a failure.
 
 ## Stopping a turn
 

@@ -20,6 +20,11 @@ export interface ChatInput {
   tools: ToolInput[]
   effort?: Effort
   /**
+   * The levels this model is known to take, when the endpoint said. The
+   * OpenAI-compatible wires read it for `none` alone; see `sendsEffort`.
+   */
+  efforts?: readonly Effort[]
+  /**
    * The most output this model will produce, where anyone has said. Anthropic
    * requires a ceiling on every request and the thinking budget is fitted
    * inside this one; OpenAI-compatible endpoints ignore it.
@@ -35,6 +40,21 @@ export interface ChatInput {
   conversationId?: string
   /** Aborted when the person hits Stop. The provider passes it to `fetch`. */
   signal?: AbortSignal
+}
+
+/**
+ * Whether an OpenAI-compatible wire names the effort level. Left out, the field
+ * means the model's own default, which on a reasoning model is to reason, so
+ * `none` goes out as a word to a model that lists it beside a level it can
+ * reason at. Every other model is sent no field: one whose levels are unknown
+ * or that lists nothing but `none` may not reason at all, and there the word
+ * is a 400.
+ */
+export function sendsEffort(input: ChatInput): input is ChatInput & { effort: Effort } {
+  if (input.effort === undefined) return false
+  if (input.effort !== 'none') return true
+  const offered = input.efforts ?? []
+  return offered.includes('none') && offered.some(level => level !== 'none')
 }
 
 /**

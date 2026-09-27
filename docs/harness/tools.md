@@ -1,7 +1,8 @@
 # Tools
 
 Files:
-- src/tools/bash.ts: shell command, cwd-scoped, capped output
+- src/tools/bash.ts: shell command, cwd-scoped, capped output, timed out
+- src/tools/terminal.ts: background shells read and written across calls
 - src/tools/read.ts: offset/limit read with caps, parallel-safe
 - src/tools/search.ts: grep and glob, in process, no shell
 - src/tools/ignore.ts: what a .gitignore excludes from a walk
@@ -10,6 +11,9 @@ Files:
 - src/tools/text.ts: whether a file's bytes are text a tool may rewrite
 - src/core/read-index.ts: what the session has read, and at which version
 - src/tools/log-improvement.ts: append an entry to the improvement ledger
+- src/tools/todo.ts: the agent's plan, drawn above the composer
+- src/tools/ask-user.ts: a question for the user, answered mid-turn
+- src/main/questions.ts: the broker that carries a question to the window and back
 
 A Tool wraps a JSON schema (ToolInput) plus a `run` function. The tool list is
 frozen when a session starts (cache rule, plan §12).
@@ -25,8 +29,35 @@ correct itself on the next round.
 Writes the command to a temporary script and runs it as `bash <script>` from
 the project cwd, through the shell `env-detection.md` describes: Git Bash on
 Windows, with the PATH a login shell would have and without paying for the
-profile on every command. Output is capped at 1 MB with an explicit
-`[output truncated at 1 MB]` marker. Failures report the exit code.
+profile on every command. Output is capped at 1 MB; past it the command is
+ended and the result says `[output truncated at 1 MB, and the command was
+ended]`. Failures report the exit code.
+
+A command gets 120 seconds unless the call names a `timeout`, which can go up
+to 600. At the limit the command is killed along with everything it started,
+and the result says how long it ran and that a longer `timeout` gives it more
+time. Stop in the window does the same kill at once: the turn's abort signal
+reaches the tool through `ToolContext.signal`. Killing only bash would leave its
+children holding the output pipes, and the turn would go on waiting on them.
+The tree kill is `killTree` in `src/env/shell.ts` (`env-detection.md`).
+
+The description says that calls run one at a time and that each may wait on an
+approval first, so steps that belong together go into one command with `&&`.
+In auto mode every separate call is a separate check. It also says that every
+call starts in the session folder, so a `cd` lasts for one command, and that a
+path with a space in it is quoted.
+
+Nothing a command runs can wait for a person. Stdin is closed, so a program that
+reads it gets end-of-file at once, and the environment sets
+`GIT_TERMINAL_PROMPT=0` and points `GIT_PAGER` and `PAGER` at `cat`, so git
+fails on a missing credential and nothing pages through `less`.
+
+A command can end with a process still running, a server started with `&` for
+instance. That process holds the output pipes open, so the tool stops waiting a
+second after bash itself exits, hands back what arrived, and says a process was
+left running. Nothing tracks that process afterwards, and it is not killed;
+the ledger has the entry. The builder's shell tells the model to use `terminal`
+for that kind of work.
 
 The script file is there because Git Bash cuts a `-c` string at 8 KiB and runs
 the front of it anyway. A 12 KB patch script arrived with its heredoc
@@ -46,6 +77,121 @@ as somewhere on disk; `sessions.md` has the failures. The tool asks
 command, "Allow once" runs that one, "Allow all shell commands" trusts the
 shell for the session, and a gate with nobody to ask refuses it. The command
 runs from the session root.
+
+## terminal
+
+Shells that keep running between calls, for a dev server, a watcher, a long
+build or a program that reads input. `start` runs a command from the project cwd
+and answers with an id (`t1`, `t2`) and the first output; `read` returns what
+arrived since the last read; `send` writes a line to the program's stdin; `stop`
+kills it and its children with the same tree kill as `bash`, and waits up to
+10 seconds for the exit so the answer can say it ended; `list` names them all
+with their state.
+
+`wait` is how long a call waits for output first: 2 seconds for `start` and
+`send`, none for `read`, at most 300. `until` is a regular expression that ends
+the wait as soon as the unread output matches it, so `start` with
+`until: "listening|error", wait: 60` returns the moment the server comes up or
+fails, within the minute. Without it a call waits the whole time, because a
+server that has printed one line is not done printing. The pattern runs in the
+app's main process on every chunk of output, so it is held to 200 characters
+and tested against the newest 4 KB only.
+
+The command runs with a `wait` after it, so bash stays alive while anything it
+put in the background is still running. The terminal reads as running for as
+long as there is something to stop, and `stop` can still reach it: on Windows
+`taskkill /T` walks the tree from a live bash and cannot find a child whose
+bash has exited. A command that detaches itself from the shell's jobs escapes
+this.
+
+Each terminal keeps its newest 256 KB of unread output, and one call hands back
+at most 32 KB of it, the newest part, with a line saying how much was left out.
+A session can run eight terminals at once and keeps the last output of eight
+finished ones.
+
+Both `start` and `send` go through `access.checkCommand`. Input to a running
+program can be a command to a shell, so the user is shown it with a comment
+line naming the terminal it goes to.
+
+The terminals belong to the session and outlive a turn. The app keeps one set
+per session for the whole launch, so a session rebuilt after a settings change
+still reaches the servers it started. Deleting the session, removing its
+workspace or quitting the app stops them.
+
+The shell talks over pipes and has no TTY. A program that draws the whole
+screen, such as an editor or `top`, will not work, and one that switches off its
+prompts without a TTY behaves as it does in CI. A pseudo-terminal would need a
+native module; the ledger has the entry.
+
+Only the session the user is talking to gets terminals. A subagent's context
+has none, and its call is refused with a pointer to `bash`, because a server a
+subagent started would outlive the subagent with nobody holding its id.
+
+## todo_write
+
+The agent's plan for a task of three or more steps. Each call sends the whole
+list, every step with its status (`pending`, `in_progress`, `completed`), at
+most 20 steps. There are no ids to track, and a list that went wrong is fixed
+by sending it again. The description asks for exactly one step in progress at
+a time; a list with more is kept and the result says so.
+
+The description and the system prompt both say to write the plan before the
+first step, whether or not the user asked for one, and the call can go in the
+same message as the first reads since it touches nothing. Several asks from the
+user become one step each, in their words. A step is completed when it is done
+and checked, as it finishes. One that failed or is blocked goes back to pending
+behind a new step for what unblocks it, which becomes the one in progress, so
+the head of the widget names the work actually under way. The reply does not
+repeat the plan, which the user can already see. A new task gets a new list.
+An empty list clears the plan, for one the agent gave up on; a finished plan
+needs no clearing, because the widget puts it away when the next turn starts.
+
+The tool stores nothing. The window reads the plan out of the call's own
+arguments, live as the call arrives and again when a stored session is opened,
+so the transcript is the only copy (`ui.md` has the widget). The result is one
+line, `Plan updated, 2 of 5 done. Now: Add the timeout setting`. The list is
+already in the model's context as the call it made, and a second copy would be
+paid for on every request after it.
+
+## ask_user
+
+A question put to the user in the middle of a turn. The turn waits on the
+answer the way it waits on a permission prompt, and the answer comes back as
+the tool's result.
+
+The description and the system prompt both tell the model to ask when a
+decision is the user's to make or when something it needs is still unknown
+after checking what its tools can check, and never to guess and carry on. It
+is told not to ask what it can find out itself, and not to ask for permission
+to run a tool, since that is asked for it.
+
+One call asks one to four questions. Each has a header of up to 16 characters
+that labels its tab, the question itself, and two to four options, each a
+short label and a description of what choosing it means. A question can allow
+several choices. The option the model recommends goes first, marked
+`(recommended)`. There is no "Other" option to write, because the window always
+offers a field for an answer in the user's own words. An option without a
+description is refused, since a bare label leaves the user guessing what it
+commits them to.
+
+The question travels through `QuestionBroker` (`src/main/questions.ts`): the
+tool holds a promise, the window gets a `question.request` event, and the
+answer comes back by id over `question:respond`. The broker checks the answer:
+a label the question never offered is dropped, a single-choice question keeps
+one pick, and an answer of the wrong shape counts as none. A window that closes
+settles every question it was showing, and Stop settles the open one, so no
+turn is left waiting on nobody.
+
+The model gets one of three results. An answer comes back as each question's
+header and text with what was chosen and anything typed. A card closed without
+an answer tells the model the user did not answer, not to pick an answer for
+them, and to carry on with the work that does not depend on it or stop and say
+what it needs. A stopped turn is an error like any other stopped tool.
+
+Only the session the user is talking to can ask. A subagent's context has no
+`ask`, and its call comes back telling it to put the open question and its
+options in its final report without guessing, which is the one channel a
+subagent has to the person.
 
 ## read
 

@@ -1,7 +1,7 @@
 // doc: docs/harness/providers.md
 import { isJsonObject } from '../shared/json.js'
 import { emptyUsage } from '../shared/usage.js'
-import { BAD_SSE, NO_BODY, ProviderError, StreamBrokenError, retryAfterMs } from '../core/provider.js'
+import { BAD_SSE, NO_BODY, ProviderError, StreamBrokenError, retryAfterMs, sendsEffort } from '../core/provider.js'
 import type { ChatProvider, ChatInput } from '../core/provider.js'
 import type { ChatChunk, ChatMessage, JsonSchema, ToolCall, ToolInput, TurnUsage } from '../core/types.js'
 import { dataUrl } from '../core/types.js'
@@ -99,10 +99,7 @@ export function createResponsesProvider(opts: ResponsesOptions): ChatProvider {
         stream: true,
         store: false,
       }
-      // As on the other wire, "none" leaves the field out and asserts no level
-      // the model may not have. Left out is what this wire reads as the
-      // model's own default.
-      if (input.effort !== undefined && input.effort !== 'none') body.reasoning = { effort: input.effort }
+      if (sendsEffort(input)) body.reasoning = { effort: input.effort }
       const res = await fetch(endpointURL(opts.baseURL, 'v1', 'responses'), {
         method: 'POST',
         headers: {

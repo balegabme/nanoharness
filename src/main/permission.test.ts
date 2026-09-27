@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { PermissionBroker, gateState, promptingGate } from './permission.js'
 import { ApprovalUnavailableError } from '../core/approval.js'
 import type { ApprovalRecord } from './permission.js'
-import type { Judge, Verdict } from '../core/approval.js'
+import type { ApprovalAction, Judge, Verdict } from '../core/approval.js'
 import type { AccessCheck, CommandCheck } from '../core/scope.js'
 
 /**
@@ -229,9 +229,9 @@ describe('a shell command', () => {
  * to reopen a path the person has already refused themselves.
  */
 
-/** A judge that answers from a script, with the shape `Judge` exposes. */
-function scriptedJudge(answer: Verdict | Error): Judge {
-  return {
+/** A judge that answers from a script, handed over the way the gate asks for one. */
+function scriptedJudge(answer: Verdict | Error): () => Promise<Judge> {
+  const judge = {
     model: 'judge-model',
     judge: async () => {
       if (answer instanceof Error) throw answer
@@ -246,6 +246,7 @@ function scriptedJudge(answer: Verdict | Error): Judge {
       }
     },
   } as unknown as Judge
+  return async () => judge
 }
 
 describe('auto mode', () => {
@@ -342,6 +343,159 @@ describe('auto mode', () => {
     await rm(root, { recursive: true, force: true })
   })
 
+  it('judges a repeated command once per message from the user, and again after the next one', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'nh-auto-'))
+    const broker: PermissionBroker = new PermissionBroker(request => {
+      broker.resolve(request.id, 'deny')
+    })
+    const seen: string[][] = []
+    const counting = (): Judge =>
+      ({
+        model: 'judge-model',
+        judge: async (_action: unknown, goals: readonly string[]) => {
+          seen.push([...goals])
+          return {
+            verdict: 'allow',
+            rule: 'rule #1',
+            reason: 'tests are part of the task',
+            usage: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
+            costUsd: null,
+            model: 'judge-model',
+            ms: 12,
+          }
+        },
+      }) as unknown as Judge
+    let current = counting()
+    const goals = ['fix the failing test']
+    const records: ApprovalRecord[] = []
+    const gate = promptingGate({
+      root,
+      sessionId: 's1',
+      broker,
+      state: gateState('auto'),
+      judge: async () => current,
+      goals: () => goals,
+      onDecision: record => records.push(record),
+    })
+
+    // An agent that runs the tests after every edit asks the same question
+    // three times, and the goals have not moved between them.
+    for (let i = 0; i < 3; i += 1) expect((await gate.checkCommand('npm test')).ok).toBe(true)
+    expect(seen).toHaveLength(1)
+    expect(records).toHaveLength(1)
+
+    // A different command is a different question.
+    expect((await gate.checkCommand('npm run lint')).ok).toBe(true)
+    expect(seen).toHaveLength(2)
+
+    // The user wrote again, and the old verdict may not fit what they now want.
+    goals.push('now stop running anything')
+    await gate.checkCommand('npm test')
+    expect(seen).toHaveLength(3)
+    expect(seen[2]).toEqual(['fix the failing test', 'now stop running anything'])
+
+    // Settings changed and the judge was rebuilt: the old one's answers go with it.
+    current = counting()
+    await gate.checkCommand('npm test')
+    expect(seen).toHaveLength(4)
+
+    // Two reads of one outside path in the same message share one call.
+    const outside = join(tmpdir(), 'nh-auto-elsewhere', 'notes.md')
+    await Promise.all([gate.check(outside, 'read'), gate.check(outside, 'read')])
+    expect(seen).toHaveLength(5)
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it('shows the judge what it refused since the user last wrote, and forgets it when they write again', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'nh-auto-'))
+    const broker: PermissionBroker = new PermissionBroker(request => {
+      broker.resolve(request.id, 'deny')
+    })
+    const shown: string[][] = []
+    const judge = {
+      model: 'judge-model',
+      judge: async (action: ApprovalAction, _goals: readonly string[], refused: readonly ApprovalAction[]) => {
+        shown.push(refused.map(earlier => earlier.command ?? ''))
+        return {
+          verdict: action.command?.startsWith('rm ') === true ? 'deny' : 'allow',
+          rule: '',
+          reason: 'scripted',
+          usage: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
+          costUsd: null,
+          model: 'judge-model',
+          ms: 12,
+        }
+      },
+    } as unknown as Judge
+    const goals = ['tidy the build folder']
+    const gate = promptingGate({ root, sessionId: 's1', broker, state: gateState('auto'), judge: async () => judge, goals: () => goals })
+
+    expect((await gate.checkCommand('rm -rf src')).ok).toBe(false)
+    // The same result by another route: the judge is shown the refusal it gave,
+    // which is how it tells a retry from ordinary work.
+    await gate.checkCommand('find src -delete')
+    expect(shown).toEqual([[], ['rm -rf src']])
+
+    // A refusal answered from memory is not a second entry in the list.
+    await gate.checkCommand('rm -rf src')
+    await gate.checkCommand('ls')
+    expect(shown.at(-1)).toEqual(['rm -rf src'])
+
+    // New words from the user decide afresh.
+    goals.push('yes, delete src, it is generated')
+    await gate.checkCommand('ls')
+    expect(shown.at(-1)).toEqual([])
+
+    // The list holds the last five, so a long run of refusals costs a bounded
+    // amount on every check after it.
+    for (let i = 1; i <= 7; i += 1) await gate.checkCommand(`rm -rf dir${i}`)
+    await gate.checkCommand('ls -la')
+    expect(shown.at(-1)).toEqual(['rm -rf dir3', 'rm -rf dir4', 'rm -rf dir5', 'rm -rf dir6', 'rm -rf dir7'])
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it('drops a refusal that lands after the user has written again', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'nh-auto-'))
+    const broker: PermissionBroker = new PermissionBroker(request => {
+      broker.resolve(request.id, 'deny')
+    })
+    const shown: string[][] = []
+    let release: () => void = () => undefined
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const judge = {
+      model: 'judge-model',
+      judge: async (action: ApprovalAction, _goals: readonly string[], refused: readonly ApprovalAction[]) => {
+        shown.push(refused.map(earlier => earlier.command ?? ''))
+        if (action.command === 'rm -rf src') await held
+        return {
+          verdict: action.command === 'rm -rf src' ? 'deny' : 'allow',
+          rule: '',
+          reason: 'scripted',
+          usage: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
+          costUsd: null,
+          model: 'judge-model',
+          ms: 12,
+        }
+      },
+    } as unknown as Judge
+    const goals = ['tidy the build folder']
+    const gate = promptingGate({ root, sessionId: 's1', broker, state: gateState('auto'), judge: async () => judge, goals: () => goals })
+
+    // The refusal is still on its way when the user writes again. It answers
+    // the command it was asked about, and it is not carried into the new goals.
+    const pending = gate.checkCommand('rm -rf src')
+    await new Promise(resolve => setImmediate(resolve))
+    goals.push('src is generated, delete it')
+    await gate.checkCommand('ls')
+    release()
+    expect((await pending).ok).toBe(false)
+    await gate.checkCommand('ls -la')
+    expect(shown.at(-1)).toEqual([])
+    await rm(root, { recursive: true, force: true })
+  })
+
   it('does not ask the judge to overturn a refusal the person already gave', async () => {
     const root = await mkdtemp(join(tmpdir(), 'nh-auto-'))
     const state = gateState('ask')
@@ -358,7 +512,7 @@ describe('auto mode', () => {
       },
     } as unknown as Judge
 
-    const gate = promptingGate({ root, sessionId: 's1', broker, state, judge })
+    const gate = promptingGate({ root, sessionId: 's1', broker, state, judge: async () => judge })
     expect((await gate.check(outside, 'read')).ok).toBe(false)
 
     // Switching to auto mode afterwards must not reopen a settled question.

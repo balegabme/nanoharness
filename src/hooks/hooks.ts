@@ -1,7 +1,7 @@
 // doc: docs/harness/hooks.md
 import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
-import { shellLaunch } from '../env/shell.js'
+import { killTree, shellLaunch, TREE } from '../env/shell.js'
 import type { HookEvent, HookSpec } from './config.js'
 
 /**
@@ -145,25 +145,6 @@ function collector(): { add(chunk: Buffer): void; text(): string } {
   }
 }
 
-/**
- * End a hook and everything it started. Whatever the script ran holds its
- * pipes open, so ending bash alone would leave the harness waiting on a
- * `sleep` or a test run. POSIX kills the process group the hook leads;
- * Windows has `taskkill` walk the tree.
- */
-function killTree(child: ChildProcess): void {
-  if (child.pid === undefined) return
-  if (process.platform === 'win32') {
-    spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }).on('error', () => undefined)
-    return
-  }
-  try {
-    process.kill(-child.pid, 'SIGKILL')
-  } catch {
-    // The group has already gone.
-  }
-}
-
 function runOne(spec: HookSpec, input: string, cwd: string, signal?: AbortSignal): Promise<Outcome> {
   const launch = shellLaunch()
   if (launch === null) return Promise.resolve({ kind: 'problem', text: `${label(spec)} did not run: there is no bash to run it with` })
@@ -172,9 +153,8 @@ function runOne(spec: HookSpec, input: string, cwd: string, signal?: AbortSignal
     const child = spawn(launch.bin, [...launch.args, '-c', spec.command], {
       cwd,
       env: launch.env,
-      windowsHide: true,
       // Its own process group on POSIX, so a timeout can end all of it.
-      detached: process.platform !== 'win32',
+      ...TREE,
     })
     running.add(child)
     const stdout = collector()

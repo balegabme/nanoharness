@@ -76,9 +76,10 @@ export interface PromptingGateOptions {
   /**
    * The approval model, when one is configured. A gate without it prompts for
    * everything however the mode is set, which is why `approvalProblem` refuses
-   * to turn auto mode on when there is nothing to ask.
+   * to turn auto mode on when there is nothing to ask. Fetched for each
+   * question, so a judge rebuilt after a settings change answers the next one.
    */
-  judge?: Judge
+  judge?: () => Promise<Judge>
   /**
    * The user's own words this session, newest last, for the judge to read the
    * action against. A function and not a value because the gate outlives
@@ -87,7 +88,8 @@ export interface PromptingGateOptions {
   goals?: () => readonly string[]
   /**
    * Every automatic decision, for the usage split and the transcript. Called
-   * for a failure as well as a verdict.
+   * for a failure as well as a verdict, and not for a verdict the gate
+   * answered again from memory, which cost nothing and is already logged.
    */
   onDecision?: (record: ApprovalRecord) => void
 }
@@ -128,6 +130,13 @@ export function gateState(mode: PermissionMode = 'ask'): GateState {
   return { granted: new Set(), denied: new Set(), deniedCommands: new Set(), shellAllowed: false, mode }
 }
 
+/**
+ * How many of the judge's refusals it is shown again. A handful is enough to
+ * catch a retry by another route, and each one is paid for on every check
+ * until the user writes again.
+ */
+const MAX_REFUSED = 5
+
 export function promptingGate({ root, sessionId, broker, readable = [], redact, state = gateState(), judge, goals, onDecision }: PromptingGateOptions): AccessGate {
   // Paths the user allowed for the rest of this session, already resolved.
   const granted = state.granted
@@ -137,6 +146,19 @@ export function promptingGate({ root, sessionId, broker, readable = [], redact, 
   // Commands the user already refused. Remembered by their text, so a retry of
   // the same command costs no second prompt, and a different command asks.
   const deniedCommands = state.deniedCommands
+  // The judge's answers under the goals it last read, keyed by the action. The
+  // goals move only when a message lands in the conversation as the user's,
+  // and the same action under the same goals is the same question, so a turn
+  // that runs `npm test` after every edit pays for one check. New goals or a
+  // new judge empty the map. The answer is kept while it is still coming, so
+  // two reads of one path in the same message share one call.
+  let verdictGoals = ''
+  let verdictJudge: Judge | undefined
+  const verdicts = new Map<string, Promise<ApprovalOutcome>>()
+  // What the judge refused under those same goals, newest last, so it can see
+  // an agent reaching for a refused result by another route. Emptied with the
+  // verdicts: once the user writes again, their new words decide.
+  let refused: ApprovalAction[] = []
 
   function alreadyAllowed(path: string, intent: AccessIntent): boolean {
     for (const grant of granted) {
@@ -182,17 +204,41 @@ export function promptingGate({ root, sessionId, broker, readable = [], redact, 
    */
   async function adjudicate(action: ApprovalAction): Promise<{ settled: true; allow: boolean; reason: string } | { settled: false; problem?: string }> {
     if (state.mode !== 'auto' || judge === undefined) return { settled: false }
+    const current = await judge()
+    const read = goals?.() ?? []
+    const readKey = JSON.stringify(read)
+    if (readKey !== verdictGoals || current !== verdictJudge) {
+      verdicts.clear()
+      refused = []
+      verdictGoals = readKey
+      verdictJudge = current
+    }
+    const key = JSON.stringify(action)
+    let answer = verdicts.get(key)
+    // Only the call that asked reports the decision; the rest reuse it.
+    const asked = answer === undefined
     const at = Date.now()
+    if (answer === undefined) {
+      answer = current.judge(action, read, refused)
+      verdicts.set(key, answer)
+    }
     try {
-      const outcome = await judge.judge(action, goals?.() ?? [])
-      onDecision?.({ action, outcome, at })
+      const outcome = await answer
+      if (asked) {
+        // Checked against the list that is live now, which a new message may
+        // have emptied while this answer was coming.
+        if (outcome.verdict === 'deny' && verdicts.get(key) === answer) refused = [...refused, action].slice(-MAX_REFUSED)
+        onDecision?.({ action, outcome, at })
+      }
       return { settled: true, allow: outcome.verdict === 'allow', reason: outcome.reason }
     } catch (err) {
+      // A failure is not an answer, so the next ask tries again.
+      if (verdicts.get(key) === answer) verdicts.delete(key)
       // The person pressed Stop. That is not the judge failing and it does not
       // become a prompt: the turn is ending.
       if (err instanceof Error && err.name === 'AbortError') throw err
       const problem = err instanceof ApprovalUnavailableError ? err.message : `the approval model failed: ${err instanceof Error ? err.message : String(err)}`
-      onDecision?.({ action, problem, at })
+      if (asked) onDecision?.({ action, problem, at })
       return { settled: false, problem }
     }
   }
@@ -214,8 +260,8 @@ export function promptingGate({ root, sessionId, broker, readable = [], redact, 
       if (denied.has(path)) return { ok: false, path, reason: refusal(path, intent, true) }
 
       // Not remembered either way. The judge weighs the action against what the
-      // user has asked for, and that changes with every turn. Caching the
-      // verdict would answer next turn's question with last turn's goals.
+      // user has asked for, and that changes with every message, so its
+      // verdict is kept only until the next one (see `verdicts`).
       const auto = await adjudicate({ intent, paths: [path], root })
       if (auto.settled) {
         if (auto.allow) return { ok: true, path }

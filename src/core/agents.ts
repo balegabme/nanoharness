@@ -56,7 +56,7 @@ export const AGENTS: Record<AgentRole, AgentDefinition> = {
     role: 'builder',
     name: 'Builder',
     purpose: 'writes code in the workspace',
-    tools: ['bash', 'read', 'grep', 'glob', 'write', 'edit', 'log_improvement', 'spawn', 'job_update'],
+    tools: ['bash', 'terminal', 'read', 'grep', 'glob', 'write', 'edit', 'todo_write', 'ask_user', 'log_improvement', 'spawn', 'job_update'],
     bash: 'full',
     brief: [
       'You are the builder: you change code in this workspace, and keep the change the size of the request.',
@@ -66,7 +66,7 @@ export const AGENTS: Record<AgentRole, AgentDefinition> = {
     role: 'planner',
     name: 'Planner',
     purpose: 'reads and researches, and never writes',
-    tools: ['bash', 'read', 'grep', 'glob', 'log_improvement', 'spawn', 'job_update'],
+    tools: ['bash', 'read', 'grep', 'glob', 'todo_write', 'ask_user', 'log_improvement', 'spawn', 'job_update'],
     bash: 'guarded',
     brief: [
       'You are the planner: you read and reason, and you do not change files.',
@@ -78,7 +78,7 @@ export const AGENTS: Record<AgentRole, AgentDefinition> = {
     role: 'harness-editor',
     name: 'Harness editor',
     purpose: 'answers questions about NanoHarness and edits it',
-    tools: ['bash', 'read', 'grep', 'glob', 'write', 'edit', 'log_improvement', 'job_update'],
+    tools: ['bash', 'terminal', 'read', 'grep', 'glob', 'write', 'edit', 'todo_write', 'ask_user', 'log_improvement', 'job_update'],
     bash: 'full',
     brief: [
       'You are the harness editor: you answer questions about NanoHarness and you change it.',
@@ -150,5 +150,5 @@ async function docIndex(root: string): Promise<string[]> {
 
 /** The whole system prompt for one role: the shared block, then its brief. */
 export function agentPrompt(role: AgentRole, env: PromptEnvironment, extra: readonly string[] = []): string {
-  return [buildSystemPrompt(env), '', ...AGENTS[role].brief, ...extra].join(EOL)
+  return [buildSystemPrompt(env, AGENTS[role].tools.includes('write')), '', ...AGENTS[role].brief, ...extra].join(EOL)
 }

@@ -10,6 +10,8 @@ Files:
 - src/shared/format.ts: token counts, rates, percentages and dollars as the harness writes them
 - src/shared/json.ts: the two checks every reader of parsed JSON makes
 - src/shared/diff.ts: the unified diff a write or an edit hands back, and reading it out of the result again
+- src/shared/plan.ts: the plan `todo_write` carries, checked once for the tool and read back out of a call for the window
+- src/shared/questions.ts: what `ask_user` asks and how an answer is shaped, checked the same way for the tool and the window
 
 ## Why a directory of its own
 

@@ -31,14 +31,46 @@ it. That leaves two kinds of question, and they are the two the judge sees:
   nothing here reads it for paths. `sessions.md` has why that screen was
   removed.
 
+The same action is asked about once per set of goals. The gate keeps each
+answer against the goals the judge read, and the goals move only when a message
+lands in the conversation as the user's, so an agent that runs the tests after
+every edit pays for one check a turn. New goals empty the store, because a
+verdict weighed against last turn's request can be wrong for this one, and so
+does a judge rebuilt after a settings change. An answer still on its way is
+shared, so two reads of one path in the same message make one call. A verdict
+answered from the store is not logged a second time.
+
+The gate also keeps what the judge refused under those goals, the last five,
+and each request carries them. An agent told no tends to reach for the same
+result another way, a `find -delete` after a refused `rm -rf`, and each try on
+its own can look ordinary. The prompt says that an action reaching a refused
+result by another route is refused too, and that one doing something different
+is judged on its own. The list empties with the store, since new words from the
+user may be the permission that was missing.
+
 ## What the judge is shown
 
-Three things:
+Four things:
 
 1. The rules (below), as a system prompt, stable across a session, so it is the
    part a provider's cache can answer.
 2. The user's own messages, newest last, bounded and each cut to length.
-3. The action, fenced and labelled as data.
+3. What it refused since the user last wrote, one line each, when there is
+   anything.
+4. The action, fenced and labelled as data.
+
+The prompt tells the judge to weigh a command exactly as it is written, since
+agents get long one-line commands wrong, and to expand the variables, globs,
+`$(...)` and any earlier `cd` before it decides what the command touches. A
+target it cannot resolve counts as unknown, which the rules below turn into a
+denial. Urgency in the user's words does not widen what they asked for.
+
+Each earlier refusal is one line, with its whitespace collapsed and cut at 200
+characters, so a heredoc cannot spill out of its line and pose as the request's
+own structure, and the prompt says the list is data like the action. The rules
+allow scratch files in the system temp folder, and `buildJudge` in
+`src/main/index.ts` adds that folder's path to the environment facts, since the
+judge has no other way to know it.
 
 Not the assistant's messages, and above all no tool results. Tool output is the
 part of a conversation somebody else can write into: a file the agent read, an
@@ -46,6 +78,17 @@ MCP server's answer, a fetched page. A judge that reads it can be argued into
 an approval by the very thing it is judging. `goalsFrom` is where that line is
 drawn, and `approval.test.ts` pins it with a tool result that tries to give
 orders.
+
+Some messages go to the model as the user's without being written by the user,
+and each carries a flag that keeps it out of the goals. A compaction summary
+(`summary`) retells tool output. A Stop hook's reply (`hook`) is often a test
+run passed on. A message handed in with `Session.deliver` (`delivered`) is a
+background job's answer or the list of files a code rewind put back, and a
+job's answer can hold a fetched page word for word. The flags are fields on the stored message,
+so they survive the transcript file and a compaction, which marks messages in
+place. `approval.test.ts` runs a turn, delivers a job answer that gives orders,
+and checks that the judge's goals never hold it; `workspace-store.test.ts`
+checks the same after the session is saved and read back.
 
 The user's words are in for one reason: without them the soft-deny tier cannot
 work. "Discard my uncommitted changes" and a model deciding to run
@@ -131,6 +174,21 @@ carrying every reason.
 
 The ladder is re-read from settings on every question, so a provider edited or
 deleted in the settings screen takes effect at once.
+
+## How hard it thinks
+
+The judge's answer is one line of JSON, weighed against rules it is handed, and
+the turn waits while it reasons. So unless settings name a level, it asks for
+`none`, clamped up to the lowest level the model lists (`judgeEffort`). A
+reasoning model left at its default spent 650 to 850 output tokens and 10 to
+19 seconds on every check, and sixteen checks made up two thirds of a
+five-minute research turn. The settings screen labels `none` as "the least it
+takes" for that reason.
+
+A model whose levels the endpoint did not publish is an exception on the
+OpenAI-shaped wires: `none` goes out as no field there (`providers.md`), and
+the model reasons at its default. Filling its levels in by hand in settings is
+what lets the judge be told.
 
 ## What it costs, and where that lands
 

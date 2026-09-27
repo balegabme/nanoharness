@@ -169,14 +169,16 @@ function drawApproval(): void {
   approvalProvider.disabled = usable.length === 0
   drawApprovalModels()
 
+  // No stored level and `none` are the same to the judge: both move up to the
+  // lowest level the model lists.
   approvalEffort.replaceChildren()
   for (const effort of EFFORTS) {
     const option = el('option')
     option.value = effort
-    option.textContent = effort
+    option.textContent = effort === 'none' ? 'none, or the least it takes' : effort
     approvalEffort.append(option)
   }
-  approvalEffort.value = status.approval?.effort ?? 'low'
+  approvalEffort.value = status.approval?.effort ?? 'none'
 
   approvalList.replaceChildren()
   approvalEmpty.hidden = ladder.length > 0

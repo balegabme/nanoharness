@@ -24,7 +24,9 @@ import {
 } from './jobs.js'
 import { announce, initNotify } from './notify.js'
 import { enqueue, initPermission } from './permission.js'
+import { PlanView } from './plan.js'
 import { closePopover, Popover } from './popover.js'
+import { addQuestion, dropQuestions, initQuestions, viewQuestions } from './question.js'
 import { applyConfig, initSettings, latestConfig, openSettings, refreshConfig } from './settings.js'
 import { EFFORT_LABEL, WARN } from './facts.js'
 import { closePreview, holding, initTurns, keepHeld, loadTurns, noteCheckpoint, openTurnIndex, rewinding } from './turns.js'
@@ -137,6 +139,9 @@ const subMeter = new ContextMeter(must<HTMLButtonElement>('sub-context'), must<H
 const tokensPopover = new Popover(must<HTMLElement>('tokens'), must<HTMLElement>('tokens-panel'))
 new Popover(must<HTMLElement>('sub-tokens'), must<HTMLElement>('sub-tokens-panel'))
 
+/** The main agent's plan, above the composer. */
+const plan = new PlanView(must<HTMLElement>('plan'))
+
 /**
  * The conversation, and the subagent the user opened. Two views of the same
  * kind, because a subagent is an agent: it thinks, calls tools and answers.
@@ -155,6 +160,7 @@ const chat = new ChatView({
   openSubagent: id => void openSubagent(id),
   openDiff,
   openLink: url => openLink(url, chat),
+  plan: (items, replayed) => plan.show(items, replayed),
 })
 
 const sub = new ChatView({
@@ -697,6 +703,7 @@ function setBusy(next: boolean): void {
   busy = next
   chat.setActivity(next)
   meter.setRunning(next)
+  plan.setRunning(next)
   renderShell()
   if (!next) input.focus()
 }
@@ -718,6 +725,7 @@ async function openSession(id: string): Promise<void> {
     const opened = await nh.openSession(id)
     if (id !== activeSessionId) closePopover()
     activeSessionId = id
+    viewQuestions(id)
     select(id)
     // A subagent and a diff both belong to the session that started them, so
     // opening another session is leaving both.
@@ -740,6 +748,7 @@ async function openSession(id: string): Promise<void> {
     // The session went away underneath us (deleted, or its folder removed).
     // Fall back to the hero, since a composer here could not send.
     activeSessionId = null
+    viewQuestions(null)
     void loadTurns(null)
     renderMcp(null)
     await refreshSidebar()
@@ -865,6 +874,7 @@ async function send(): Promise<void> {
   clearAttachments()
   autoGrow()
   chat.startTurn()
+  plan.turnStarted()
   setBusy(true)
 
   try {
@@ -987,6 +997,7 @@ initTurns({
 })
 initNotify()
 initPermission({ bridge: nh, report: text => chat.errorBlock(text) })
+initQuestions({ bridge: nh, root: must<HTMLElement>('question'), report: text => chat.errorBlock(text) })
 initSidebar({
   bridge: nh,
   openSession,
@@ -994,6 +1005,7 @@ initSidebar({
     // A folder or session just went away; the open one may have been it.
     if (activeSessionId !== null && sessionById(activeSessionId) === undefined) {
       activeSessionId = null
+      viewQuestions(null)
       chat.clear()
       void loadTurns(null)
       renderMcp(null)
@@ -1033,9 +1045,18 @@ nh.onEvent(event => {
   if (event.type === 'session.finished' || event.type === 'session.stopped' || event.type === 'session.error') {
     const outcome = event.type === 'session.finished' ? 'finished' : event.type === 'session.stopped' ? 'stopped' : 'error'
     announce(outcome, sessionById(event.sessionId)?.title ?? 'Session')
+    // An error can also be a fault reported in the middle of a turn that goes
+    // on, and a question that turn asked is still waiting for its answer.
+    if (event.type !== 'session.error') dropQuestions(event.sessionId)
   }
   if (event.type === 'project.trust') {
     void trustProject(event)
+    return
+  }
+  // A question waits for its session to be opened, unlike a permission
+  // prompt: the agent asked because it cannot go on without the answer.
+  if (event.type === 'question.request') {
+    addQuestion(event)
     return
   }
   if (event.type === 'permission.request') {

@@ -64,8 +64,10 @@ model reading a reference it cannot resolve, and a harness that can.
    `spawn` is one: its `task` becomes a subagent's first message, so filling it
    in would hand the key to a child session, which would send it to the
    provider on its first request, the leak this whole design exists to prevent.
-   `job_update` is the other: its note is text for the window and for the
-   parent's journal on disk. The test for a new tool: does it *use* the
+   `job_update` is another: its note is text for the window and for the
+   parent's journal on disk. `todo_write` and `ask_user` are the others, since
+   a plan step and a question are drawn in the window for the user to read.
+   The test for a new tool: does it *use* the
    argument, or turn it into text somebody else reads? The second kind keeps
    the placeholder.
 

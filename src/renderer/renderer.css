@@ -2811,6 +2811,590 @@ details.block pre + pre {
   display: block;
 }
 
+/* ── 9b. plan and question ───────────────────────────────────────────── */
+
+/* The dock's one column: the plan, a question card and the composer, stacked
+   from the bottom. The composer is the widest thing in it and the others line
+   up with its edges. */
+.dock-column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  width: 100%;
+  max-width: var(--nh-composer-max);
+}
+
+/* The plan sits a little inside the composer's edges, so it reads as tucked
+   above the card rather than as a second one. */
+.plan {
+  margin: 0 var(--s4);
+  border: 1px solid var(--nh-border-l2);
+  border-radius: var(--nh-radius-card);
+  background: var(--nh-bg-layer-1);
+  box-shadow: var(--nh-shadow-lv1);
+  overflow: hidden;
+  animation: rise var(--nh-base) var(--nh-ease);
+}
+
+.plan-bar {
+  display: flex;
+  align-items: center;
+}
+
+.plan-head {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 0;
+  height: 36px;
+  padding: 0 var(--s2) 0 var(--s3);
+  border: 0;
+  background: transparent;
+  color: var(--nh-label-secondary);
+  font: 400 12.5px var(--nh-font-sans);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--nh-fast) var(--nh-ease);
+}
+
+.plan-head:hover {
+  background: var(--nh-hover);
+}
+
+.plan-head:focus-visible {
+  outline-offset: -2px;
+}
+
+/* Drawn from twelve o'clock, the way a clock fills. */
+.plan-ring {
+  flex: none;
+  transform: rotate(-90deg);
+}
+
+.plan-ring-track,
+.plan-ring-arc {
+  fill: none;
+  stroke-width: 2;
+}
+
+.plan-ring-track {
+  stroke: var(--nh-border-l3);
+}
+
+.plan-ring-arc {
+  stroke: var(--nh-accent);
+  stroke-linecap: round;
+  transition: stroke-dashoffset var(--nh-slow) var(--nh-ease);
+}
+
+.plan.finished .plan-ring-arc {
+  stroke: var(--nh-state-ok);
+}
+
+/* The same small capitals as the turn indicator in the flow. */
+.plan-word {
+  flex: none;
+  color: var(--nh-label-primary);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.plan-count {
+  flex: none;
+  color: var(--nh-label-caption);
+  font: 400 11.5px var(--nh-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.plan-current {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--nh-label-primary);
+}
+
+/* Between steps the head names the next one, in a quieter voice. */
+.plan-current.waiting {
+  color: var(--nh-label-tertiary);
+}
+
+/* The step under way shimmers while the turn runs, the plan's one moving
+   part, and stops dead when the turn does. */
+.plan.running .plan-current:not(.waiting) {
+  background: linear-gradient(
+      90deg,
+      var(--nh-label-primary) 0%,
+      var(--nh-label-primary) 38%,
+      var(--nh-accent-200) 50%,
+      var(--nh-label-primary) 62%,
+      var(--nh-label-primary) 100%
+    )
+    0 0 / 250% 100%;
+  background-clip: text;
+  color: transparent;
+  animation: plan-shimmer 2.4s linear infinite;
+}
+
+@keyframes plan-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -150% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .plan.running .plan-current:not(.waiting) {
+    animation: none;
+    background: none;
+    color: var(--nh-label-primary);
+  }
+}
+
+.plan.finished .plan-current {
+  color: var(--nh-state-ok);
+}
+
+.plan-chevron {
+  flex: none;
+  color: var(--nh-label-caption);
+  transition: transform var(--nh-base) var(--nh-ease);
+}
+
+.plan.open .plan-chevron {
+  transform: rotate(180deg);
+}
+
+.plan-close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  margin-right: var(--s1);
+  border: 0;
+  border-radius: var(--nh-radius-pill);
+  background: transparent;
+  color: var(--nh-label-caption);
+  cursor: pointer;
+  transition:
+    background var(--nh-fast) var(--nh-ease),
+    color var(--nh-fast) var(--nh-ease);
+}
+
+.plan-close:hover {
+  background: var(--nh-hover);
+  color: var(--nh-label-primary);
+}
+
+/* One grid row that goes from 0fr to 1fr, so the list slides open to its own
+   height with no measuring. */
+.plan-fold {
+  display: grid;
+  grid-template-rows: 0fr;
+  border-top: 1px solid transparent;
+  transition:
+    grid-template-rows var(--nh-base) var(--nh-ease),
+    border-color var(--nh-base) var(--nh-ease);
+}
+
+.plan.open .plan-fold {
+  grid-template-rows: 1fr;
+  border-top-color: var(--nh-border-l1);
+}
+
+.plan-list {
+  min-height: 0;
+  max-height: 212px;
+  margin: 0;
+  padding: 0 var(--s3);
+  overflow-y: auto;
+  list-style: none;
+}
+
+.plan-item {
+  display: flex;
+  gap: var(--s2);
+  padding: 5px 0;
+  color: var(--nh-label-secondary);
+  font: 400 12.5px/1.45 var(--nh-font-sans);
+}
+
+.plan-item:first-child {
+  margin-top: var(--s1);
+}
+
+.plan-item:last-child {
+  margin-bottom: var(--s2);
+}
+
+/* A step's mark, shared with the checklist on a `todo_write` card: an empty
+   ring waiting, a ring with a dot under way, a filled tick done. */
+.plan-mark {
+  position: relative;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  border: 1.5px solid var(--nh-border-l4);
+  border-radius: 50%;
+  transition:
+    background var(--nh-base) var(--nh-ease),
+    border-color var(--nh-base) var(--nh-ease);
+}
+
+:is(.plan-item, .tool-plan li).in_progress .plan-mark {
+  border-color: var(--nh-accent);
+  background: radial-gradient(circle, var(--nh-accent) 0 2.5px, transparent 3px);
+  box-shadow: 0 0 0 3px var(--nh-accent-wash);
+}
+
+:is(.plan-item, .tool-plan li).completed .plan-mark {
+  border-color: var(--nh-green-500);
+  background: var(--nh-green-500);
+}
+
+:is(.plan-item, .tool-plan li).completed .plan-mark::after {
+  content: "";
+  position: absolute;
+  left: 3.5px;
+  top: 1px;
+  width: 3px;
+  height: 6.5px;
+  border: solid var(--nh-bg-base);
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
+
+.plan-item.in_progress {
+  color: var(--nh-label-primary);
+  font-weight: 500;
+}
+
+.plan-item.completed .plan-text {
+  color: var(--nh-label-caption);
+  text-decoration: line-through;
+  text-decoration-color: var(--nh-border-l3);
+}
+
+/* A `todo_write` card, opened: the list it sent, drawn like the plan. */
+.tool-plan {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: var(--s2) var(--s3) var(--s3);
+  list-style: none;
+  color: var(--nh-label-secondary);
+  font: 400 12.5px/1.45 var(--nh-font-sans);
+}
+
+.tool-plan li {
+  display: flex;
+  gap: var(--s2);
+}
+
+.tool-plan li.completed {
+  color: var(--nh-label-caption);
+}
+
+/* The question card. Framed in the accent, since a turn is waiting on it, and
+   as wide as the composer it stands in for until it is answered. */
+.question {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--nh-accent-line);
+  border-radius: var(--nh-radius-sheet);
+  background: var(--nh-bg-layer-1);
+  box-shadow: var(--nh-shadow-lv2);
+  font-family: var(--nh-font-sans);
+  animation: rise var(--nh-base) var(--nh-ease);
+}
+
+.q-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+  min-height: 24px;
+}
+
+.q-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--nh-accent);
+  font: 500 11px var(--nh-font-sans);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.q-kicker::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: pulse 1.1s var(--nh-ease) infinite alternate;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .q-kicker::before {
+    animation: none;
+  }
+}
+
+.q-header {
+  padding: 1px var(--s2);
+  border-radius: var(--nh-radius-pill);
+  background: var(--nh-hover);
+  color: var(--nh-label-secondary);
+  font: 500 11.5px var(--nh-font-sans);
+}
+
+.q-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+}
+
+.q-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--nh-border-l2);
+  border-radius: var(--nh-radius-pill);
+  background: transparent;
+  color: var(--nh-label-tertiary);
+  font: 500 11.5px var(--nh-font-sans);
+  cursor: pointer;
+  transition:
+    background var(--nh-fast) var(--nh-ease),
+    border-color var(--nh-fast) var(--nh-ease),
+    color var(--nh-fast) var(--nh-ease);
+}
+
+.q-tab:hover {
+  color: var(--nh-label-primary);
+  border-color: var(--nh-border-l3);
+}
+
+.q-tab[aria-selected="true"] {
+  border-color: var(--nh-accent-line);
+  background: var(--nh-accent-wash);
+  color: var(--nh-label-primary);
+}
+
+.q-tab-mark {
+  width: 7px;
+  height: 7px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+}
+
+.q-tab.done .q-tab-mark {
+  border-color: var(--nh-state-ok);
+  background: var(--nh-state-ok);
+}
+
+.q-dismiss {
+  height: 24px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--nh-radius-pill);
+  background: transparent;
+  color: var(--nh-label-caption);
+  font: 500 11.5px var(--nh-font-sans);
+  cursor: pointer;
+  transition:
+    background var(--nh-fast) var(--nh-ease),
+    color var(--nh-fast) var(--nh-ease);
+}
+
+.q-dismiss:hover {
+  background: var(--nh-hover);
+  color: var(--nh-label-primary);
+}
+
+.q-text {
+  margin: 0;
+  color: var(--nh-label-primary);
+  font: 500 14px/1.5 var(--nh-font-sans);
+  text-wrap: pretty;
+}
+
+.q-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.q-option {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  width: 100%;
+  padding: 9px var(--s3);
+  border: 1px solid var(--nh-border-l1);
+  border-radius: 10px;
+  background: var(--nh-bg-layer-2);
+  color: var(--nh-label-primary);
+  font-family: var(--nh-font-sans);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--nh-fast) var(--nh-ease),
+    border-color var(--nh-fast) var(--nh-ease);
+}
+
+.q-option:hover {
+  border-color: var(--nh-border-l3);
+  background: var(--nh-bg-layer-3);
+}
+
+.q-option:focus-visible {
+  outline-offset: 1px;
+}
+
+.q-option.chosen {
+  border-color: var(--nh-accent-line);
+  background: var(--nh-accent-wash);
+}
+
+/* The number key that picks the row, drawn as the key itself. */
+.q-key {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--nh-border-l2);
+  border-radius: 6px;
+  background: var(--nh-bg-base);
+  color: var(--nh-label-caption);
+  font: 500 11px var(--nh-font-mono);
+  transition:
+    background var(--nh-fast) var(--nh-ease),
+    color var(--nh-fast) var(--nh-ease);
+}
+
+.q-option.chosen .q-key {
+  border-color: var(--nh-accent);
+  background: var(--nh-accent);
+  color: var(--nh-label-on-accent);
+}
+
+.q-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.q-label {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.q-desc {
+  color: var(--nh-label-tertiary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.q-dot,
+.q-box {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid var(--nh-border-l4);
+  transition:
+    background var(--nh-fast) var(--nh-ease),
+    border-color var(--nh-fast) var(--nh-ease);
+}
+
+.q-dot {
+  border-radius: 50%;
+}
+
+.q-box {
+  border-radius: 4px;
+}
+
+.q-option.chosen .q-dot {
+  border-color: var(--nh-accent);
+  background: radial-gradient(circle, var(--nh-accent) 0 3.5px, transparent 4px);
+}
+
+.q-option.chosen .q-box {
+  border-color: var(--nh-accent);
+  background: var(--nh-accent);
+}
+
+.q-option.chosen .q-box::after {
+  content: "\2713";
+  color: var(--nh-label-on-accent);
+  font: 700 11px/1 var(--nh-font-sans);
+}
+
+/* The answer in the user's own words: a row like the others that is also a
+   text field. */
+.q-other {
+  padding-block: 4px;
+  cursor: text;
+}
+
+.q-other:focus-within {
+  border-color: var(--nh-accent-line);
+  background: var(--nh-bg-layer-3);
+}
+
+.q-other-input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--nh-label-primary);
+  font: 400 13px var(--nh-font-sans);
+}
+
+.q-other-input::placeholder {
+  color: var(--nh-label-caption);
+}
+
+.q-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+}
+
+.q-hint {
+  min-width: 0;
+  color: var(--nh-label-caption);
+  font-size: 11.5px;
+}
+
+.q-confirm {
+  flex: none;
+}
+
 /* ── 10. chips and buttons ───────────────────────────────────────────── */
 
 button {

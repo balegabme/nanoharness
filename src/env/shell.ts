@@ -1,11 +1,13 @@
 // doc: docs/harness/env-detection.md
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
+import type { ChildProcess } from 'node:child_process'
 import { existsSync } from 'node:fs'
 
 /**
- * The shell every command the harness runs goes through: the `bash` tool, the
- * hooks and the environment probe. One place decides which bash that is and
- * what PATH it starts with, so the three of them agree about the machine.
+ * The shell every command the harness runs goes through: the `bash` and
+ * `terminal` tools, the hooks and the environment probe. One place decides
+ * which bash that is and what PATH it starts with, so they all agree about the
+ * machine.
  */
 
 /** Kills the PATH probe if a profile never returns. */
@@ -75,4 +77,29 @@ export function shellLaunch(): ShellLaunch | null {
   return path === undefined
     ? { bin: bashBin, args: ['-l'], env: process.env }
     : { bin: bashBin, args: [], env: { ...process.env, PATH: path } }
+}
+
+/**
+ * Spawn options that let `killTree` reach everything the shell starts. On
+ * POSIX the shell leads a process group of its own; Windows has no groups and
+ * `taskkill /T` walks the tree from the pid instead.
+ */
+export const TREE = { detached: process.platform !== 'win32', windowsHide: true } as const
+
+/**
+ * End a shell and everything it started. Whatever a script ran holds its pipes
+ * open, so ending bash alone would leave the harness waiting on a `sleep`, a
+ * dev server or a test run.
+ */
+export function killTree(child: ChildProcess): void {
+  if (child.pid === undefined) return
+  if (process.platform === 'win32') {
+    spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }).on('error', () => undefined)
+    return
+  }
+  try {
+    process.kill(-child.pid, 'SIGKILL')
+  } catch {
+    // The group has already gone.
+  }
 }

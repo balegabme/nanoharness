@@ -3,6 +3,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent, ty
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { toolsText } from '../shared/format.js'
@@ -21,6 +22,10 @@ import { EDIT_TOOL } from '../tools/edit.js'
 import { LOG_IMPROVEMENT_TOOL } from '../tools/log-improvement.js'
 import { SPAWN_TOOL } from '../tools/spawn.js'
 import { JOB_UPDATE_TOOL } from '../tools/job-update.js'
+import { TODO_TOOL } from '../tools/todo.js'
+import { ASK_USER_TOOL } from '../tools/ask-user.js'
+import { TERMINAL_TOOL, Terminals, stopTerminals } from '../tools/terminal.js'
+import { QuestionBroker } from './questions.js'
 import { AGENTS, AGENT_ROLES, HARNESS_HANDOFF, agentPrompt, isAgentRole, roleContext } from '../core/agents.js'
 import { EventBus } from '../core/event-bus.js'
 import { ProjectTrust, projectTrustPath } from '../core/project-trust.js'
@@ -147,6 +152,7 @@ const FORWARDED: Record<AppEvent['type'], true> = {
   'context.compacting': true,
   'context.compacted': true,
   'permission.request': true,
+  'question.request': true,
   'project.trust': true,
   'mcp.status': true,
   'job.started': true,
@@ -299,6 +305,48 @@ function brokerFor(sender: WebContents): PermissionBroker {
   return broker
 }
 
+// One per window, like the permission broker: a question is only answerable
+// where it is drawn.
+const questionBrokers = new Map<number, QuestionBroker>()
+
+function questionsFor(sender: WebContents): QuestionBroker {
+  const existing = questionBrokers.get(sender.id)
+  if (existing) return existing
+  const broker: QuestionBroker = new QuestionBroker(ask => {
+    // A window closed before the turn asked will never answer, and its
+    // `destroyed` has already fired.
+    if (sender.isDestroyed()) broker.resolve(ask.id, null)
+    else sender.send(IPC_CHANNELS.sessionEvent, { type: 'question.request', ...ask, at: Date.now() } satisfies AppEvent)
+  })
+  questionBrokers.set(sender.id, broker)
+  sender.once('destroyed', () => {
+    broker.cancelAll()
+    questionBrokers.delete(sender.id)
+  })
+  return broker
+}
+
+// One set of background shells per session for the whole launch, kept apart
+// from the session for the reason the checkpoint stores are: a session is
+// rebuilt when the settings change, and the servers it started must still be
+// its own afterwards.
+const terminalSets = new Map<string, Terminals>()
+
+function terminalsFor(sessionId: string): Terminals {
+  let set = terminalSets.get(sessionId)
+  if (set === undefined) {
+    set = new Terminals()
+    terminalSets.set(sessionId, set)
+  }
+  return set
+}
+
+/** Stop a session's background shells, for a session that is being deleted. */
+function closeTerminals(sessionId: string): void {
+  terminalSets.get(sessionId)?.close()
+  terminalSets.delete(sessionId)
+}
+
 // One registry per window, for the same reason as the broker: a job is only
 // visible where it can be shown, and its events go to that window's renderer.
 const jobRegistries = new Map<number, JobRegistry>()
@@ -365,18 +413,25 @@ const TOOLS: Record<string, Tool> = {
   log_improvement: LOG_IMPROVEMENT_TOOL,
   spawn: SPAWN_TOOL,
   job_update: JOB_UPDATE_TOOL,
+  todo_write: TODO_TOOL,
+  ask_user: ASK_USER_TOOL,
+  terminal: TERMINAL_TOOL,
 }
 
+/** Tools only the session the user talks to may call. */
+const SESSION_ONLY = new Set(['spawn', 'ask_user', 'terminal'])
+
 /**
- * The role's tools, minus the two that only make sense in one place: only a
- * background job may report progress, and a subagent may not summon another
- * one.
+ * The role's tools, minus the ones that only make sense in one place: only a
+ * background job may report progress, and a distinct subagent may not summon
+ * another one, ask the user anything, or start a shell that outlives it. A
+ * clone does not come through here; it takes the parent's list whole.
  */
-function toolsFor(role: AgentRole, options: { canSpawn: boolean; isJob: boolean }): Tool[] {
+function toolsFor(role: AgentRole, options: { subagent: boolean; isJob: boolean }): Tool[] {
   const definition = AGENTS[role]
   const tools: Tool[] = []
   for (const name of definition.tools) {
-    if (name === 'spawn' && !options.canSpawn) continue
+    if (SESSION_ONLY.has(name) && options.subagent) continue
     if (name === 'job_update' && !options.isJob) continue
     if (name === 'bash') {
       if (definition.bash === 'none') continue
@@ -440,22 +495,39 @@ async function permissionsFor(sessionId: string): Promise<GateState> {
  * answering. Plan §15 wants a stable prefix, and nothing records a switch of
  * judge mid-session.
  */
-const judges = new Map<string, Judge>()
+const judges = new Map<string, Promise<Judge>>()
 
-async function judgeFor(sessionId: string): Promise<Judge> {
+/**
+ * The session's judge. The promise is what is kept, so checks that arrive
+ * together while settings are still being read share one judge: two would
+ * each look new to the gate and empty its verdicts under the other.
+ */
+function judgeFor(sessionId: string): Promise<Judge> {
   const existing = judges.get(sessionId)
   if (existing) return existing
+  const built = buildJudge(sessionId)
+  judges.set(sessionId, built)
+  // A failed read is not kept, so the next check tries again.
+  built.catch(() => {
+    if (judges.get(sessionId) === built) judges.delete(sessionId)
+  })
+  return built
+}
+
+async function buildJudge(sessionId: string): Promise<Judge> {
   const stored = await readStored()
-  const judge = new Judge({
+  const rules = mergeRules(stored.approval?.rules)
+  // The rules allow scratch files in the temp folder, and the judge cannot
+  // see which folder that is.
+  rules.environment.push(`The system temp folder is ${tmpdir()}.`)
+  return new Judge({
     endpoints: approvalEndpoints,
-    rules: mergeRules(stored.approval?.rules),
+    rules,
     // Derived from the session's and never equal to it: the judge shares the
     // session's lifetime and nothing else, least of all its message history.
     conversationId: `${sessionId}-approval`,
     ...(stored.approval?.effort === undefined ? {} : { effort: stored.approval.effort }),
   })
-  judges.set(sessionId, judge)
-  return judge
 }
 
 /** The project files the user has approved, and the ones refused this run. */
@@ -651,7 +723,7 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
     ...hooksBlock(hooks, started.context.map(text => secrets.redact(text))),
   ]
   const systemPrompt = agentPrompt(role, await environment(root), context)
-  const tools = [...toolsFor(role, { canSpawn: true, isJob: false }), ...hub.tools()]
+  const tools = [...toolsFor(role, { subagent: false, isJob: false }), ...hub.tools()]
   // A subagent is held to the parent's boundary and the same broker: an "allow
   // for this session" covers the work the user asked for, whoever does it. A
   // clone is built from the parent's live transcript, which the gate also reads
@@ -664,7 +736,7 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
     broker: brokerFor(sender),
     state: await permissionsFor(sessionId),
     redact: text => secrets.redact(text),
-    judge: await judgeFor(sessionId),
+    judge: () => judgeFor(sessionId),
     // The user's own messages, read off the live transcript at the moment the
     // question is asked. Never the assistant's and never a tool result: tool
     // output is the part an attacker can write into.
@@ -688,8 +760,9 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
       // A clone is the parent one message later: same prompt, same tool list,
       // same history, so the provider's cache answers the whole prefix. The
       // tool definitions sit in front of the messages, so dropping one would
-      // invalidate the bytes this exists to reuse, so `spawn` stays in the
-      // list and refuses at the call instead.
+      // invalidate the bytes this exists to reuse. `spawn`, `ask_user` and
+      // `terminal` stay in the list and refuse at the call instead, since the
+      // clone's context has no spawn host, no one to ask and no terminals.
       return {
         systemPrompt,
         tools,
@@ -721,7 +794,7 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
       // A distinct subagent reaches the same servers the session does. They are
       // the session's connections, so nothing is spawned twice and nothing has
       // to be shut down when the subagent finishes.
-      tools: [...toolsFor(request.role, { canSpawn: false, isJob }), ...hub.tools()],
+      tools: [...toolsFor(request.role, { subagent: true, isJob }), ...hub.tools()],
       effort: config.effort,
     }
   }
@@ -746,6 +819,8 @@ async function buildSession(sender: WebContents, sessionId: string): Promise<Ses
       secrets,
       hooks,
       checkpoints,
+      ask: (questions, signal) => questionsFor(sender).ask(sessionId, questions, signal),
+      terminals: terminalsFor(sessionId),
       saveHistory: async () => {
         await saveTranscript(sessionId, session.transcript, session.notes)
         await setSessionState(sessionId, stateOf(session))
@@ -899,8 +974,10 @@ function quit(event: Electron.Event): void {
   if (quitting) return
   quitting = true
   event.preventDefault()
-  // A hook's children live in a group of their own, which would outlive the app.
+  // A hook's children and a terminal's live in groups of their own, which
+  // would outlive the app.
   stopHooks()
+  stopTerminals()
   // A key captured in the last turn is still queued for the encrypted file, and
   // a job still running has to be written down before the sessions go.
   void abandonJobs()
@@ -994,7 +1071,9 @@ app.whenReady().then(() => {
   ipcMain.handle(IPC_CHANNELS.workspaceRemove, async (_event: IpcMainInvokeEvent, id: string): Promise<WorkspaceStatus> => {
     const status = await workspaceStatus()
     for (const session of status.sessions.filter(s => s.workspaceId === id)) {
+      sessions.get(session.id)?.stop()
       void retire(session.id)
+      closeTerminals(session.id)
       permissions.delete(session.id)
     }
     await removeWorkspace(id)
@@ -1073,7 +1152,11 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle(IPC_CHANNELS.sessionDelete, async (_event: IpcMainInvokeEvent, id: string): Promise<WorkspaceStatus> => {
+    // A turn still running would go on waiting for a question nobody can see
+    // any more, or start a terminal into a set that is already closed.
+    sessions.get(id)?.stop()
     void retire(id)
+    closeTerminals(id)
     permissions.delete(id)
     checkpointStores.delete(id)
     await deleteSession(id)
@@ -1151,6 +1234,10 @@ app.whenReady().then(() => {
 
   ipcMain.handle(IPC_CHANNELS.permissionRespond, (event: IpcMainInvokeEvent, req: { id: string; decision: PermissionDecision }) => {
     brokerFor(event.sender).resolve(req.id, req.decision)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.questionRespond, (event: IpcMainInvokeEvent, req: { id: string; reply: unknown }) => {
+    questionsFor(event.sender).resolve(req.id, req.reply)
   })
 
   // Stop is a message to a turn already in flight, so it never builds a

@@ -6,9 +6,9 @@ its own, which is why the window can be rebuilt without touching the core.
 
 Files:
 - src/main/window.ts: BrowserWindow, the `app://` scheme, navigation lockdown
-- src/main/preload.ts: the context bridge, with ping, send, compact, checkpoints, rewind, workspaces, sessions, rename, transcript paths, role, jobs, one subagent's stored conversation, agents, MCP status, secrets, config, permission answers, project trust answers, the usage report and clearing it, external links, onEvent
+- src/main/preload.ts: the context bridge, with ping, send, compact, checkpoints, rewind, workspaces, sessions, rename, transcript paths, role, jobs, one subagent's stored conversation, agents, MCP status, secrets, config, permission answers, question answers, project trust answers, the usage report and clearing it, external links, onEvent
 - src/renderer/index.ts: the shell, which session is open, the agent, model and effort chips, and the diff and spend panes
-- src/renderer/composer.ts: the composer in its two seats, the height the flow clears, and the pictures attached to the draft
+- src/renderer/composer.ts: the composer in its two seats, the height of the dock column the flow clears, and the pictures attached to the draft
 - src/renderer/images.ts: a pasted or dropped file read as a picture to send, shrunk first when the switch is on
 - src/renderer/jobs.ts: the running subagents and the buffered stream of each one
 - src/renderer/sidebar.ts: folders and their sessions, search, add and delete
@@ -20,6 +20,8 @@ Files:
 - src/renderer/diff-rows.ts: a unified diff drawn as numbered rows, for the edit card, the diff pane and a `diff` fence
 - src/renderer/settings.ts: the settings sheet, with the provider list, form, probe and model ticking
 - src/renderer/permission.ts: the modal a tool waits on when it reaches outside its folder
+- src/renderer/plan.ts: the agent's plan pinned above the composer, folded to one line or open to every step
+- src/renderer/question.ts: the card an `ask_user` question is answered in, above the composer
 - src/renderer/confirm.ts: the app's own yes/no and one-line-of-text sheets, in place of the browser's `confirm()` and `prompt()`
 - src/renderer/turns.ts: the turns on screen and going back to one: each turn's Rewind button and menu, the card that asks before a rewind, the bar under a held one, and the turn index
 - src/renderer/menu.ts: the right-click menu, one at a time, placed near the pointer, closed by the next thing the user does
@@ -603,6 +605,56 @@ itself took up. Text that was only whitespace leaves no block at all, where it
 used to leave a labelled empty one. What survives sits close to the call it
 introduces, since commentary belongs with its tool card and not spaced off as a
 block of its own.
+
+## The plan and the questions
+
+The dock that floats over the bottom of the flow is one column: the agent's
+plan, a question card when one is open, and the composer, stacked from the
+bottom so the composer stays put when either of the others comes or goes.
+`composer.ts` measures the whole column, and a `ResizeObserver` on it re-measures
+when the plan opens or a card appears, so the last message always clears the
+lot.
+
+The plan is whatever the last successful `todo_write` call sent (`tools.md`).
+`chat.ts` finds that call, live when its result arrives and in a replayed
+transcript, and hands the list to `PlanView` through the chat host's `plan`
+callback. Folded, the plan is one line: a ring that fills as steps complete,
+the count, and the step under way. While a turn runs that step shimmers; with
+nothing in progress the line names the next step in a quieter colour, and at
+the end it says every step is done. Opened, it lists every step with a mark
+for its state, and a long plan scrolls inside its own box with the live step
+kept in view. The fold state is kept in `localStorage`. The close button puts
+the plan away until the agent writes a new one. Sending a message puts away a
+plan that is finished, and a finished plan read back from a stored session
+starts put away. A subagent's plan stays in its own view as tool cards.
+
+A `todo_write` card in the flow opens to the checklist it sent, drawn with the
+same marks, in place of the JSON arguments and the result that repeats them.
+An `ask_user` card shows the headers of its questions beside the name.
+
+A question from `ask_user` arrives as a `question.request` event and rings the
+same way a permission prompt does. It is shown only when its session is on
+screen, and waits for that session to be opened: the agent asked because it
+cannot go on without the answer, so it is never refused on the user's behalf.
+A turn that finishes or is stopped takes its questions away, since the main
+process has already settled them. A `session.error` does not, because a fault
+can be reported in the middle of a turn that goes on waiting for its answer.
+Deleting a session stops its turn first, which settles the question the same
+way. Picks made on a card are kept when the user opens another session and
+comes back.
+
+The card shows one question at a time, with a tab per header when a call asks
+several; a tab gets a tick once it is answered. Each option is a row with its
+number key, its label and its description. On a single-choice question a click
+or the number key picks the row and moves on to the next unanswered question,
+and the last pick sends the lot. Tick boxes take clicks, number keys or Space,
+and Enter or the button moves on. The last row is always a field for an answer
+in the user's own words; typing there replaces a single-choice pick. Arrow keys
+move between rows and tabs, Escape or Dismiss closes the card unanswered, and
+the agent is told the user did not answer. The card takes the keyboard when it
+appears only if nothing else has it, so a keystroke meant for the draft or for
+an open sheet never picks an option, and hands it to the composer when the
+last question is answered.
 
 ## Markdown
 

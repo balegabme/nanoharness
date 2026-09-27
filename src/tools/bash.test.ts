@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { BASH_TOOL, GUARDED_BASH_TOOL } from './bash.js'
@@ -24,8 +24,29 @@ function openGate(root: string): AccessGate {
   }
 }
 
-async function bash(command: string, cwd: string): Promise<ToolResult> {
-  return BASH_TOOL.run({ command }, { cwd, access: openGate(cwd), reads: new ReadIndex() })
+async function bash(command: string, cwd: string, extra: { timeout?: number; signal?: AbortSignal } = {}): Promise<ToolResult> {
+  const { timeout, signal } = extra
+  return BASH_TOOL.run(
+    { command, ...(timeout === undefined ? {} : { timeout }) },
+    { cwd, access: openGate(cwd), reads: new ReadIndex(), ...(signal === undefined ? {} : { signal }) },
+  )
+}
+
+async function exists(path: string): Promise<boolean> {
+  return stat(path).then(
+    () => true,
+    () => false,
+  )
+}
+
+const pause = (ms: number): Promise<void> => new Promise(done => setTimeout(done, ms))
+
+/**
+ * Remove a directory a killed command was working in. On Windows the tree kill
+ * runs as its own process and the folder stays locked until it lands.
+ */
+async function clean(cwd: string): Promise<void> {
+  await rm(cwd, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 })
 }
 
 describe('a long command', () => {
@@ -93,4 +114,56 @@ describe('a command the gate has not approved', () => {
     expect(asked).toBe(0)
     await rm(cwd, { recursive: true, force: true })
   })
+})
+
+describe('a command that would not end on its own', () => {
+  it('is killed at its timeout, with everything it started', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'nh-bash-'))
+    // The subshell would write its file five seconds in. The timeout comes
+    // first, and the file never appearing is what shows the kill reached it.
+    // The four seconds between them are for a loaded machine, where walking
+    // and killing the process tree can itself take a second or two.
+    const started = Date.now()
+    const result = await bash('(sleep 5; echo late > late.txt) & sleep 30', cwd, { timeout: 1 })
+
+    expect(Date.now() - started).toBeLessThan(10_000)
+    expect(result.ok).toBe(false)
+    expect(result.summary).toContain('killed after 1s')
+    await pause(5_000)
+    expect(await exists(join(cwd, 'late.txt'))).toBe(false)
+    await clean(cwd)
+  }, 30_000)
+
+  it('ends when the user stops the turn', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'nh-bash-'))
+    const stop = new AbortController()
+    setTimeout(() => stop.abort(), 500)
+    const started = Date.now()
+    const result = await bash('sleep 30', cwd, { signal: stop.signal })
+
+    expect(Date.now() - started).toBeLessThan(10_000)
+    expect(result.ok).toBe(false)
+    expect(result.summary).toContain('stopped by the user')
+    await clean(cwd)
+  }, 30_000)
+
+  it('gets end-of-file when it reads input nobody will type', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'nh-bash-'))
+    const result = await bash('read -r line; echo "read done: [$line]"', cwd, { timeout: 20 })
+
+    expect(result.summary).toContain('read done: []')
+    await clean(cwd)
+  }, 30_000)
+
+  it('returns when bash exits, even with a process left holding the output', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'nh-bash-'))
+    const started = Date.now()
+    const result = await bash('sleep 8 &\necho started', cwd, { timeout: 60 })
+
+    expect(Date.now() - started).toBeLessThan(6_000)
+    expect(result.summary).toContain('started')
+    expect(result.summary).toContain('still running')
+    expect(result.summary).toContain('`terminal`')
+    await clean(cwd)
+  }, 30_000)
 })

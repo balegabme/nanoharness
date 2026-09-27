@@ -9,6 +9,7 @@ import type { RewindMode } from '../core/checkpoints.js'
 import type { SpawnMode } from '../core/spawn.js'
 import type { AppEvent, CompactionMark, ContextLedger, ImageType, McpServerStatus, SessionNote, ToolStats, TurnRate, TurnUsage } from '../core/types.js'
 import type { UsageReport } from '../core/usage-report.js'
+import type { QuestionReply } from '../shared/questions.js'
 
 export const IPC_CHANNELS = {
   ping: 'ipc:ping',
@@ -35,6 +36,7 @@ export const IPC_CHANNELS = {
   sessionRename: 'session:rename',
   sessionTranscriptPath: 'session:transcript-path',
   permissionRespond: 'permission:respond',
+  questionRespond: 'question:respond',
   projectTrustRespond: 'project:trust-respond',
   permissionMode: 'permission:mode',
   permissionSetMode: 'permission:set-mode',
@@ -166,6 +168,8 @@ export interface TranscriptMessage {
   summary?: true
   /** A Stop hook's reply, drawn as the note it was shown as live. */
   hook?: true
+  /** A background job's answer, or the files a code rewind put back, handed to the model as a user message. The window does not draw it. */
+  delivered?: true
   /** The pictures sent with a user message. */
   images?: ImageView[]
 }
@@ -416,6 +420,8 @@ export interface NanoBridge {
   /** Where this session's transcript file is, for the context menu's copy item. */
   transcriptPath(id: string): Promise<string>
   respondToPermission(id: string, decision: PermissionDecision): Promise<void>
+  /** Answer a `question.request` event. Null says the card was closed without an answer. */
+  answerQuestion(id: string, reply: QuestionReply): Promise<void>
   /** How this session answers permission questions right now. */
   permissionMode(sessionId: string): Promise<PermissionModeView>
   /**

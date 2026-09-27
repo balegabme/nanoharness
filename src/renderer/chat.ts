@@ -1,6 +1,7 @@
 // doc: docs/harness/ui.md
 import { readToolDiff, withoutToolDiff } from '../shared/diff.js'
 import { costOf } from '../shared/facts.js'
+import { planFromArgs, planProgress } from '../shared/plan.js'
 import { moneyText, percentText, rateText, shortTokens } from '../shared/format.js'
 import { cacheHitRate, floorUsage, promptTokens, subtractUsage, totalTokens } from '../shared/usage.js'
 import { diffRows } from './diff-rows.js'
@@ -12,6 +13,7 @@ import type { ImageView, TranscriptMessage } from '../ipc/contract.js'
 import type { AppEvent, PreventedCall, SessionNote, TurnRate, TurnUsage } from '../core/types.js'
 import type { ModelFacts } from '../core/config.js'
 import type { ToolDiff } from '../shared/diff.js'
+import type { PlanItem } from '../shared/plan.js'
 
 /**
  * The message flow. It is append-only and streams as the turn runs: thinking
@@ -47,6 +49,13 @@ export interface ChatHost {
   openDiff?(diff: ToolDiff): void
   /** Open an http(s) link from an answer in the user's browser. */
   openLink(url: string): void
+  /**
+   * The plan the agent last wrote with `todo_write`, or null for a flow that
+   * has none. `replayed` is set when it comes out of a stored transcript and
+   * not from the turn running now. Absent in a subagent's view, whose plan is
+   * its own business.
+   */
+  plan?(items: readonly PlanItem[] | null, replayed?: boolean): void
 }
 
 /**
@@ -105,6 +114,9 @@ function withoutMarker(text: string): string {
 /** The tools whose result ends in a diff of what they changed. */
 const WRITES = new Set(['edit', 'write'])
 
+/** The tool whose arguments are the agent's plan. */
+const PLAN_TOOL = 'todo_write'
+
 /**
  * What a shortened tool result looks like to the model. `core/compaction.ts`
  * does the cutting and these are its two lengths.
@@ -125,6 +137,11 @@ function argHint(args: string): string {
       const value = record[key]
       if (typeof value === 'string') return value.length > 90 ? `${value.slice(0, 89)}…` : value
     }
+    // An `ask_user` call reads as the tags of what it asked.
+    if (Array.isArray(record.questions)) {
+      const headers = record.questions.map(item => (typeof item === 'object' && item !== null ? (item as Record<string, unknown>).header : undefined))
+      return headers.filter((header): header is string => typeof header === 'string').join(' · ')
+    }
     return ''
   } catch {
     return ''
@@ -133,6 +150,8 @@ function argHint(args: string): string {
 
 export class ChatView {
   private readonly toolCards = new Map<string, HTMLDetailsElement>()
+  /** The arguments of `todo_write` calls still waiting on their result, by call id. */
+  private readonly planCalls = new Map<string, string>()
   private activity: HTMLElement | null = null
   /**
    * A block the next ones go in front of, until the turn starts. A message
@@ -536,6 +555,8 @@ export class ChatView {
     else this.host.stream.replaceChildren(this.host.mark, this.host.tail)
     if (this.host.mark !== undefined) this.host.mark.hidden = false
     this.toolCards.clear()
+    this.planCalls.clear()
+    this.host.plan?.(null)
     if (this.assistantFrame !== null) cancelAnimationFrame(this.assistantFrame)
     this.assistantFrame = null
     this.assistantText = ''
@@ -569,11 +590,36 @@ export class ChatView {
     // names can be turns old, long gone from `toolCards`.
     card.dataset.callId = id
     const summary = el('summary')
-    summary.append(el('span', 'tool-name', name), el('span', 'tool-arg', argHint(args)))
+    const plan = name === PLAN_TOOL ? planFromArgs(args) : null
+    if (plan === null) {
+      summary.append(el('span', 'tool-name', name), el('span', 'tool-arg', argHint(args)))
+      card.append(summary, el('pre', undefined, pretty(args)))
+    } else {
+      // A plan update is read as the checklist it sent. The JSON would say the
+      // same thing at five times the length.
+      const { done, total } = planProgress(plan)
+      summary.append(el('span', 'tool-name', name), el('span', 'tool-arg', total === 0 ? 'plan cleared' : `${done} of ${total} done`))
+      card.append(summary)
+      if (total > 0) {
+        const list = el('ol', 'tool-plan')
+        for (const item of plan) {
+          const row = el('li', item.status)
+          row.append(el('span', 'plan-mark'), el('span', undefined, item.content))
+          list.append(row)
+        }
+        card.append(list)
+      }
+    }
     summary.dataset.state = 'running'
-    card.append(summary, el('pre', undefined, pretty(args)))
     this.append(card)
     return card
+  }
+
+  /** Hand the plan in a `todo_write` call to the host, if the call went through. */
+  private notePlan(name: string, args: string, ok: boolean, replayed: boolean): void {
+    if (name !== PLAN_TOOL || !ok) return
+    const plan = planFromArgs(args)
+    if (plan !== null) this.host.plan?.(plan, replayed)
   }
 
   /**
@@ -647,7 +693,11 @@ export class ChatView {
     // Only the two tools that write a diff are asked for one: a `read` of a
     // patch file ends in a diff fence too, and that card is showing a file and
     // not a change it made.
-    const diff = ok && WRITES.has(card.querySelector('.tool-name')?.textContent ?? '') ? readToolDiff(text) : null
+    const name = card.querySelector('.tool-name')?.textContent ?? ''
+    const diff = ok && WRITES.has(name) ? readToolDiff(text) : null
+    // A plan that went through is already on the card; the result only
+    // repeats it for the model.
+    if (ok && card.querySelector('.tool-plan') !== null) return
     if (id !== null) {
       const body = withoutMarker(text)
       const spent = subagentCost(body)
@@ -743,6 +793,11 @@ export class ChatView {
       this.noteBlock(message.text)
       return
     }
+    // A delivered message was never drawn live. The note the window showed for
+    // it, a job's first line or a rewind's summary, is in the journal and
+    // replays on its own, and a user block would show it as something the user
+    // sent.
+    if (message.delivered === true) return
     if (message.role === 'user') {
       // The transcript index, which a checkpoint's marker names.
       this.userBlock(message.text, message.images).dataset.index = String(index)
@@ -764,6 +819,8 @@ export class ChatView {
       if (output === undefined) continue
       this.finishToolCard(card, output.text, !output.failed)
       if (output.pruned) this.markPruned(card)
+      // Replayed in order, so the last plan drawn is the one the session ended with.
+      this.notePlan(call.name, call.args, !output.failed, true)
     }
   }
 
@@ -801,11 +858,17 @@ export class ChatView {
       case 'tool_call':
         // Text followed by a tool call was commentary, not the answer.
         this.toolCards.set(event.call.id, this.toolCard(event.call.id, event.call.name, event.call.args))
+        if (event.call.name === PLAN_TOOL) this.planCalls.set(event.call.id, event.call.args)
         this.sealAssistant()
         break
       case 'tool_result': {
         const card = this.toolCards.get(event.callId)
         if (card) this.finishToolCard(card, event.result.content ?? event.result.summary, event.result.ok)
+        const plan = this.planCalls.get(event.callId)
+        if (plan !== undefined) {
+          this.planCalls.delete(event.callId)
+          this.notePlan(PLAN_TOOL, plan, event.result.ok, false)
+        }
         break
       }
       case 'usage':

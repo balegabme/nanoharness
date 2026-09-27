@@ -37,6 +37,8 @@ import type {
 import type { SpawnHost } from './spawn.js'
 import type { JobRegistry } from './jobs.js'
 import type { HookVerdict, Hooks } from '../hooks/hooks.js'
+import type { Question, QuestionReply } from '../shared/questions.js'
+import type { Terminals } from '../tools/terminal.js'
 
 /**
  * What a tool is handed instead of a bare cwd. `access` is the scope guard: a
@@ -58,7 +60,16 @@ export interface ToolContext {
   job?: { id: string; jobs: JobRegistry }
   /** Told before `edit` or `write` changes a file, so a rewind can put the file back. */
   guard?: FileGuard
+  /** The turn's stop. A tool that waits on a process or a person ends the wait when it fires. */
+  signal?: AbortSignal
+  /** Puts questions to the user and waits. Only the session the user is talking to has one. */
+  ask?: AskUser
+  /** The session's background shells. A subagent has none. */
+  terminals?: Terminals
 }
+
+/** Show the user questions and wait for the answers; null when the card was closed unanswered. */
+export type AskUser = (questions: Question[], signal?: AbortSignal) => Promise<QuestionReply>
 
 export interface Tool {
   input: ToolInput
@@ -287,6 +298,10 @@ export interface SessionOptions {
   checkpoints?: CheckpointStore
   /** For a subagent: its parent's checkpoints, so what it writes goes back with the parent's turn that was latest then. */
   guard?: FileGuard
+  /** How `ask_user` reaches the person. Absent for a subagent, which has nobody to ask. */
+  ask?: AskUser
+  /** The background shells `terminal` starts. Absent for a subagent. */
+  terminals?: Terminals
   /**
    * Stores the history. Called once a kept rewind has cut it, so the cut is
    * on disk before the turn that follows can fail.
@@ -461,9 +476,10 @@ export class Session {
       if (message.role !== 'system') this.messages.push({ ...message })
     }
     // Turn numbers continue where the stored conversation left off, so the
-    // usage log of a resumed session does not restart at 1. A summary and a
-    // Stop hook's reply are sent as user messages and are not turns.
-    this.turn = this.messages.filter(m => m.role === 'user' && m.summary !== true && m.hook !== true).length
+    // usage log of a resumed session does not restart at 1. A summary, a Stop
+    // hook's reply and a delivered message are sent as user messages and are
+    // not turns.
+    this.turn = this.messages.filter(m => m.role === 'user' && m.summary !== true && m.hook !== true && m.delivered !== true).length
   }
 
   /**
@@ -637,7 +653,7 @@ export class Session {
 
   private flushPending(): void {
     if (this.pending.length === 0) return
-    for (const text of this.pending.splice(0)) this.messages.push({ role: 'user', content: this.safe(text) })
+    for (const text of this.pending.splice(0)) this.messages.push({ role: 'user', content: this.safe(text), delivered: true })
   }
 
   /**
@@ -1096,10 +1112,11 @@ export class Session {
     }
   }
 
-  /** The effort and output ceiling every request of this session carries. */
-  private limits(): Pick<ChatInput, 'effort' | 'maxTokens'> {
+  /** The effort, the model's levels and the output ceiling every request of this session carries. */
+  private limits(): Pick<ChatInput, 'effort' | 'efforts' | 'maxTokens'> {
     return {
       ...(this.options.effort === undefined ? {} : { effort: this.options.effort }),
+      ...(this.facts?.efforts === undefined ? {} : { efforts: this.facts.efforts }),
       ...(this.facts?.maxOutput === undefined ? {} : { maxTokens: this.facts.maxOutput }),
     }
   }
@@ -1704,6 +1721,9 @@ export class Session {
         ...(this.options.spawn === undefined ? {} : { spawn: this.options.spawn }),
         ...(this.options.job === undefined ? {} : { job: this.options.job }),
         ...(this.guard === undefined ? {} : { guard: this.guard }),
+        ...(this.controller === null ? {} : { signal: this.controller.signal }),
+        ...(this.options.ask === undefined ? {} : { ask: this.options.ask }),
+        ...(this.options.terminals === undefined ? {} : { terminals: this.options.terminals }),
       })
     } catch (err) {
       // A tool that threw is still a tool failure, and the loop needs a result

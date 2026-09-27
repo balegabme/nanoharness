@@ -76,6 +76,21 @@ describe('thinking on the OpenAI wire', () => {
     await drain(provider.stream({ model: 'm', messages: history, tools: [] }))
     expect(JSON.stringify(request.body())).not.toContain('unsigned reasoning')
   })
+
+  it('tells a model that lists none not to reason, and sends no field to one that may not reason at all', async () => {
+    const sent = async (effort: Effort, efforts?: Effort[]): Promise<unknown> => {
+      const request = stub(() => sse(['data: [DONE]']))
+      const provider = createOpenAIProvider({ apiKey: 'k', baseURL: 'https://example.invalid' })
+      await drain(provider.stream({ model: 'm', messages: [{ role: 'user', content: 'hi' }], tools: [], effort, ...(efforts === undefined ? {} : { efforts }) }))
+      return request.body().reasoning_effort
+    }
+    // Left out, the field is the model's default, and on a model that reasons
+    // the default is to reason.
+    expect(await sent('none', ['none', 'low', 'high'])).toBe('none')
+    expect(await sent('none')).toBeUndefined()
+    expect(await sent('none', ['none'])).toBeUndefined()
+    expect(await sent('low')).toBe('low')
+  })
 })
 
 describe('thinking on the Anthropic wire', () => {

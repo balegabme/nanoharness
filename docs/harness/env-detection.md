@@ -6,7 +6,7 @@ training set, decides it is on Linux with Python 3 and ripgrep, and spends
 rounds finding out otherwise. Plan §12.
 
 Files:
-- src/env/shell.ts: which bash every command runs through, and the PATH it starts with
+- src/env/shell.ts: which bash every command runs through, the PATH it starts with, and how a command is killed with everything it started
 - src/env/probe.ts: the machine probe, and the lines the system prompt carries
 
 ## The shell
@@ -20,6 +20,15 @@ up under Program Files. A Windows machine without Git for Windows has no shell:
 the `bash` tool refuses with a line saying so, a hook becomes a note, and the
 prompt tells the model the shell is missing. Plan §6 names PowerShell as the
 fallback; it is not built.
+
+Killing a command means killing what it started too, since a child left alive
+holds the output pipes and whoever is reading them keeps waiting. `killTree`
+does that for the `bash` tool, `terminal` and the hooks. On macOS and Linux the
+command is spawned as the leader of its own process group (`TREE` sets
+`detached`) and the whole group gets `SIGKILL`. On Windows there are no process
+groups, so it runs `taskkill /T /F` on the pid, which walks the tree from
+there. That kill runs as a process of its own and lands a moment after the call
+returns.
 
 ## The login PATH
 

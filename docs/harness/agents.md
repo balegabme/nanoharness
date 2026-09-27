@@ -162,10 +162,11 @@ Caching is what puts the default there. A provider's prompt cache answers a
 request whose leading bytes it has already seen, so a clone is paid for mostly at the
 cached rate: same system prompt, same tool definitions, same history, differing
 only in the task appended at the end. That is also why clone mode passes the
-parent's exact tool array instead of a filtered one. Dropping `spawn` from a
-clone's list would be tidier and would invalidate precisely the bytes the mode
-exists to reuse, so `spawn` travels with the clone and refuses when it is
-called, which costs nothing unless the model tries it.
+parent's exact tool array instead of a filtered one. Dropping `spawn`,
+`ask_user` and `terminal` from a clone's list would be tidier and would
+invalidate precisely the bytes the mode exists to reuse, so they travel with
+the clone and refuse when called, which costs nothing unless the model tries
+one.
 
 A clone is the parent's prompt and the parent's tool list, so a clone is the
 parent's *role*, and there is nothing else it could be. A request to clone as
@@ -276,6 +277,12 @@ line, and the model never sees a note, while the whole answer sits on disk under
 the app's data directory, outside the workspace the agent may read. An agent that
 started three jobs and was asked to combine what they found would have no way to
 do it and no way to say why.
+
+The message goes in as the user's, since that is the only role that can carry
+it between turns, and is marked `delivered`. The approval judge never reads it
+as the user's words (`approval.md`), a resumed session does not count it as a
+turn, and a reopened session does not draw it. The window showed the job's note
+live, and that note replays from the journal.
 
 A job that never finishes is written down too. Jobs live in memory and die with
 the process, so quitting the app used to end a background subagent in silence:

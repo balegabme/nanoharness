@@ -1,17 +1,41 @@
 // doc: docs/harness/tools.md
-import { execFile } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { defineTool } from '../core/session.js'
-import { shellLaunch } from '../env/shell.js'
+import { killTree, shellLaunch, TREE } from '../env/shell.js'
 import type { ShellLaunch } from '../env/shell.js'
 import type { ArgsParse, Tool } from '../core/session.js'
 import type { ToolResult } from '../core/types.js'
 
+/** The most output one call keeps, in characters. Past it the command is ended. */
 const OUTPUT_CAP = 1024 * 1024
-const TIMEOUT_MS = 60_000
+
+/** How long a command may run when the call names no timeout, in seconds. */
+export const DEFAULT_TIMEOUT_S = 120
+
+/**
+ * The longest a call may ask for, in seconds. The turn waits on the command
+ * the whole time, so anything longer belongs in `terminal`, which does not.
+ */
+export const MAX_TIMEOUT_S = 600
+
+/**
+ * How long the pipes get once bash has exited. A process the command left
+ * running, a server started with `&`, holds them open for as long as it runs,
+ * so the result is whatever arrived by then.
+ */
+const PIPE_GRACE_MS = 1_000
+
+/**
+ * Settings that stop a command from waiting on a person who is not there. Git
+ * fails on a missing credential instead of asking for one, and nothing pages
+ * its output through `less`. The `bash` tool also closes stdin, so a command
+ * that reads it gets end-of-file at once.
+ */
+export const UNATTENDED_ENV: Readonly<Record<string, string>> = { GIT_TERMINAL_PROMPT: '0', GIT_PAGER: 'cat', PAGER: 'cat' }
 
 /**
  * The ways to write that the planner's shell refuses: redirects, the
@@ -50,11 +74,25 @@ export function writeGuard(command: string): string | null {
   return null
 }
 
-type BashArgs = { command: string }
+type BashArgs = { command: string; timeoutS: number }
 
 function parseArgs(args: Record<string, unknown>): ArgsParse<BashArgs> {
   if (typeof args.command !== 'string') return { ok: false, error: 'command must be a string' }
-  return { ok: true, args: { command: args.command } }
+  const timeout = args.timeout ?? DEFAULT_TIMEOUT_S
+  if (typeof timeout !== 'number' || !Number.isFinite(timeout) || timeout <= 0) {
+    return { ok: false, error: 'timeout must be a positive number of seconds' }
+  }
+  return { ok: true, args: { command: args.command, timeoutS: Math.min(Math.ceil(timeout), MAX_TIMEOUT_S) } }
+}
+
+/** One command to run, and what to say if it leaves something running. */
+interface Job {
+  command: string
+  cwd: string
+  launch: ShellLaunch
+  timeoutS: number
+  signal: AbortSignal | undefined
+  leftRunning: string
 }
 
 /**
@@ -68,53 +106,100 @@ function parseArgs(args: Record<string, unknown>): ArgsParse<BashArgs> {
  * The temp directory is shared and the file holds the command, so it is
  * written for this user alone.
  */
-function run(command: string, cwd: string, launch: ShellLaunch): Promise<ToolResult> {
+function run(job: Job): Promise<ToolResult> {
   const script = join(tmpdir(), `nh-${randomUUID()}.sh`)
-  return writeFile(script, command.replace(/\r\n/g, '\n'), { encoding: 'utf8', mode: 0o600 })
-    .then(() => exec(script, cwd, launch))
+  return writeFile(script, job.command.replace(/\r\n/g, '\n'), { encoding: 'utf8', mode: 0o600 })
+    .then(() => exec(script, job))
     .catch((err: unknown) => {
       // The loop needs a result to hand back to the model, so a failed write
       // is a tool error and not a thrown promise.
       const why = `could not write the command to a script file: ${err instanceof Error ? err.message : String(err)}`
       return { ok: false, summary: why, content: why, isError: true } satisfies ToolResult
     })
-    // Windows can hold the script open after a timeout kills bash, so a failed
-    // cleanup must not touch the result.
+    // Windows can hold the script open after a kill, so a failed cleanup must
+    // not touch the result.
     .finally(() => void rm(script, { force: true }).catch(() => undefined))
 }
 
-function exec(script: string, cwd: string, launch: ShellLaunch): Promise<ToolResult> {
+/**
+ * Run the script and settle on the first of four endings: bash exits, the
+ * timeout runs out, the user stops the turn, or the output passes the cap.
+ * The last three end bash and everything it started, because a child left
+ * behind holds the pipes and would keep the turn waiting.
+ */
+function exec(script: string, job: Job): Promise<ToolResult> {
   return new Promise<ToolResult>(resolve => {
-    execFile(
-      launch.bin,
-      [...launch.args, script],
-      { cwd, env: launch.env, timeout: TIMEOUT_MS, windowsHide: true, maxBuffer: OUTPUT_CAP, encoding: 'utf8' },
-      (error, stdout, stderr) => {
-        const out = [stdout, stderr].filter(Boolean).join('\n').trim()
-        if (!error) {
-          resolve({ ok: true, summary: out || '(no output)', content: out || '' })
-          return
-        }
-        const err = error as NodeJS.ErrnoException & { exitCode?: number | null; killed?: boolean; signal?: string | null }
-        if (err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
-          resolve({
-            ok: false,
-            summary: '[output truncated at 1 MB]\n' + (out || '(no output captured)'),
-            content: out,
-            isError: true,
-          })
-          return
-        }
-        // A timeout kills the child, so there is no exit code to report.
-        if (err.killed) {
-          const killed = `killed after ${TIMEOUT_MS / 1000}s${err.signal ? ` (${err.signal})` : ''}`
-          resolve({ ok: false, summary: out ? `${killed}: ${out}` : killed, content: out || '', isError: true })
-          return
-        }
-        const exitCode = err.exitCode ?? err.code ?? '?'
-        resolve({ ok: false, summary: out ? `exit code ${exitCode}: ${out}` : `exit code ${exitCode}`, content: out || '', isError: true })
-      },
-    )
+    const started = Date.now()
+    const child = spawn(job.launch.bin, [...job.launch.args, script], {
+      cwd: job.cwd,
+      env: { ...job.launch.env, ...UNATTENDED_ENV },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      ...TREE,
+    })
+    let out = ''
+    let settled = false
+    let grace: NodeJS.Timeout | undefined
+
+    const settle = (result: ToolResult): void => {
+      clearTimeout(timer)
+      clearTimeout(grace)
+      job.signal?.removeEventListener('abort', abort)
+      if (settled) return
+      settled = true
+      resolve(result)
+    }
+    const failed = (head: string, tail = ''): ToolResult => {
+      const text = [head, out.trim(), tail].filter(part => part !== '').join('\n')
+      return { ok: false, summary: text, content: text, isError: true }
+    }
+
+    const timer = setTimeout(() => {
+      killTree(child)
+      settle(
+        failed(
+          `killed after ${job.timeoutS}s, still running; everything it started was ended with it`,
+          `[a longer \`timeout\`, up to ${MAX_TIMEOUT_S}s, gives it more time]`,
+        ),
+      )
+    }, job.timeoutS * 1000)
+    const abort = (): void => {
+      killTree(child)
+      settle(failed(`stopped by the user after ${Math.round((Date.now() - started) / 1000)}s`))
+    }
+    if (job.signal?.aborted === true) abort()
+    else job.signal?.addEventListener('abort', abort)
+
+    const take = (chunk: string): void => {
+      if (settled) return
+      out += chunk
+      if (out.length <= OUTPUT_CAP) return
+      out = out.slice(0, OUTPUT_CAP)
+      killTree(child)
+      settle(failed('[output truncated at 1 MB, and the command was ended]'))
+    }
+    child.stdout.setEncoding('utf8').on('data', take)
+    child.stderr.setEncoding('utf8').on('data', take)
+    child.on('error', err => settle(failed(`bash could not start: ${err.message}`)))
+
+    // `close` waits for every process holding the pipes. `exit` is bash alone,
+    // and a pipe still open a second after it is a process left running.
+    const finish = (code: number | null, held: boolean): void => {
+      const note = held ? job.leftRunning : ''
+      if (code !== 0) {
+        settle(failed(`exit code ${code ?? 'on a signal'}`, note))
+        return
+      }
+      const text = [out.trim() || '(no output)', note].filter(part => part !== '').join('\n')
+      settle({ ok: true, summary: text, content: text })
+    }
+    child.on('exit', code => {
+      grace = setTimeout(() => {
+        child.stdout.destroy()
+        child.stderr.destroy()
+        finish(code, true)
+      }, PIPE_GRACE_MS)
+    })
+    child.on('close', code => finish(code, false))
   })
 }
 
@@ -124,23 +209,35 @@ function noShell(): ToolResult {
 }
 
 // Both shells share one timeout and one output cap; the guard is the only
-// difference between them.
+// difference between them. The planner has no `terminal`, so its shell does
+// not point at one.
 function bashTool(guarded: boolean): Tool {
+  const held = '[bash exited, but a process it started is still running and holding the output open. It was left running'
+  const leftRunning = guarded ? `${held}.]` : `${held}, where nothing can read or stop it: start a server or a watcher with \`terminal\` instead.]`
   return defineTool<BashArgs>({
     input: {
       name: 'bash',
-      description: guarded
-        ? 'Run a read-only shell command from the project cwd. Commands that write are refused. Output is captured and capped at 1 MB.'
-        : 'Run a shell command from the project cwd. Output is captured and capped at 1 MB.',
+      description: [
+        guarded ? 'Run a read-only shell command from the project cwd. Commands that write are refused.' : 'Run a shell command from the project cwd.',
+        `Output is captured, and a command that prints more than 1 MB is ended. Stdin is closed, so nothing waits for input. The command and everything it started are killed after \`timeout\` seconds (default ${DEFAULT_TIMEOUT_S}, at most ${MAX_TIMEOUT_S}).`,
+        guarded ? '' : 'A server, a watcher, or anything that must keep running or take input, goes in `terminal`.',
+        'Calls run one at a time, and each may wait on an approval first, so join steps that belong together into one command with `&&`.',
+        'Every call starts in the project cwd, so a `cd` lasts only for the command it is in. Quote a path that has a space in it.',
+      ]
+        .filter(line => line !== '')
+        .join(' '),
       inputSchema: {
         type: 'object',
-        properties: { command: { type: 'string' } },
+        properties: {
+          command: { type: 'string' },
+          timeout: { type: 'number', description: `Seconds before the command is killed. Default ${DEFAULT_TIMEOUT_S}, at most ${MAX_TIMEOUT_S}.` },
+        },
         required: ['command'],
         additionalProperties: false,
       },
     },
     parse: parseArgs,
-    async run({ command }, { cwd, access }): Promise<ToolResult> {
+    async run({ command, timeoutS }, { cwd, access, signal }): Promise<ToolResult> {
       const refused = guarded ? writeGuard(command) : null
       if (refused !== null) return { ok: false, summary: refused, content: refused, isError: true }
 
@@ -154,7 +251,7 @@ function bashTool(guarded: boolean): Tool {
       const allowed = await access.checkCommand(command)
       if (!allowed.ok) return { ok: false, summary: allowed.reason, content: allowed.reason, isError: true, prevented: true }
 
-      return run(command, cwd, launch)
+      return run({ command, cwd, launch, timeoutS, signal, leftRunning })
     },
   })
 }

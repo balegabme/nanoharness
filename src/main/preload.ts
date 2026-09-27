@@ -28,6 +28,7 @@ import type {
   WorkspaceStatus,
 } from '../ipc/contract.js'
 import type { AgentRole } from '../core/agents.js'
+import type { QuestionReply } from '../shared/questions.js'
 import type { SwitchName } from '../core/config.js'
 import type { JobView } from '../core/jobs.js'
 import type { AppEvent } from '../core/types.js'
@@ -52,6 +53,7 @@ const bridge: NanoBridge = {
   transcriptPath: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.sessionTranscriptPath, id) as Promise<string>,
   respondToPermission: (id: string, decision: PermissionDecision) =>
     ipcRenderer.invoke(IPC_CHANNELS.permissionRespond, { id, decision }) as Promise<void>,
+  answerQuestion: (id: string, reply: QuestionReply) => ipcRenderer.invoke(IPC_CHANNELS.questionRespond, { id, reply }) as Promise<void>,
   permissionMode: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.permissionMode, sessionId) as Promise<PermissionModeView>,
   setPermissionMode: (sessionId: string, mode: PermissionMode) =>
     ipcRenderer.invoke(IPC_CHANNELS.permissionSetMode, { sessionId, mode }) as Promise<PermissionModeView>,

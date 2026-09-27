@@ -181,10 +181,23 @@ describe('what a Responses request asks for', () => {
     expect(sent.store).toBe(false)
   })
 
-  it('names the effort level, and leaves the field out for none', async () => {
+  it('names the effort level, and none only to a model that lists it', async () => {
     await collect(stream([completed()], { effort: 'high' }))
     expect(sent.reasoning).toEqual({ effort: 'high' })
+    // Left out, the field is the model's default, which on a model that
+    // reasons is to reason, so a model that lists none is told so.
+    await collect(stream([completed()], { effort: 'none', efforts: ['none', 'low', 'high'] }))
+    expect(sent.reasoning).toEqual({ effort: 'none' })
+    // A model that does not list it may not reason at all, and the word is a
+    // 400 there.
+    await collect(stream([completed()], { effort: 'none', efforts: ['low', 'high'] }))
+    expect(sent.reasoning).toBeUndefined()
+    // Listing none and nothing else is how a model says it does not think.
+    await collect(stream([completed()], { effort: 'none', efforts: ['none'] }))
+    expect(sent.reasoning).toBeUndefined()
     await collect(stream([completed()], { effort: 'none' }))
+    expect(sent.reasoning).toBeUndefined()
+    await collect(stream([completed()]))
     expect(sent.reasoning).toBeUndefined()
   })
 

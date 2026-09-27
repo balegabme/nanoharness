@@ -14,6 +14,7 @@ const composer = must<HTMLFormElement>('composer')
 const input = must<HTMLTextAreaElement>('input')
 const heroSeat = must<HTMLElement>('hero-seat')
 const dock = must<HTMLElement>('composer-dock')
+const column = must<HTMLElement>('dock-column')
 const stream = must<HTMLElement>('stream')
 const tray = must<HTMLElement>('attachments')
 const note = must<HTMLElement>('attach-note')
@@ -30,19 +31,24 @@ export function autoGrow(): void {
 }
 
 /**
- * The docked card floats over the flow, so the flow has to end above it. The
- * tail spacer is written from the card's measured height and never a guess,
- * which keeps the last message clear of the card at any composer height.
+ * The docked column floats over the flow, so the flow has to end above it. The
+ * tail spacer is set from the column's measured height, so the last message
+ * stays clear of the composer, the plan and a question card whatever their
+ * height.
  */
 function measure(): void {
-  if (composer.parentElement !== dock) return
-  const height = composer.getBoundingClientRect().height
+  if (composer.parentElement !== column) return
+  const height = column.getBoundingClientRect().height
   stream.style.setProperty('--nh-composer-clearance', `${Math.round(height) + 28}px`)
 }
 
+// The plan and the question card change height on their own, as a plan grows
+// or a card opens, and nothing in this file hears about it.
+new ResizeObserver(() => measure()).observe(column)
+
 /** `docked` = a session is open and the card belongs over the flow. */
 export function seat(docked: boolean): void {
-  const target = docked ? dock : heroSeat
+  const target = docked ? column : heroSeat
   if (composer.parentElement !== target) target.append(composer)
   dock.hidden = !docked
   measure()
@@ -54,7 +60,7 @@ export function seat(docked: boolean): void {
  * its whole task when it started and answers once.
  */
 export function showDock(visible: boolean): void {
-  if (composer.parentElement !== dock) return
+  if (composer.parentElement !== column) return
   dock.hidden = !visible
 }
 

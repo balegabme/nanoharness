@@ -63,8 +63,9 @@ and never names them, so `cacheWrite` stays 0 and only Anthropic ever reports
 one.
 
 Key: passed via `Authorization: Bearer`. Effort rides as `reasoning_effort`,
-left out entirely at `none`, because which values a family accepts varies and
-an unknown one either 400s or is dropped without a word.
+clamped first to the levels the model lists, because which values a family
+accepts varies and an unknown one either 400s or is dropped without a word.
+`none` is the one level with a rule of its own, below.
 
 Thinking has no standard field on this wire. Servers that stream it send it as
 `reasoning_content` or as `reasoning`, and the documented shape has neither;
@@ -177,7 +178,7 @@ uses the field its own API documents:
 
 | effort | OpenAI-compatible | Responses | Anthropic-compatible |
 |---|---|---|---|
-| `none` | `reasoning_effort` omitted | `reasoning` omitted | no `thinking` field |
+| `none` | `reasoning_effort: "none"`, or omitted | `reasoning.effort: "none"`, or omitted | no `thinking` field |
 | `minimal` | `reasoning_effort: "minimal"` | `reasoning.effort: "minimal"` | `thinking.budget_tokens: 1024` |
 | `low` | `reasoning_effort: "low"` | `reasoning.effort: "low"` | `thinking.budget_tokens: 4096` |
 | `medium` | `reasoning_effort: "medium"` | `reasoning.effort: "medium"` | `thinking.budget_tokens: 16384` |
@@ -185,9 +186,14 @@ uses the field its own API documents:
 | `xhigh` | `reasoning_effort: "xhigh"` | `reasoning.effort: "xhigh"` | `thinking.budget_tokens: 49152` |
 | `max` | `reasoning_effort: "max"` | `reasoning.effort: "max"` | `thinking.budget_tokens: 65536` |
 
-Both OpenAI-shaped wires pass the level through as the same word the API takes;
-`none` leaves the field out, which is what each of them reads as the model's
-own default. No model takes all six words: families differ, and a value a model
+Both OpenAI-shaped wires pass the level through as the same word the API takes.
+`none` goes out as a word only to a model that lists it beside at least one
+level it can reason at (`sendsEffort` in `src/core/provider.ts`), and every
+other model gets no field. Left out, the field means the model's own default,
+which on a model that reasons is to reason, so such a model has to be told. A
+model whose levels are unknown, or that lists `none` alone, may not reason at
+all, and there the word is a 400. Such a model stays at its default until its
+levels are filled in by hand. No model takes all seven words: families differ, and a value a model
 does not know comes back as a 400 or is dropped without a word. Which ones a
 model does take is a fact about that model, so it is read from the endpoint and
 kept per model, and never guessed from the id. See [Model facts](#model-facts).

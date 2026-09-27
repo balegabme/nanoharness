@@ -1,7 +1,7 @@
 // doc: docs/harness/providers.md
 import { isJsonObject } from '../shared/json.js'
 import { emptyUsage } from '../shared/usage.js'
-import { BAD_SSE, NO_BODY, ProviderError, StreamBrokenError, retryAfterMs } from '../core/provider.js'
+import { BAD_SSE, NO_BODY, ProviderError, StreamBrokenError, retryAfterMs, sendsEffort } from '../core/provider.js'
 import type { ChatProvider, ChatInput } from '../core/provider.js'
 import type { ChatChunk, ChatMessage, JsonSchema, ToolInput, TurnUsage } from '../core/types.js'
 import { dataUrl } from '../core/types.js'
@@ -91,9 +91,9 @@ export function createOpenAIProvider(opts: OpenAIOptions): ChatProvider {
         stream_options: { include_usage: true },
       }
       // Which values a family accepts varies, and an unknown one is either a
-      // 400 or a silent drop, so "none" leaves the field out and asserts no
-      // level the model may not have (plan §11).
-      if (input.effort !== undefined && input.effort !== 'none') body.reasoning_effort = input.effort
+      // 400 or a silent drop, so the level is clamped to the model's own list
+      // before it gets here (plan §11).
+      if (sendsEffort(input)) body.reasoning_effort = input.effort
       const res = await fetch(endpointURL(opts.baseURL, 'v1', 'chat/completions'), {
         method: 'POST',
         headers: {

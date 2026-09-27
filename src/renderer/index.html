@@ -179,7 +179,17 @@
             </div>
           </section>
 
-          <div class="composer-dock" id="composer-dock" hidden></div>
+          <!--
+            The dock is one column: the agent's plan, a question it is waiting
+            on, and the composer, bottom-aligned so the composer never moves
+            when either of the others comes or goes.
+          -->
+          <div class="composer-dock" id="composer-dock" hidden>
+            <div class="dock-column" id="dock-column">
+              <div id="plan" hidden></div>
+              <div id="question" hidden></div>
+            </div>
+          </div>
         </div>
       </main>
     </div>
@@ -398,8 +408,8 @@
           <select id="approval-effort" aria-label="Approval effort"></select>
         </label>
         <p class="hint">
-          Low is usually right: the rules do the work, and a judge that reasons at length turns every first-time command into a
-          pause long enough to feel like the app has hung.
+          None is usually right, and moves up to the lowest level the model takes. The turn waits while the judge reasons, so
+          every token it thinks is a pause before a command runs.
         </p>
         <p class="hint" id="approval-note"></p>
       </section>

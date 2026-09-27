@@ -660,6 +660,7 @@ export function toTranscriptView(messages: ChatMessage[]): TranscriptMessage[] {
     if (message.compacted !== undefined) view.compacted = message.compacted
     if (message.summary === true) view.summary = true
     if (message.hook === true) view.hook = true
+    if (message.delivered === true) view.delivered = true
     if (message.images !== undefined) view.images = message.images.map(image => ({ src: dataUrl(image), width: image.width, height: image.height }))
     // Signed or not, the thinking is what explains the turn, so a re-opened
     // session shows it. Whether it goes back on the wire is the provider's

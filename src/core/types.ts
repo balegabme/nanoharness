@@ -1,5 +1,6 @@
 // doc: docs/harness/overview.md
 import type { JobView } from './jobs.js'
+import type { Question } from '../shared/questions.js'
 
 
 export interface TurnUsage {
@@ -211,6 +212,10 @@ export type AppEvent =
   // `problem` is set when auto mode was on and the approval model could not
   // answer. The prompt is the fallback and says so on its face.
   | { type: 'permission.request'; sessionId: string; id: string; intent: 'read' | 'write' | 'run'; paths: string[]; command?: string; root: string; problem?: string; at: number }
+  // The agent asked the user something with `ask_user`, and the turn waits for
+  // the answer. The window answers it by id; a stop or an ended turn takes it
+  // off the screen.
+  | { type: 'question.request'; sessionId: string; id: string; questions: Question[]; at: number }
   // A project file the user has not approved as it now reads, found while a
   // session was being built: its hooks, or the MCP servers it starts. The build
   // waits for the answer. `text` is the whole file, because the approval covers
@@ -319,6 +324,12 @@ export type ChatMessage =
       summary?: true
       /** Sent by a Stop hook that would not let the turn end. The user did not write it, and it is not a turn. */
       hook?: true
+      /**
+       * Handed in from outside the turn with `Session.deliver`: a background
+       * job's answer, or the list of files a code rewind put back. The user
+       * did not write it, and it is not a turn.
+       */
+      delivered?: true
     }
   | { role: 'tool'; content: string; toolCallId: string; failed?: boolean; compacted?: CompactionMark }
 

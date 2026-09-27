@@ -155,6 +155,33 @@ development history is in the git log; none of the three is repeated here.
   the pointer, and Esc twice opens the same list for the keyboard, scrolling
   the conversation to each turn as the selection moves. Alt+↑ and Alt+↓ jump
   between turns.
+- `bash` takes a `timeout` of up to ten minutes, two by default. The timeout
+  and the Stop button end the command and everything it started, as a process
+  group on POSIX and with `taskkill /T` on Windows. Stdin is closed and git
+  and pagers are told not to prompt, so a command that would wait for an answer
+  gets none and goes on. A command that leaves a process running in the
+  background returns a second after bash exits, with a note saying so.
+- A `terminal` tool for what has to keep running or take input: a dev server, a
+  watcher, a REPL. The model starts a shell, writes to it, reads what it has
+  printed since, waits for a line that matches, and stops it, across as many
+  calls as it needs. Input to a running program is approved like a command.
+  A terminal outlives the turn and is stopped when its session is deleted or
+  the app quits.
+- A `todo_write` tool, and the plan it keeps drawn above the composer: a ring
+  with the progress, the step in hand, and the whole list a click away. The
+  card in the flow shows the steps instead of the arguments. The model is told
+  to write the plan before the first step of any task with three or more,
+  whether or not it was asked for one, and an empty list clears it. A step is
+  marked done once it is checked, a blocked step goes back to pending behind
+  the step that unblocks it, and the tool answers in one line, since the list
+  is already in the model's context.
+- An `ask_user` tool, for a point the model cannot settle from the code, the
+  docs or a search. The model is told to ask instead of guessing. Up to four
+  questions arrive as one card above the composer, each with two to four
+  options that carry a line on what choosing them means, and a field for an
+  answer in the user's own words. Number keys pick, Enter confirms and Esc
+  closes the card, which the model is told means "do not guess". A question
+  from a session not on screen waits for it.
 
 **Permissions**
 - Auto-approve mode, for the run nobody is watching: a task that goes for an
@@ -187,6 +214,19 @@ development history is in the git log; none of the three is repeated here.
   approving what it is judging. Leaving it out is cheaper and safer at once.
 - A judge that could not be reached is never turned into a verdict. The
   permission dialog goes up in its place with the reason printed on it.
+- The judge thinks as little as its model allows unless settings name a level,
+  because the turn waits while it reasons. A model whose levels are unknown
+  stays at its default on the OpenAI-shaped wires until they are filled in by
+  hand. The same action is judged once per set of the user's goals, so running
+  the tests after every edit costs one check, and a judge rebuilt after a
+  settings change reaches sessions already open.
+- The judge is shown what it refused since the user last wrote, and refuses the
+  same result reached another way. It weighs a command as written, with its
+  variables, globs and `cd` worked out first. Reading a file outside the
+  session folder that holds no secret, and scratch files in the system temp
+  folder, are ordinary, and the judge is told where that folder is. The files
+  where tools keep tokens, such as `.netrc`, `.npmrc` and `.git-credentials`,
+  are never read.
 - Every decision, verdict or failure, appends a line to
   `sessions/<id>.approvals.jsonl` beside the transcript: the action, the
   verdict, the rule, the model, the latency, the tokens and the cost. Nothing
@@ -349,10 +389,29 @@ development history is in the git log; none of the three is repeated here.
   answer in words before another tool call. An agent told in the first line that
   browser tools were pointless probed for Chrome, Edge, puppeteer and playwright
   anyway, twice after being asked to stop.
+- The system prompt tells a Windows agent that a path written inside a python
+  or node script is not converted by Git Bash, so `/tmp` there is a folder at
+  the root of the drive. It says to check what a fetch returned before parsing
+  it, and a role that can write is told to save the answer to a file first and
+  to put a script of more than a line or two in a file. Four of sixteen shell
+  calls in one research turn failed on those.
+- `bash` says its calls run one at a time, each after its approval, so steps
+  that belong together go into one command. It says each call starts in the
+  project folder, so a `cd` lasts for one command, and that a path with a space
+  in it is quoted.
 - An eslint rule stops the renderer importing runtime code from `src/core`,
   `src/ipc` or `src/main`, which would 404 at load and open a blank window.
 
 ### Fixed
+- A background job's answer no longer reaches the approval judge as the user's
+  words. It went into the conversation as a plain user message, so text a job
+  fetched from the web could tell the judge what the user wanted. It is marked
+  `delivered` now, and so is the list of files a code rewind put back. Neither
+  is counted as a turn when a session is resumed, and a reopened session no
+  longer draws them as messages the user sent.
+- Effort `none` reaches a model that lists it beside a level it reasons at.
+  Both OpenAI-shaped wires left the field out, which a reasoning model reads as
+  its default, so it reasoned anyway. Any other model is still sent no field.
 - The Anthropic wire sends the assistant's signed thinking blocks back on
   tool-using turns. They were being dropped, which that API rejects.
 - A clone no longer inherits the parent's unanswered `spawn` call, which made

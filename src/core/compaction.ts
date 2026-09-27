@@ -178,6 +178,7 @@ function flatLine(m: ChatMessage): string {
   if (m.role === 'system') return ''
   if (m.summary === true) return `Earlier checkpoint:\n${m.content}`
   if (m.hook === true) return `Stop hook:\n${m.content}`
+  if (m.delivered === true) return `Delivered to the conversation, not written by the user:\n${cut(m.content)}`
   if (m.role === 'user') {
     // The flat history is text, so a picture is left out and only counted. The
     // summary can still say one was sent, and what the user wrote about it.
