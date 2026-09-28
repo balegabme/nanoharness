@@ -90,6 +90,16 @@ place. `approval.test.ts` runs a turn, delivers a job answer that gives orders,
 and checks that the judge's goals never hold it; `workspace-store.test.ts`
 checks the same after the session is saved and read back.
 
+A message sent with prompt snippets (`commands.md`) is the user's too, since
+they picked each snippet and could edit it, so it stays in the goals. Each
+message is cut at 600 characters, and a snippet placed above the draft can be
+long enough to fill the cut before the user's own words begin. So the message
+carries `said`, the span of `content` the user typed, and `goalsFrom` puts
+those words first and the snippets after them, in their order, as far as the
+cut allows. The model still gets the message as it was composed.
+`approval.test.ts` sends a long snippet above a short request and checks that
+the request leads its goal.
+
 The user's words are in for one reason: without them the soft-deny tier cannot
 work. "Discard my uncommitted changes" and a model deciding to run
 `git reset --hard` on its own initiative are the same command and different
@@ -178,17 +188,17 @@ deleted in the settings screen takes effect at once.
 ## How hard it thinks
 
 The judge's answer is one line of JSON, weighed against rules it is handed, and
-the turn waits while it reasons. So unless settings name a level, it asks for
-`none`, clamped up to the lowest level the model lists (`judgeEffort`). A
-reasoning model left at its default spent 650 to 850 output tokens and 10 to
-19 seconds on every check, and sixteen checks made up two thirds of a
-five-minute research turn. The settings screen labels `none` as "the least it
-takes" for that reason.
+the turn waits while it reasons. So its level is fixed and has no setting:
+`none` on a model that lists it, and otherwise `low`, moved to the nearest level
+the model lists (`judgeEffort`). A reasoning model left at its default spent
+650 to 850 output tokens and 10 to 19 seconds on every check, and sixteen
+checks made up two thirds of a five-minute research turn.
 
-A model whose levels the endpoint did not publish is an exception on the
-OpenAI-shaped wires: `none` goes out as no field there (`providers.md`), and
-the model reasons at its default. Filling its levels in by hand in settings is
-what lets the judge be told.
+A model whose levels the endpoint did not publish is asked for `none`. On the
+Anthropic-compatible wire that is no thinking budget. On the OpenAI-compatible
+wires it goes out as no field (`providers.md`), since naming a level to a model
+that does not reason is a 400, and the model reasons at its default. Filling
+its levels in by hand in settings is what lets the judge be told.
 
 ## What it costs, and where that lands
 

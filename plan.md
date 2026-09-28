@@ -235,8 +235,8 @@ Progressive disclosure = token discipline.
 Reusable steering directives inserted into the **user's message** at compose time, never
 the system prompt, so they're cache-safe and per-message deliberate.
 
-**Format** (md file + frontmatter, exactly the six files in `docs/research/snippets/`,
-which become the shipped defaults):
+**Format** (md file + frontmatter; the six files drafted in `docs/research/snippets/`
+became the shipped defaults in `snippets/`):
 
 ```markdown
 ---

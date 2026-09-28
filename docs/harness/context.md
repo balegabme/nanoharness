@@ -62,8 +62,10 @@ estimates its history the way it was last measured before it has sent anything.
 On another model it starts again at 1, since the tokenizer may differ.
 
 The breakdown is estimated part by part: the system prompt, the tool schemas,
-the summary, the user's messages, the assistant's text and tool-call arguments,
-thinking sent back, and tool results. The parts are then scaled so they sum to
+the summary, the user's messages, the messages sent in the user's place (a
+background job's answer, a Stop hook's reply, the note a code rewind leaves),
+the assistant's text and tool-call arguments, thinking sent back, and tool
+results. The parts are then scaled so they sum to
 the total, with the rounding remainder on the largest part. The panel says which
 figure is which: so much as the provider counted the last request, and about so
 much estimated since. A compaction drops the anchor, because it described a
@@ -257,10 +259,11 @@ Compacted automatically: 12 messages summarised, context 151k to 41k tokens.
 
 ## Compacting by hand
 
-"Compact now" in the context panel calls `session:compact`. The main process
-builds the session if nobody has sent to it since launch, runs
-`Session.compact()`, saves the transcript and the ledger, and returns whether
-anything was compacted. The window then reloads the session to draw the result.
+"Compact now" in the context panel, or `/compact` in the composer, calls
+`session:compact`. The main process builds the session if nobody has sent to it
+since launch, runs `Session.compact()`, saves the transcript and the ledger, and
+returns whether anything was compacted. The window then reloads the session to
+draw the result.
 It summarises exactly as the automatic path does and reports what the summary
 requests cost.
 

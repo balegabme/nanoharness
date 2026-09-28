@@ -6,12 +6,13 @@ read, and reading a diff back out of a tool result. Each is defined once, here.
 
 Files:
 - src/shared/facts.ts: the provider wires, the effort scale, what a model's facts come to after the user's corrections, and what a turn cost
-- src/shared/usage.ts: adding, subtracting and dividing token counts
+- src/shared/usage.ts: adding, subtracting and dividing token counts, and the characters-over-four estimate of one
 - src/shared/format.ts: token counts, rates, percentages and dollars as the harness writes them
 - src/shared/json.ts: the two checks every reader of parsed JSON makes
 - src/shared/diff.ts: the unified diff a write or an edit hands back, and reading it out of the result again
 - src/shared/plan.ts: the plan `todo_write` carries, checked once for the tool and read back out of a call for the window
 - src/shared/questions.ts: what `ask_user` asks and how an answer is shaped, checked the same way for the tool and the window
+- src/shared/compose.ts: a message joined from the user's words and the snippets around them, built the same way for the window and the session
 
 ## Why a directory of its own
 

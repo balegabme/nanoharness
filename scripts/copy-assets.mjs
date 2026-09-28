@@ -26,5 +26,10 @@ await copyFile(join(brand, 'favicon.svg'), join(to, 'mark.svg'))
 // every neighbouring icon. 256 is the largest size Windows asks for.
 await copyFile(join(brand, 'png', 'app-icon-256.png'), join(root, 'out', 'assets', 'app-icon-256.png'))
 
+// The snippets the composer offers before the user has written any of their own.
+const snippets = (await readdir(join(root, 'snippets'))).filter(name => name.endsWith('.md') && name !== 'README.md')
+await mkdir(join(root, 'out', 'snippets'), { recursive: true })
+for (const name of snippets) await copyFile(join(root, 'snippets', name), join(root, 'out', 'snippets', name))
+
 await copyFile(join(root, 'out', 'main', 'preload.js'), join(root, 'out', 'main', 'preload.mjs'))
-console.log(`copied ${assets.length} renderer assets, the brand marks and the preload`)
+console.log(`copied ${assets.length} renderer assets, the brand marks, ${snippets.length} snippets and the preload`)

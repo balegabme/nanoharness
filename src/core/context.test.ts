@@ -138,6 +138,19 @@ describe('the ledger', () => {
     expect(ledger.tokens).toBe(ledger.estimated)
     expect(ledger.tokens).toBe(partsTotal(estimateParts(s.wireMessages(), toolTokens([COUNT.input]))))
   })
+
+  it('counts a job answer delivered between turns apart from what the user typed', async () => {
+    const provider = new MeasuringProvider(() => ({ chunks: [{ kind: 'text', text: ANSWER }] }))
+    const { session: s } = await session(provider, { context: 100_000 })
+
+    await s.run('hi')
+    const typed = s.context.parts.user
+    s.deliver(`Background explore job j1 finished. It was asked: look around\n\nWhat it answered:\n${ANSWER.repeat(4)}`)
+
+    const ledger = s.context
+    expect(ledger.parts.user).toBe(typed)
+    expect(ledger.parts.delivered).toBeGreaterThan(typed)
+  })
 })
 
 describe('the room kept for the answer', () => {

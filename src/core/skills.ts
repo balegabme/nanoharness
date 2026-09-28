@@ -3,8 +3,8 @@ import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
 /**
- * Skills, Claude-style and no larger: a folder with a `SKILL.md` whose
- * frontmatter says what it is for (plan §8).
+ * Skills: a folder with a `SKILL.md` whose frontmatter says what it is for
+ * (plan §8).
  *
  * The prompt carries the list and not the documents: one line per skill, name
  * and description and path. A skill is often a long document, and the prompt

@@ -30,7 +30,7 @@ export interface UsageRecord {
   usage: TurnUsage
   /** The subagents' share of `usage`. Inside it, never added to it. */
   subagent: TurnUsage
-  /** The harness's own share of `usage`: approval checks and compaction summaries. */
+  /** The harness's own share of `usage`: approval checks, compaction summaries and TL;DRs. */
   harness: TurnUsage
   /**
    * What the whole turn cost, at the prices the models carried while it ran.

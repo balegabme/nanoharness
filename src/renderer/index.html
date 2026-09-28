@@ -202,8 +202,14 @@
     <form class="composer" id="composer" autocomplete="off">
       <!-- The pictures attached to the draft, filled by composer.ts. -->
       <div class="attachments" id="attachments" hidden></div>
+      <!-- The command menu, opened by a typed / or the / button. Filled by commands.ts. -->
+      <div class="command-menu" id="command-menu" role="listbox" aria-label="Commands and snippets" hidden></div>
+      <!-- The snippets added to this message sit above and below the draft, in
+           the order they will be sent. Filled by snippets.ts. -->
       <div class="composer-text" id="composer-text">
-        <textarea id="input" rows="1" placeholder="Message the agent. Enter sends, Shift+Enter makes a newline."></textarea>
+        <div class="snippet-stack" id="snippets-before" hidden></div>
+        <textarea id="input" rows="1" placeholder="Message the agent. Enter sends, Shift+Enter makes a newline, / opens commands."></textarea>
+        <div class="snippet-stack" id="snippets-after" hidden></div>
       </div>
       <p class="attach-note" id="attach-note" hidden></p>
       <div class="controls">
@@ -252,6 +258,7 @@
             <option value="auto">auto-approve</option>
           </select>
         </span>
+        <button class="chip icon slash" id="commands" type="button" title="Commands and snippets (type /)" aria-label="Commands and snippets">/</button>
         <button class="chip icon" id="alerts" type="button">
           <svg class="bell-on" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M18 9a6 6 0 1 0-12 0c0 5-2 6.5-2 6.5h16S18 14 18 9Z" />
@@ -403,14 +410,6 @@
         </div>
         <div class="entry-list" id="approval-list"></div>
         <p class="hint" id="approval-empty">Nothing chosen, so auto-approve cannot be turned on.</p>
-        <label class="approval-effort">
-          <span>How hard it thinks</span>
-          <select id="approval-effort" aria-label="Approval effort"></select>
-        </label>
-        <p class="hint">
-          None is usually right, and moves up to the lowest level the model takes. The turn waits while the judge reasons, so
-          every token it thinks is a pause before a command runs.
-        </p>
         <p class="hint" id="approval-note"></p>
       </section>
 
@@ -420,19 +419,12 @@
           <input type="checkbox" id="switch-hooks" />
           <span>Run hooks</span>
         </label>
-        <p class="hint">
-          Hooks are your own commands, run when a session opens, around each tool call and when the agent finishes. They are
-          read from ~/.nanoharness/hooks.json, and from a project's .nanoharness/hooks.json once you have approved that file.
-          Off, none of them runs.
-        </p>
+        <p class="hint">Your commands from ~/.nanoharness/hooks.json and an approved project's .nanoharness/hooks.json.</p>
         <label class="setting-switch">
           <input type="checkbox" id="switch-downscale" />
           <span>Shrink images before sending</span>
         </label>
-        <p class="hint">
-          A pasted or dropped image bigger than a model looks at is scaled down to the size it would see, which costs fewer
-          tokens and loses nothing it would have read. Off, the file goes as it is.
-        </p>
+        <p class="hint">Scaled down to the size the model reads, which costs fewer tokens.</p>
         <p class="hint" id="general-note"></p>
       </section>
 

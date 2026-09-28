@@ -75,8 +75,9 @@ rewind.
 
 A rewind has two steps. `stage` puts the files back and records the rewind as
 held. The conversation is not touched yet. `commit` keeps the rewind, and
-`Session` calls it at the start of the next turn and of a compaction the user
-asks for, so the session only ever builds on history that has been cut.
+`Session` calls it at the start of the next turn, of a compaction the user asks
+for and of a TL;DR, so the session only ever builds on history that has been
+cut.
 `unstage` undoes the held rewind instead. Going back therefore costs nothing
 the user cannot take back until they send something, and moving the held
 rewind to another turn is cheap.
@@ -122,7 +123,8 @@ back to the marker and the compaction marks are put back. The notes and
 compaction records from that turn on are dropped, the turn number goes back,
 and that checkpoint and every one after it are dropped. The message the turn
 began with goes into the composer when the rewind is made, to be sent again or
-changed first. The read index cannot tell which of its reads were in the turns
+changed first. Of a message sent with snippets, only the words the user typed
+go back (`commands.md`). The read index cannot tell which of its reads were in the turns
 that were cut, so it forgets them all. Every file it knew of, and every file
 changed from that turn on, has to be read again before it is rewritten
 (`tools.md`). An answer a background job delivered after the checkpoint began
@@ -178,9 +180,9 @@ any MCP servers.
 checkpoint it names, or undoes the held one when the id is null. It returns
 what was restored and, when the conversation went back, the message to put in
 the composer. It saves nothing else, because the conversation has not changed
-yet. When a turn or a compaction keeps the rewind, the session stores the cut
-transcript and its state straight away, before the turn goes on, so a turn that
-fails leaves the conversation on disk agreeing with the checkpoints.
+yet. When a turn, a compaction or a TL;DR keeps the rewind, the session stores
+the cut transcript and its state straight away, before the turn goes on, so a
+turn that fails leaves the conversation on disk agreeing with the checkpoints.
 
 A turn that begins live sends `session.checkpoint` with its id, number, marker
 and first line, so the window can add it to the turns on screen without asking

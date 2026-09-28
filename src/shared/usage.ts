@@ -8,6 +8,14 @@ import type { TurnUsage } from '../core/types.js'
  * wherever it is shown.
  */
 
+/** Characters per token, the estimate used wherever no provider has counted: the context meter and a snippet's size in the composer. */
+const CHARS_PER_TOKEN = 4
+
+/** Characters as tokens, by that estimate. */
+export function textTokens(text: string): number {
+  return Math.ceil(text.length / CHARS_PER_TOKEN)
+}
+
 export function emptyUsage(): TurnUsage {
   return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0 }
 }

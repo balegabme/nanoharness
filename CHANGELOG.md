@@ -214,12 +214,13 @@ development history is in the git log; none of the three is repeated here.
   approving what it is judging. Leaving it out is cheaper and safer at once.
 - A judge that could not be reached is never turned into a verdict. The
   permission dialog goes up in its place with the reason printed on it.
-- The judge thinks as little as its model allows unless settings name a level,
-  because the turn waits while it reasons. A model whose levels are unknown
-  stays at its default on the OpenAI-shaped wires until they are filled in by
-  hand. The same action is judged once per set of the user's goals, so running
-  the tests after every edit costs one check, and a judge rebuilt after a
-  settings change reaches sessions already open.
+- The judge does not think where its model can turn thinking off, and thinks
+  at `low` where it cannot, because the turn waits while it reasons. There is
+  no setting for it. A model whose levels are unknown stays at its default on
+  the OpenAI-compatible wires until they are filled in by hand. The same action
+  is judged once per set of the user's goals, so running the tests after every
+  edit costs one check, and a judge rebuilt after a settings change reaches
+  sessions already open.
 - The judge is shown what it refused since the user last wrote, and refuses the
   same result reached another way. It weighs a command as written, with its
   variables, globs and `cd` worked out first. Reading a file outside the
@@ -370,6 +371,24 @@ development history is in the git log; none of the three is repeated here.
   are sent. The sent message shows them over its words.
 - A General pane in settings, with the switches for running hooks and for
   shrinking pictures.
+- Up in an empty composer brings back the messages sent in the session on
+  screen, newest first, and Down walks forward again, the way a shell walks its
+  history.
+- A `/` menu in the composer, opened by typing `/` or by its button, with
+  `/tldr`, `/compact` and `/reload`. `/tldr` shortens the last answer into a
+  card that is kept with the transcript and never sent to the model. It sends
+  the whole conversation while the provider still has it cached and the answer
+  alone when that would cost more than twice as much. `/reload` builds the
+  session again, so skills, hooks and MCP servers edited mid-session are read
+  without starting a new one.
+- Prompt snippets (plan §9), picked from the same menu. Six ship with the app,
+  and a file of the same name in the user's data directory or a project's
+  `.nanoharness/snippets/` replaces one. A snippet sits above or below the
+  draft as an editable block with its token estimate, is dragged into order or
+  to the other end, and goes into the user's message and never the system
+  prompt. The approval judge reads the words the user typed ahead of the
+  snippets, the session title and the turn index name a message by those
+  words, and Up and a rewind put back only them.
 
 ### Changed
 - A provider is configured in the setup screen and nowhere else. Nothing about a
@@ -403,6 +422,11 @@ development history is in the git log; none of the three is repeated here.
   `src/ipc` or `src/main`, which would 404 at load and open a blank window.
 
 ### Fixed
+- The tokens panel's cost is the conversation's, at the session model's prices,
+  and what the harness spent has a pill of its own. A session on a free model
+  showed the approval model's spend as if the conversation had cost it.
+- The context panel counts a job's answer and a Stop hook's reply as their own
+  part, where they were counted as words the user typed.
 - A background job's answer no longer reaches the approval judge as the user's
   words. It went into the conversation as a plain user message, so text a job
   fetched from the web could tell the judge what the user wanted. It is marked

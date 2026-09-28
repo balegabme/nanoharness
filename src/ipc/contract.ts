@@ -7,6 +7,7 @@ import type { JobState, JobView } from '../core/jobs.js'
 import type { AccessIntent } from '../core/scope.js'
 import type { RewindMode } from '../core/checkpoints.js'
 import type { SpawnMode } from '../core/spawn.js'
+import type { Snippet } from '../core/snippets.js'
 import type { AppEvent, CompactionMark, ContextLedger, ImageType, McpServerStatus, SessionNote, ToolStats, TurnRate, TurnUsage } from '../core/types.js'
 import type { UsageReport } from '../core/usage-report.js'
 import type { QuestionReply } from '../shared/questions.js'
@@ -16,6 +17,9 @@ export const IPC_CHANNELS = {
   sessionSend: 'session:send',
   sessionStop: 'session:stop',
   sessionCompact: 'session:compact',
+  sessionTldr: 'session:tldr',
+  sessionReload: 'session:reload',
+  snippetsList: 'snippets:list',
   sessionCheckpoints: 'session:checkpoints',
   sessionRewind: 'session:rewind',
   sessionEvent: 'session:event',
@@ -74,9 +78,19 @@ export interface ImageUpload {
   data: string
 }
 
-export interface SessionSendRequest {
-  sessionId: string
+/**
+ * A message as the composer hands it over: the user's own words, and the
+ * snippet texts added above and below them. They travel apart so the session
+ * knows which words are the user's (`compose` in src/shared/compose.ts).
+ */
+export interface SendDraft {
   text: string
+  before: string[]
+  after: string[]
+}
+
+export interface SessionSendRequest extends SendDraft {
+  sessionId: string
   images?: ImageUpload[]
 }
 
@@ -126,7 +140,7 @@ export interface SessionView {
   usage?: TurnUsage
   /** The subagents' share of `usage`. */
   subagentUsage?: TurnUsage
-  /** The harness's own share of `usage`: approval checks and compaction summaries. */
+  /** The harness's own share of `usage`: approval checks, compaction summaries and TL;DRs. */
   harnessUsage?: TurnUsage
   /** What that share cost, priced at the models that ran it. */
   harnessCostUsd?: number
@@ -172,6 +186,8 @@ export interface TranscriptMessage {
   delivered?: true
   /** The pictures sent with a user message. */
   images?: ImageView[]
+  /** On a user message sent with snippets: the words the user typed, which Up in the composer brings back. */
+  said?: string
 }
 
 /** A picture as the chat view draws it. */
@@ -248,6 +264,20 @@ export interface PermissionAsk {
 }
 
 export type PermissionDecision = 'once' | 'session' | 'deny'
+
+export interface SessionTldrResponse {
+  /** False when no TL;DR came back or the user stopped it. The session's notes say which. */
+  written: boolean
+}
+
+export interface SessionReloadResponse {
+  /** How many skills the rebuilt session's prompt lists. */
+  skills: number
+  servers: McpServerStatus[]
+}
+
+/** A snippet as the composer offers it. */
+export type SnippetView = Snippet
 
 export interface SessionCompactResponse {
   /** False when there was nothing to compact, no summary came back or the user stopped it. The session's notes say which. */
@@ -392,7 +422,7 @@ export type ConfigProbeResult = { ok: true; models: ModelOffer[] } | { ok: false
 /** The only surface the renderer gets. Exposed by the preload script. */
 export interface NanoBridge {
   ping(): Promise<PingResponse>
-  send(sessionId: string, text: string, images: ImageUpload[]): Promise<SessionSendResponse>
+  send(sessionId: string, draft: SendDraft, images: ImageUpload[]): Promise<SessionSendResponse>
   /** End the running turn. Safe to call when nothing is running. */
   stop(sessionId: string): Promise<void>
   /**
@@ -400,6 +430,15 @@ export interface NanoBridge {
    * running; `stop` ends a compaction that is.
    */
   compact(sessionId: string): Promise<SessionCompactResponse>
+  /** Shorten the last answer. Refused while a turn is running; `stop` ends one that is. */
+  tldr(sessionId: string): Promise<SessionTldrResponse>
+  /**
+   * Build the session again, so its skills, hooks, MCP servers and system
+   * prompt are read afresh. Refused while a turn is running.
+   */
+  reload(sessionId: string): Promise<SessionReloadResponse>
+  /** The snippets on offer: the shipped ones, the user's, and the session's project's when there is a session. */
+  snippets(sessionId: string | null): Promise<SnippetView[]>
   /** The turns this session can be rewound to, and the rewind it is holding. */
   checkpoints(sessionId: string): Promise<SessionCheckpointsResponse>
   /**

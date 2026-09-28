@@ -1,4 +1,5 @@
 // doc: docs/harness/context.md
+import { textTokens } from '../shared/usage.js'
 import type { ChatMessage, CompactionRecord, ContextLedger, ContextParts, ToolInput } from './types.js'
 
 /**
@@ -10,12 +11,11 @@ import type { ChatMessage, CompactionRecord, ContextLedger, ContextParts, ToolIn
  */
 
 /**
- * The estimator: characters over four, four tokens per content block and
- * four per message for the role framing around it. It is rough, and needs no
- * tokenizer of its own because calibration corrects it for the one actually
- * answering.
+ * The estimator: characters over four (`textTokens`), four tokens per content
+ * block and four per message for the role framing around it. It is rough, and
+ * needs no tokenizer of its own because calibration corrects it for the one
+ * actually answering.
  */
-const CHARS_PER_TOKEN = 4
 const BLOCK_TOKENS = 4
 const MESSAGE_TOKENS = 4
 
@@ -52,16 +52,13 @@ const CALIBRATION_MIN = 0.5
 const CALIBRATION_MAX = 2
 
 export function emptyParts(): ContextParts {
-  return { system: 0, tools: 0, user: 0, assistant: 0, thinking: 0, toolResults: 0, summary: 0 }
+  return { system: 0, tools: 0, user: 0, delivered: 0, assistant: 0, thinking: 0, toolResults: 0, summary: 0 }
 }
 
 export function partsTotal(parts: ContextParts): number {
-  return parts.system + parts.tools + parts.user + parts.assistant + parts.thinking + parts.toolResults + parts.summary
-}
-
-/** Characters as tokens, by the estimator above. */
-export function textTokens(text: string): number {
-  return Math.ceil(text.length / CHARS_PER_TOKEN)
+  return (
+    parts.system + parts.tools + parts.user + parts.delivered + parts.assistant + parts.thinking + parts.toolResults + parts.summary
+  )
 }
 
 /**
@@ -83,7 +80,8 @@ export function toolTokens(tools: readonly ToolInput[]): number {
 /**
  * The estimated parts of a request, before scaling. `messages` is what goes
  * out, as `Session.wireMessages()` builds it, so the summary is the one
- * message carrying `summary: true`.
+ * message carrying `summary: true` and the flags that say who wrote a user
+ * message are still on it.
  *
  * Thinking is counted only where it goes back on the wire: a signed block and
  * a redacted one. An unsigned block is kept for the window alone and never
@@ -105,6 +103,7 @@ export function estimateParts(messages: readonly ChatMessage[], tools: number): 
       let size = textTokens(m.content) + BLOCK_TOKENS + MESSAGE_TOKENS
       for (const image of m.images ?? []) size += imageTokens(image.width, image.height) + BLOCK_TOKENS
       if (m.summary === true) parts.summary += size
+      else if (m.hook === true || m.delivered === true) parts.delivered += size
       else parts.user += size
       continue
     }

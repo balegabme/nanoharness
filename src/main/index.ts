@@ -6,9 +6,10 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { toolsText } from '../shared/format.js'
+import { plural, toolsText } from '../shared/format.js'
 import { emptyUsage, totalTokens } from '../shared/usage.js'
 import { resolveFacts } from '../shared/facts.js'
+import { compose } from '../shared/compose.js'
 import { createProvider } from '../providers/factory.js'
 import { BASH_TOOL, GUARDED_BASH_TOOL } from '../tools/bash.js'
 import { warmShell } from '../env/shell.js'
@@ -34,12 +35,13 @@ import { JobRegistry } from '../core/jobs.js'
 import { cloneHistory, createSpawnHost } from '../core/spawn.js'
 import { McpHub, mcpBlock } from '../mcp/hub.js'
 import { loadSkills, skillsBlock } from '../core/skills.js'
+import { SNIPPETS_DIR, loadSnippets } from '../core/snippets.js'
 import { loadServers, mcpPaths } from '../mcp/config.js'
 import { hasUnknownSecret, secretsBlock } from '../core/secrets.js'
 import { flushSecrets, forgetSecret, secretList, secretVault } from './secret-store.js'
 import { Session } from '../core/session.js'
 import { CheckpointStore, REWIND_MODES, shownPath } from '../core/checkpoints.js'
-import { appendUsage, clearUsage, readUsage } from '../core/usage-log.js'
+import { appendUsage, clearUsage, readUsage, userDataDir } from '../core/usage-log.js'
 import { buildReport } from '../core/usage-report.js'
 import type { UsageReport } from '../core/usage-report.js'
 import { Judge, approvalProblem, goalsFrom, mergeRules } from '../core/approval.js'
@@ -100,7 +102,7 @@ import type { AgentRole, HarnessFacts } from '../core/agents.js'
 import type { JobView } from '../core/jobs.js'
 import type { PromptEnvironment } from '../core/prompt.js'
 import type { SubagentSetup, SubagentSlot } from '../core/spawn.js'
-import type { Tool } from '../core/session.js'
+import type { CompactSpend, Tool } from '../core/session.js'
 import type { AppEvent, McpServerStatus, ProjectFileKind } from '../core/types.js'
 import type {
   ActiveSetRequest,
@@ -120,7 +122,10 @@ import type {
   SecretView,
   SessionCheckpointsResponse,
   SessionCompactResponse,
+  SessionReloadResponse,
+  SessionTldrResponse,
   SessionView,
+  SnippetView,
   SubagentOpenResponse,
   WorkspaceStatus,
 } from '../ipc/contract.js'
@@ -148,6 +153,7 @@ const FORWARDED: Record<AppEvent['type'], true> = {
   'session.stopped': true,
   'session.note': true,
   'session.summary': true,
+  'session.tldr': true,
   context: true,
   'context.compacting': true,
   'context.compacted': true,
@@ -174,6 +180,9 @@ function harnessFacts(): HarnessFacts | undefined {
 }
 
 const HARNESS = harnessFacts()
+
+/** The snippets that ship with the app, copied next to the build by `scripts/copy-assets.mjs`. */
+const BUILT_IN_SNIPPETS = join(dirname(fileURLToPath(import.meta.url)), '..', 'snippets')
 
 // Windows shows a toast under an application id. Without one set, a
 // notification from a dev-run Electron app is silently dropped.
@@ -258,6 +267,42 @@ const epochs = new Map<string, number>()
 
 function epochOf(sessionId: string): number {
   return epochs.get(sessionId) ?? 0
+}
+
+/**
+ * What a request the user made between turns leaves behind: the transcript and
+ * the session record written, and the harness's spend on a usage line of its
+ * own under the turn it followed, since it belongs to no turn.
+ */
+async function settleBetweenTurns(
+  sessionId: string,
+  identity: { workspaceId: string; role: AgentRole },
+  session: Session,
+  spend: Pick<CompactSpend, 'usage' | 'costUsd'>,
+): Promise<void> {
+  await saveTranscript(sessionId, session.transcript, session.notes)
+  const updated = await setSessionState(sessionId, stateOf(session))
+  if (totalTokens(spend.usage) > 0) {
+    await appendUsage({
+      at: Date.now(),
+      sessionId,
+      workspaceId: identity.workspaceId,
+      turn: session.turnNumber,
+      role: identity.role,
+      model: session.options.model,
+      usage: spend.usage,
+      subagent: emptyUsage(),
+      harness: spend.usage,
+      costUsd: spend.costUsd,
+      subagentCostUsd: 0,
+      harnessCostUsd: spend.costUsd ?? 0,
+      streamMs: 0,
+      betweenTurns: true,
+    }).catch((err: unknown) => {
+      process.stderr.write(`usage log: ${err instanceof Error ? err.message : String(err)}\n`)
+    })
+  }
+  if (updated === null) throw new Error('that session is gone; start a new one from the sidebar')
 }
 
 /**
@@ -526,7 +571,6 @@ async function buildJudge(sessionId: string): Promise<Judge> {
     // Derived from the session's and never equal to it: the judge shares the
     // session's lifetime and nothing else, least of all its message history.
     conversationId: `${sessionId}-approval`,
-    ...(stored.approval?.effort === undefined ? {} : { effort: stored.approval.effort }),
   })
 }
 
@@ -593,6 +637,12 @@ async function loadHooks(sender: WebContents, sessionId: string, root: string): 
  * settings save, and a note it already carries is not written again.
  */
 const hookNotes = new Map<string, string>()
+
+/** The snippet texts the window sent around a message. Anything but a list of strings is refused, and the message is not sent. */
+function snippetTexts(texts: unknown): string[] {
+  if (!Array.isArray(texts) || !texts.every((text: unknown) => typeof text === 'string')) throw new Error('the snippets did not arrive as a list of texts')
+  return texts
+}
 
 /** A session's running totals and its context, in the shape the store writes. */
 function stateOf(session: Session): SessionState {
@@ -1253,32 +1303,50 @@ app.whenReady().then(() => {
     const identity = await sessionIdentity(sessionId)
     if (identity === null) throw new Error('that session is gone; start a new one from the sidebar')
     const outcome = await session.compact()
-    await saveTranscript(sessionId, session.transcript, session.notes)
-    const updated = await setSessionState(sessionId, stateOf(session))
-    // The summary requests are the harness's own spend and belong to no turn,
-    // so they get a line of their own under the turn they followed.
-    if (totalTokens(outcome.usage) > 0) {
-      await appendUsage({
-        at: Date.now(),
-        sessionId,
-        workspaceId: identity.workspaceId,
-        turn: session.turnNumber,
-        role: identity.role,
-        model: session.options.model,
-        usage: outcome.usage,
-        subagent: emptyUsage(),
-        harness: outcome.usage,
-        costUsd: outcome.costUsd,
-        subagentCostUsd: 0,
-        harnessCostUsd: outcome.costUsd ?? 0,
-        streamMs: 0,
-        betweenTurns: true,
-      }).catch((err: unknown) => {
-        process.stderr.write(`usage log: ${err instanceof Error ? err.message : String(err)}\n`)
-      })
-    }
-    if (updated === null) throw new Error('that session is gone; start a new one from the sidebar')
+    await settleBetweenTurns(sessionId, identity, session, outcome)
     return { compacted: outcome.compacted }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.sessionTldr, async (event: IpcMainInvokeEvent, sessionId: string): Promise<SessionTldrResponse> => {
+    const session = await sessionFor(event.sender, sessionId)
+    const identity = await sessionIdentity(sessionId)
+    if (identity === null) throw new Error('that session is gone; start a new one from the sidebar')
+    const outcome = await session.tldr()
+    await settleBetweenTurns(sessionId, identity, session, outcome)
+    return { written: outcome.written }
+  })
+
+  // Skills, hooks and MCP servers are fixed for a session's life, because the
+  // prompt and the tool list they feed are the cached prefix, so reading them
+  // again means building the session again. It is built now and not on the
+  // next message, so the window can say at once what it came back with.
+  ipcMain.handle(IPC_CHANNELS.sessionReload, async (event: IpcMainInvokeEvent, sessionId: string): Promise<SessionReloadResponse> => {
+    if (sessions.get(sessionId)?.running === true) throw new Error('a turn is running; stop it or let it finish, then reload')
+    // A subagent reaches MCP servers through the session's hub, which the
+    // rebuild closes under it.
+    const running = jobsFor(event.sender).list().some(job => job.sessionId === sessionId && job.state === 'running')
+    if (running) throw new Error('a background job in this session is still running; stop it or wait for it before reloading')
+    const root = await sessionRoot(sessionId)
+    if (root === null) throw new Error('that session is gone; start a new one from the sidebar')
+    await retire(sessionId)
+    const session = await sessionFor(event.sender, sessionId)
+    const skills = (await loadSkills(root)).length
+    const servers = [...(hubs.get(sessionId)?.status ?? [])]
+    const connected = servers.filter(server => server.connected).length
+    session.note(
+      `Reloaded: ${plural(skills, 'skill')}, ${connected} of ${plural(servers.length, 'MCP server')} connected, hooks read again. The next message pays for the whole prompt once, since the provider has not cached the new one.`,
+    )
+    await saveTranscript(sessionId, session.transcript, session.notes)
+    return { skills, servers }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.snippetsList, async (_event: IpcMainInvokeEvent, sessionId: string | null): Promise<SnippetView[]> => {
+    const root = sessionId === null ? null : await sessionRoot(sessionId)
+    return loadSnippets([
+      { dir: BUILT_IN_SNIPPETS, source: 'built-in' },
+      { dir: join(userDataDir(), 'snippets'), source: 'user' },
+      ...(root === null ? [] : [{ dir: join(root, SNIPPETS_DIR), source: 'project' as const }]),
+    ])
   })
 
   // The list is read from disk when the session is not built, since opening a
@@ -1316,7 +1384,9 @@ app.whenReady().then(() => {
     // text that has been through it. It runs again because this is the boundary
     // that matters: a key must not reach the transcript whatever called send.
     const vault = await secretVault()
-    const text = vault.capture(req.text).text
+    const safe = (part: string): string => vault.capture(part).text
+    const own = safe(req.text)
+    const { text, said } = compose(own, snippetTexts(req.before).map(safe), snippetTexts(req.after).map(safe))
     const images = acceptImages(req.images)
     // A key captured after this session was built gives it a reference its
     // system prompt has never heard of, and a model reading `{{secret:name}}`
@@ -1334,14 +1404,16 @@ app.whenReady().then(() => {
     // which folder or which agent to file that line under.
     const identity = await sessionIdentity(req.sessionId)
     if (identity === null) throw new Error('that session is gone; start a new one from the sidebar')
-    const usage = await session.run(text, images)
+    const usage = await session.run(text, images, said)
 
     // The transcript is written after the turn, not during it: a half-streamed
     // answer is not a message, and a crash mid-turn should leave the session
     // exactly as it was before the message was sent.
     await saveTranscript(req.sessionId, session.transcript, session.notes)
     const rate = session.lastRate
-    const updated = await noteTurn(req.sessionId, text, { ...stateOf(session), ...(rate === undefined ? {} : { rate }) })
+    // The title comes from the user's own words, and from the snippets only
+    // when they sent nothing else.
+    const updated = await noteTurn(req.sessionId, own.trim() === '' ? text : own, { ...stateOf(session), ...(rate === undefined ? {} : { rate }) })
 
     // One line per completed turn: what `nh usage` and the spend view are both
     // built out of. A log that cannot be written is worth a warning and no more

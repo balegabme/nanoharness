@@ -85,7 +85,7 @@ export function initTurns(options: TurnsHost): void {
     'keydown',
     event => {
       if (event.key !== 'Escape' || preview === null) return
-      if (document.querySelector('dialog[open], .context-menu') !== null) return
+      if (document.querySelector('dialog[open], .context-menu, .command-menu:not([hidden])') !== null) return
       event.preventDefault()
       event.stopPropagation()
       closePreview()

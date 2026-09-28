@@ -154,6 +154,7 @@
   --nh-part-tools: var(--nh-warm-500);
   --nh-part-summary: var(--nh-accent-200);
   --nh-part-user: var(--nh-accent-300);
+  --nh-part-delivered: var(--nh-warm-400);
   --nh-part-assistant: var(--nh-accent-500);
   --nh-part-thinking: var(--nh-accent-700);
   --nh-part-results: var(--nh-warm-300);
@@ -2008,6 +2009,20 @@ body {
   color: var(--nh-accent);
 }
 
+/* The last answer shortened, on request. It reads as a small card of its own
+   so it is not taken for the next answer. */
+.block.tldr .body {
+  padding: var(--s2) var(--s3);
+  border: 1px dashed var(--nh-accent-line);
+  border-radius: var(--nh-radius-card);
+  background: var(--nh-bg-layer-1);
+  color: var(--nh-label-primary);
+}
+
+.block.tldr > .label {
+  color: var(--nh-accent);
+}
+
 .block.error .body {
   padding: var(--s2) var(--s3);
   border-radius: var(--nh-radius-card);
@@ -2634,6 +2649,167 @@ details.block pre + pre {
 
 .composer textarea::placeholder {
   color: var(--nh-label-caption);
+}
+
+/* The snippets around the draft. Each is a chip to drag it by and a box that
+   edits it for this message only. */
+.snippet-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  padding: 0 var(--s1) var(--s1) var(--s3);
+}
+
+.snippet-stack + textarea,
+textarea + .snippet-stack {
+  margin-top: var(--s1);
+}
+
+.snippet-stack.drop-target {
+  outline: 1px dashed var(--nh-accent-line);
+  outline-offset: 2px;
+  border-radius: var(--nh-radius-chip);
+  min-height: 24px;
+}
+
+.snippet {
+  border: 1px solid var(--nh-border-l2);
+  border-radius: var(--nh-radius-chip);
+  background: var(--nh-bg-layer-1);
+}
+
+.snippet.dragged {
+  opacity: 0.45;
+}
+
+.snippet-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: 2px 4px 0 var(--s2);
+  color: var(--nh-label-tertiary);
+  font: 500 11px var(--nh-font-sans);
+  cursor: grab;
+  user-select: none;
+}
+
+.snippet-grip {
+  letter-spacing: -2px;
+}
+
+.snippet-name {
+  color: var(--nh-label-secondary);
+}
+
+.snippet-cost {
+  margin-left: auto;
+  color: var(--nh-label-caption);
+}
+
+.snippet-remove {
+  display: inline-flex;
+  padding: 2px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--nh-label-caption);
+  cursor: pointer;
+}
+
+.snippet-remove:hover {
+  background: var(--nh-hover);
+  color: var(--nh-label-primary);
+}
+
+.composer .snippet-text {
+  min-height: 0;
+  padding: 2px var(--s2) var(--s1);
+  color: var(--nh-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+/* The command menu floats above the card, where the draft's own lines are. */
+.composer {
+  position: relative;
+}
+
+.command-menu {
+  position: absolute;
+  z-index: 40;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 6px);
+  max-height: 280px;
+  padding: var(--s1);
+  overflow-y: auto;
+  border: 1px solid var(--nh-border-l2);
+  border-radius: var(--nh-radius-card);
+  background: var(--nh-bg-layer-2);
+  box-shadow: var(--nh-shadow-lv2);
+  font: 400 12px/1.4 var(--nh-font-sans);
+}
+
+.command-menu:empty {
+  display: none;
+}
+
+.command-head {
+  padding: var(--s1) var(--s2) 2px;
+  color: var(--nh-label-caption);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.command-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  padding: 5px var(--s2);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.command-row.chosen {
+  background: var(--nh-accent-wash);
+}
+
+.command-name {
+  flex: none;
+  color: var(--nh-label-primary);
+  font-family: var(--nh-font-mono);
+}
+
+.command-text {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--nh-label-tertiary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-where {
+  margin-left: auto;
+  flex: none;
+  color: var(--nh-label-caption);
+  font-size: 11px;
+}
+
+.command-empty {
+  padding: 5px var(--s2);
+  color: var(--nh-label-caption);
+}
+
+.chip.slash {
+  min-width: 26px;
+  justify-content: center;
+  font: 500 14px var(--nh-font-mono);
+}
+
+.chip.slash.on {
+  color: var(--nh-accent);
 }
 
 /* A file held over the card: the dashed edge says it will be taken. */
@@ -4304,16 +4480,6 @@ button.chip:hover:enabled,
   min-width: 0;
 }
 
-.approval-effort {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--s3);
-  margin-top: var(--s4);
-  color: var(--nh-label-secondary);
-  font: 400 12px var(--nh-font-sans);
-}
-
 /* A hint that is a warning and not an aside. Used on the permission dialog
    when auto mode could not decide and the question came here instead. */
 .hint.warn {
@@ -4635,6 +4801,10 @@ button.chip:hover:enabled,
 
 .part-user {
   --part: var(--nh-part-user);
+}
+
+.part-delivered {
+  --part: var(--nh-part-delivered);
 }
 
 .part-assistant {

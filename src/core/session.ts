@@ -1,8 +1,10 @@
 // doc: docs/harness/overview.md
 import { isJsonObject } from '../shared/json.js'
-import { addUsage, emptyUsage, promptTokens, subtractUsage, totalTokens } from '../shared/usage.js'
+import { addUsage, emptyUsage, promptTokens, subtractUsage, textTokens, totalTokens } from '../shared/usage.js'
 import { moneyText, plural, shortTokens, toolsText } from '../shared/format.js'
 import { costOf } from '../shared/facts.js'
+import { ownWords } from '../shared/compose.js'
+import type { SaidSpan } from '../shared/compose.js'
 import { EventBus } from './event-bus.js'
 import { ProviderError, backoffFor, isContextOverflow, isRetryable, sleep } from './provider.js'
 import type { ChatInput, ChatProvider } from './provider.js'
@@ -11,6 +13,7 @@ import { Calibration, KEEP_RATIO, buildLedger, estimateParts, partsTotal, reserv
 import type { Anchor } from './context.js'
 import { FLAT_SYSTEM, SUMMARY_INSTRUCTION, flatInstruction, flatten, planCut, prunable, prunedText, wrapSummary } from './compaction.js'
 import type { Cut } from './compaction.js'
+import { CACHE_WARM_MS, TLDR_INSTRUCTION, TLDR_SYSTEM, aloneInstruction, tldrRoute } from './tldr.js'
 import { workspaceGate } from './scope.js'
 import type { AccessGate } from './scope.js'
 import { emptyToolStats } from './types.js'
@@ -331,6 +334,14 @@ export interface TurnSpend {
   streamMs: number
 }
 
+/** What `tldr()` came to. `written` is false when no TL;DR came back, and the notes say why. */
+export interface TldrSpend {
+  written: boolean
+  usage: TurnUsage
+  /** At the session's model's prices. Null where it has none. */
+  costUsd: number | null
+}
+
 /** What a compaction the user asked for did, and what its requests cost. */
 export interface CompactSpend {
   compacted: boolean
@@ -431,8 +442,14 @@ export class Session {
    * waits for the next turn, and a refusal from the provider is the backstop.
    */
   private compactionStuck = false
-  /** True while `compact()` runs, which `stop()` treats differently from a turn. */
-  private compactingByHand = false
+  /** True while `compact()` or `tldr()` runs, which `stop()` treats differently from a turn. */
+  private betweenTurns = false
+  /**
+   * When a request carrying this session's cached prefix last came back, or 0
+   * when none has in this build of the session. `tldr()` guesses from it
+   * whether the provider still has the prefix.
+   */
+  private prefixSentAt = 0
   /** Where the current turn's user message is in `messages`, or -1 between turns. */
   private turnUser = -1
   /** How many times Stop hooks have kept the turn in hand going. */
@@ -490,8 +507,9 @@ export class Session {
    * writes.
    *
    * The summary goes first wherever it sits in `messages`, since it stands for
-   * the start of the conversation. It keeps `summary: true`, which the wires
-   * ignore and the estimator reads.
+   * the start of the conversation. It keeps `summary: true`, and a message the
+   * user did not write keeps `hook` or `delivered`. The wires ignore all three
+   * and the estimator reads them.
    */
   wireMessages(): ChatMessage[] {
     const [system, ...rest] = this.messages
@@ -689,10 +707,10 @@ export class Session {
    * Subagents go with it, since nothing else in the app can end a background
    * one. A compaction the user started is stopped alone: the background jobs
    * running beside it between turns were started by an earlier turn and are
-   * not what the user is stopping.
+   * not what the user is stopping. A TL;DR is stopped the same way.
    */
   stop(): void {
-    if (!this.compactingByHand) this.options.spawn?.stopAll()
+    if (!this.betweenTurns) this.options.spawn?.stopAll()
     if (this.controller === null) return
     this.stopped = true
     this.controller.abort()
@@ -713,7 +731,7 @@ export class Session {
     return { ...this.subagentUsage }
   }
 
-  /** The harness's own share of `spent`: approval checks and compaction summaries. */
+  /** The harness's own share of `spent`: approval checks, compaction summaries and TL;DRs. */
   get spentByHarness(): TurnUsage {
     return { ...this.harnessUsage }
   }
@@ -742,9 +760,10 @@ export class Session {
   }
 
   /**
-   * Tokens the harness spent on a side-call of its own, an approval check or a
-   * compaction summary, with what it cost at that model's prices. Null when nobody has priced the model:
-   * an unpriced call adds its tokens and leaves the money alone.
+   * Tokens the harness spent on a side-call of its own (an approval check, a
+   * compaction summary or a TL;DR) with what it cost at that model's prices.
+   * Null when nobody has priced the model: an unpriced call adds its tokens and
+   * leaves the money alone.
    */
   addHarnessUsage(delta: TurnUsage, costUsd: number | null): void {
     this.addUsage(delta)
@@ -829,7 +848,13 @@ export class Session {
     return costOf(usage, facts)
   }
 
-  async run(userText: string, images: readonly ImagePart[] = []): Promise<TurnUsage> {
+  /**
+   * One turn. `said` marks the user's own words in `userText` when snippets
+   * were added around them (`compose` in src/shared/compose.ts). It is kept on
+   * the message for the approval judge, and the turn index names the turn and
+   * a rewind puts back those words.
+   */
+  async run(userText: string, images: readonly ImagePart[] = [], said?: SaidSpan): Promise<TurnUsage> {
     // A compaction the user started is still rewriting the history this turn
     // would be appended to.
     if (this.running) throw new Error('this session is busy; wait for the turn or the compaction to finish')
@@ -861,9 +886,15 @@ export class Session {
     // Anything a background job finished with between turns goes in first: it
     // happened before this message, and the model should read it that way.
     this.flushPending()
-    await this.checkpoint(userText)
+    const own = ownWords(userText, said)
+    await this.checkpoint(own === '' ? userText : own)
     this.turnUser = this.messages.length
-    const asked: ChatMessage = { role: 'user', content: userText, ...(images.length === 0 ? {} : { images: [...images] }) }
+    const asked: ChatMessage = {
+      role: 'user',
+      content: userText,
+      ...(images.length === 0 ? {} : { images: [...images] }),
+      ...(said === undefined ? {} : { said }),
+    }
     this.messages.push(asked)
     this.emitContext()
 
@@ -1082,6 +1113,7 @@ export class Session {
           case 'done':
             usage = chunk.usage
             copyInto(spent, chunk.usage)
+            this.prefixSentAt = Date.now()
             if (chunk.usageProblem !== undefined) this.noteUsageProblem(chunk.usageProblem)
             else this.measured(chunk.usage, estimated)
             break
@@ -1148,18 +1180,87 @@ export class Session {
     const cost = this.harnessCostUsd
     this.stopped = false
     this.controller = new AbortController()
-    this.compactingByHand = true
+    this.betweenTurns = true
     try {
       await this.keepRewind()
       const compacted = await this.summarise('manual')
-      const usage = subtractUsage(this.harnessUsage, before)
-      const priced = this.facts !== undefined && costOf(usage, this.facts) !== null
-      return { compacted, usage, costUsd: priced ? this.harnessCostUsd - cost : null }
+      return { compacted, ...this.spentSince(before, cost) }
     } finally {
       this.controller = null
-      this.compactingByHand = false
+      this.betweenTurns = false
       this.flushPending()
     }
+  }
+
+  /**
+   * The last answer, shortened. It is drawn under the answer and kept as a
+   * note of its own, and never goes back to the model. The request is the
+   * harness's, like a compaction's, and is refused the same way while a turn
+   * runs. A held rewind is kept first, as a compaction keeps it, so the answer
+   * shortened is the last one the user kept. `tldr.ts` says how it is asked.
+   */
+  async tldr(): Promise<TldrSpend> {
+    if (this.running) return { written: false, usage: emptyUsage(), costUsd: null }
+    const before = { ...this.harnessUsage }
+    const cost = this.harnessCostUsd
+    this.stopped = false
+    this.controller = new AbortController()
+    this.betweenTurns = true
+    try {
+      await this.keepRewind()
+      const answer = this.messages.findLast(m => m.role === 'assistant' && m.content.trim() !== '')
+      if (answer === undefined) {
+        this.note('There is no answer to shorten yet.')
+        return { written: false, usage: emptyUsage(), costUsd: null }
+      }
+      const text = await this.shorten(answer.content)
+      if (text !== null) {
+        this.record('tldr', text)
+        this.bus.emit({ type: 'session.tldr', sessionId: this.options.sessionId, turn: this.turn, text, at: Date.now() })
+      } else if (!this.stopped) this.note('No TL;DR came back. The model answered with nothing, or with a tool call.')
+      return { written: text !== null, ...this.spentSince(before, cost) }
+    } finally {
+      this.controller = null
+      this.betweenTurns = false
+      this.flushPending()
+    }
+  }
+
+  /** The whole conversation where it is worth its price, then the answer alone. */
+  private async shorten(answer: string): Promise<string | null> {
+    const ledger = this.context
+    const factor = this.calibration.factor
+    const warm = this.prefixSentAt > 0 && Date.now() - this.prefixSentAt < CACHE_WARM_MS
+    const sizes = {
+      whole: ledger.tokens + Math.ceil(textTokens(TLDR_INSTRUCTION) * factor),
+      cached: warm ? (ledger.measured ?? 0) : 0,
+      alone: Math.ceil((textTokens(TLDR_SYSTEM) + textTokens(aloneInstruction(answer))) * factor),
+    }
+    if (tldrRoute(sizes, this.facts) === 'whole') {
+      const messages: ChatMessage[] = [...this.wireMessages(), { role: 'user', content: TLDR_INSTRUCTION }]
+      const got = await this.ask(this.request(messages, this.tools.map(t => t.input)), 'TL;DR')
+      if (got !== null) this.prefixSentAt = Date.now()
+      if (got !== null && got.toolCalls === 0 && got.text !== '') return got.text
+      if (this.stopped) return null
+    }
+    const got = await this.ask(
+      this.request(
+        [
+          { role: 'system', content: TLDR_SYSTEM },
+          { role: 'user', content: aloneInstruction(answer) },
+        ],
+        [],
+      ),
+      'TL;DR',
+    )
+    return got === null || got.toolCalls > 0 || got.text === '' ? null : got.text
+  }
+
+  /** What the harness spent since `before` and `cost` were read, at this model's prices. */
+  private spentSince(before: TurnUsage, cost: number): { usage: TurnUsage; costUsd: number | null } {
+    const usage = subtractUsage(this.harnessUsage, before)
+    const priced = this.facts !== undefined && costOf(usage, this.facts) !== null
+    return { usage, costUsd: priced ? this.harnessCostUsd - cost : null }
   }
 
   /**
@@ -1213,9 +1314,10 @@ export class Session {
    * `write` changed since, or both. `id` null undoes a rewind instead.
    *
    * The files go back at once and the history is left whole, so the rewind
-   * can still be moved to another turn or undone. The next turn or compaction
-   * keeps it (`keepRewind`). Going back past the turn's message hands the
-   * message back, so the user can send it again or change it first.
+   * can still be moved to another turn or undone. The next turn, compaction or
+   * TL;DR keeps it (`keepRewind`). Going back past the turn's message hands the
+   * message back, so the user can send it again or change it first. A message
+   * sent with snippets hands back only the words the user typed.
    */
   async rewind(id: string | null, mode: RewindMode): Promise<RewindOutcome> {
     const store = this.options.checkpoints
@@ -1227,7 +1329,7 @@ export class Session {
       const { point, ...files } = id === null ? { ...(await store.unstage()), point: null } : await store.stage(id, mode)
       if (files.unsaved !== undefined) this.fault(`the checkpoint list could not be saved after the rewind: ${files.unsaved}`)
       const asked = point === null || mode === 'code' ? undefined : this.messages[point.marker + 1]
-      return { restored: files.restored, failed: files.failed, ...(asked?.role === 'user' ? { prompt: asked.content } : {}) }
+      return { restored: files.restored, failed: files.failed, ...(asked?.role === 'user' ? { prompt: ownWords(asked.content, asked.said) } : {}) }
     } finally {
       this.controller = null
     }
@@ -1393,7 +1495,8 @@ export class Session {
     for (let attempt = 1; attempt <= SUMMARY_ATTEMPTS && !this.stopped; attempt += 1) {
       const messages: ChatMessage[] = [...this.wireMessages(), { role: 'user', content: SUMMARY_INSTRUCTION }]
       const estimated = partsTotal(estimateParts(messages, this.toolSize))
-      const answer = await this.ask(this.request(messages, this.tools.map(t => t.input)))
+      const answer = await this.ask(this.request(messages, this.tools.map(t => t.input)), 'summary')
+      if (answer !== null) this.prefixSentAt = Date.now()
       if (answer === null) continue
       if (answer.usageRead) this.calibration.sample(promptTokens(answer.usage), estimated)
       if (answer.toolCalls === 0 && answer.text !== '') return answer.text
@@ -1420,16 +1523,18 @@ export class Session {
         ],
         [],
       ),
+      'summary',
     )
     return answer === null || answer.toolCalls > 0 || answer.text === '' ? null : answer.text
   }
 
   /**
    * One side request, billed to the harness. Its stream reaches nobody: the
-   * summary is shown once it is whole. Null when the request failed, which
-   * the caller answers with its next way of getting a summary.
+   * summary or the TL;DR is shown once it is whole. Null when the request
+   * failed, which the caller answers with its next way of asking. `what` names
+   * the request in the note a failure leaves.
    */
-  private async ask(input: ChatInput): Promise<{ text: string; toolCalls: number; usage: TurnUsage; usageRead: boolean } | null> {
+  private async ask(input: ChatInput, what: string): Promise<{ text: string; toolCalls: number; usage: TurnUsage; usageRead: boolean } | null> {
     let text = ''
     let toolCalls = 0
     const spent = emptyUsage()
@@ -1447,7 +1552,7 @@ export class Session {
       }
     } catch (err) {
       failed = true
-      if (!this.stopped) this.note(`A summary request failed: ${err instanceof Error ? err.message : String(err)}`)
+      if (!this.stopped) this.note(`A ${what} request failed: ${err instanceof Error ? err.message : String(err)}`)
     }
     this.addHarnessUsage(spent, this.facts === undefined ? null : costOf(spent, this.facts))
     return failed || this.stopped ? null : { text: this.safe(text.trim()), toolCalls, usage: spent, usageRead }
@@ -1760,8 +1865,9 @@ const HOW: Record<CompactionReason, string> = {
 }
 
 /**
- * A message as the wire gets it: markers off, a pruned result shortened, and
- * with `blind` set, each picture swapped for a line saying one was sent.
+ * A message as the wire gets it: compaction marks off, a pruned result
+ * shortened, and with `blind` set, each picture swapped for a line saying one
+ * was sent. The flags that say who wrote a message stay for the estimator.
  */
 function wireCopy(m: ChatMessage, blind: boolean): ChatMessage {
   if (m.role === 'tool') {
@@ -1775,15 +1881,24 @@ function wireCopy(m: ChatMessage, blind: boolean): ChatMessage {
   const images = m.images?.length ?? 0
   if (blind && images > 0) {
     const line = `[harness: the user sent ${images === 1 ? 'an image' : `${images} images`} here, left out because this model does not take images]`
-    return { role: m.role, content: m.content === '' ? line : `${m.content}\n\n${line}` }
+    return { role: m.role, content: m.content === '' ? line : `${m.content}\n\n${line}`, ...author(m) }
   }
   return {
     role: m.role,
     content: m.content,
+    ...author(m),
     ...(m.images === undefined ? {} : { images: m.images }),
     ...(m.toolCalls === undefined ? {} : { toolCalls: m.toolCalls }),
     ...(m.thinking === undefined ? {} : { thinking: m.thinking }),
   }
+}
+
+/** The flags on a message the user did not write, for the estimator. */
+function author(m: ChatMessage): { hook?: true; delivered?: true } {
+  if (m.role === 'tool') return {}
+  if (m.hook === true) return { hook: true }
+  if (m.delivered === true) return { delivered: true }
+  return {}
 }
 
 /** Overwrite a usage report with another, in place. */

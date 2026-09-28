@@ -3,7 +3,7 @@ import { safeStorage } from 'electron'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { clampEffort, resolveFacts } from '../shared/facts.js'
-import { ConfigError, hostOf, isUsableBaseURL, newProviderId, normalizeBaseURL, parseFacts, parseStored, resolveConfig, parseHeaderName, SWITCH_NAMES } from '../core/config.js'
+import { ConfigError, hostOf, isUsableBaseURL, newProviderId, normalizeBaseURL, parseApproval, parseFacts, parseStored, resolveConfig, parseHeaderName, SWITCH_NAMES } from '../core/config.js'
 import { approvalProblem } from '../core/approval.js'
 import { causeCode } from '../core/provider.js'
 import { createProvider, listModelsFor } from '../providers/factory.js'
@@ -363,15 +363,18 @@ function describeFailure(baseURL: string, err: unknown): string {
  * stored.
  */
 export async function saveApproval(approval: ApprovalConfig): Promise<void> {
+  // It came over IPC, so it is read the way the settings file is.
+  const read = parseApproval(approval)
+  if (read === undefined) throw new Error('the approval settings are not an object')
   const stored = await readStored()
-  for (const candidate of approval.candidates) {
+  for (const candidate of read.candidates) {
     const provider = stored.providers.find(p => p.id === candidate.providerId)
     if (provider === undefined) throw new Error(`no provider with id ${candidate.providerId} is configured`)
     if (provider.models.length > 0 && !provider.models.includes(candidate.model)) {
       throw new Error(`${candidate.model} is not one of the models selected for ${provider.name}`)
     }
   }
-  stored.approval = approval
+  stored.approval = read
   await writeStored(stored)
 }
 

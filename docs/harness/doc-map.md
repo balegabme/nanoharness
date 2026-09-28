@@ -43,6 +43,7 @@ pnpm doc-check
 - `agents.md`: the three roles, spawn modes, and background jobs
 - `mcp.md`: the MCP client, its transports, and the two config files
 - `skills.md`: the skill format and the list injected into the prompt
+- `commands.md`: the composer's `/` menu, `/tldr`, `/reload`, and prompt snippets
 - `secrets.md`: pasted keys, placeholders, and the substitution boundary
 - `approval.md`: auto mode, its rules, its ladder, and what a verdict costs
 - `hooks.md`: the user's commands around a session, and trusting a project's hooks and MCP servers
@@ -51,4 +52,4 @@ pnpm doc-check
 - `improvements.md`: the flaw and improvement ledger (living doc)
 - `doc-map.md`: this page
 
-Pages arrive with the features they document. Still to come: snippets.
+Pages arrive with the features they document.

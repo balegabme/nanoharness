@@ -150,8 +150,11 @@ export function promptingGate({ root, sessionId, broker, readable = [], redact, 
   // goals move only when a message lands in the conversation as the user's,
   // and the same action under the same goals is the same question, so a turn
   // that runs `npm test` after every edit pays for one check. New goals or a
-  // new judge empty the map. The answer is kept while it is still coming, so
-  // two reads of one path in the same message share one call.
+  // new judge empty the map. The goals are the user's last six messages, so a
+  // message can leave them as they were, and then the map is kept, since the
+  // judge would be asked the same question with the same refusals. The
+  // answer is kept while it is still coming, so two reads of one path in the
+  // same message share one call.
   let verdictGoals = ''
   let verdictJudge: Judge | undefined
   const verdicts = new Map<string, Promise<ApprovalOutcome>>()
@@ -234,9 +237,6 @@ export function promptingGate({ root, sessionId, broker, readable = [], redact, 
     } catch (err) {
       // A failure is not an answer, so the next ask tries again.
       if (verdicts.get(key) === answer) verdicts.delete(key)
-      // The person pressed Stop. That is not the judge failing and it does not
-      // become a prompt: the turn is ending.
-      if (err instanceof Error && err.name === 'AbortError') throw err
       const problem = err instanceof ApprovalUnavailableError ? err.message : `the approval model failed: ${err instanceof Error ? err.message : String(err)}`
       if (asked) onDecision?.({ action, problem, at })
       return { settled: false, problem }

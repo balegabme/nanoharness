@@ -284,38 +284,39 @@ export class ChatView {
     }
     button.replaceChildren(el('b', undefined, shortTokens(totalTokens(usage))), el('span', undefined, 'tokens'))
 
-    line.append(metric('in', String(usage.input)), metric('out', String(usage.output)), metric('cached', String(usage.cacheRead)))
+    // The pills and the price describe the conversation. The harness's own
+    // calls (approval checks, compaction summaries and TL;DRs) ran on their own
+    // models at their own prices, so they get one pill of their own with the
+    // dollars they already carry, and a free chat model reads as free.
+    const conversation = this.harnessSpend === null ? usage : floorUsage(subtractUsage(usage, this.harnessSpend))
+    line.append(
+      metric('in', String(conversation.input)),
+      metric('out', String(conversation.output)),
+      metric('cached', String(conversation.cacheRead)),
+    )
     // Whose output it was. A turn that hands its work to three agents pays
     // for all of them, so the total can read fifty thousand with this session
     // having written a paragraph.
     const byAgents = this.subagentSpend?.output ?? 0
     if (byAgents > 0) line.append(metric('by agents', String(byAgents), 'sub'))
-    // The harness spending on its own behalf: approval checks and compaction
-    // summaries. In the total because it is billed, named apart because it is
-    // not the model answering the question that was asked.
-    const byHarness = (this.harnessSpend?.input ?? 0) + (this.harnessSpend?.output ?? 0)
-    if (byHarness > 0) line.append(metric('harness', String(byHarness), 'sub'))
     // Only the Anthropic-compatible wire reports a cache write, and a pill
     // reading 0 on every other one is noise.
-    if (usage.cacheWrite > 0) line.append(metric('written', String(usage.cacheWrite)))
-    // The conversation's own tokens are what the session's model priced, so the
-    // harness's share comes out before the multiplication and its dollars go
-    // back in afterwards.
-    const conversation = this.harnessSpend === null ? usage : floorUsage(subtractUsage(usage, this.harnessSpend))
-    const priced = this.facts === null ? null : costOf(conversation, this.facts)
-    const spent = priced === null ? (this.harnessCostUsd > 0 ? this.harnessCostUsd : null) : priced + this.harnessCostUsd
+    if (conversation.cacheWrite > 0) line.append(metric('written', String(conversation.cacheWrite)))
+    const spent = this.facts === null ? null : costOf(conversation, this.facts)
     if (spent !== null) line.append(metric('spent', moneyText(spent), 'cost'))
-    if (promptTokens(usage) > 0) line.append(metric('hit', percentText(cacheHitRate(usage)), 'hit'))
-    if (usage.reasoning > 0) line.append(metric('reasoning', String(usage.reasoning)))
+    if (promptTokens(conversation) > 0) line.append(metric('hit', percentText(cacheHitRate(conversation)), 'hit'))
+    if (conversation.reasoning > 0) line.append(metric('reasoning', String(conversation.reasoning)))
+    const byHarness = this.harnessSpend === null ? 0 : totalTokens(this.harnessSpend)
+    if (byHarness > 0) line.append(metric('harness', `${shortTokens(byHarness)} · ${moneyText(this.harnessCostUsd)}`, 'sub'))
     const lines = ['Every turn added up, subagents included.']
     if (byAgents > 0) lines.push(`${byAgents} of the output was written by subagents this session started.`)
-    if (byHarness > 0) {
-      lines.push(`${byHarness} were spent by the harness itself, on approval checks and compaction summaries, priced at the rate of the model that ran each one.`)
-    }
     // The per-turn figure under each answer is priced by the model that ran
     // that turn. This one prices every token at what the model selected now
     // charges, so a session that changed models reads as an estimate.
     if (spent !== null) lines.push('Priced at the rate of the model selected now.')
+    if (byHarness > 0) {
+      lines.push('Harness: approval checks, compaction summaries and TL;DRs, priced at the rate of the model that ran each one. They are in the total and not in the other figures.')
+    }
     note.textContent = lines.join('\n')
   }
 
@@ -365,9 +366,14 @@ export class ChatView {
     return { wrapper, body }
   }
 
-  /** What the user sent: the pictures in the order they were attached, then the words. Returns the block. */
-  userBlock(text: string, images: readonly ImageView[] = []): HTMLElement {
+  /**
+   * What the user sent: the pictures in the order they were attached, then the
+   * words. `said` is the part the user typed, when snippets were sent around
+   * it. Returns the block.
+   */
+  userBlock(text: string, images: readonly ImageView[] = [], said?: string): HTMLElement {
     const { wrapper, body } = this.blockPair('user', 'you')
+    if (said !== undefined) wrapper.dataset.said = said
     if (images.length > 0) {
       const row = el('div', 'user-images')
       for (const [index, image] of images.entries()) {
@@ -381,6 +387,13 @@ export class ChatView {
     }
     if (text !== '') body.append(text)
     return wrapper
+  }
+
+  /** The words the user typed in every message on screen, oldest first, without the snippets sent with them. */
+  sentTexts(): string[] {
+    return [...this.host.stream.querySelectorAll<HTMLElement>('.block.user')]
+      .map(block => block.dataset.said ?? block.querySelector('.body')?.textContent ?? '')
+      .filter(text => text !== '')
   }
 
   /**
@@ -451,6 +464,16 @@ export class ChatView {
     card.append(el('summary', undefined, 'summary of the conversation so far'), body)
     block.append(el('div', 'compaction-rule'), card)
     this.append(block)
+  }
+
+  /**
+   * The last answer shortened, asked for with `/tldr`. It is the user's
+   * reading aid and never goes to the model, which already has the answer.
+   */
+  tldrBlock(text: string): void {
+    const { body } = this.blockPair('tldr', 'TL;DR')
+    body.classList.add('md')
+    body.append(renderMarkdown(text, this.host))
   }
 
   /** Say on a tool card that its output now goes to the model shortened. */
@@ -764,6 +787,7 @@ export class ChatView {
         next += 1
         if (note.kind === 'error') this.errorBlock(note.text)
         else if (note.kind === 'summary') this.summaryBlock(note.text, note.prevented)
+        else if (note.kind === 'tldr') this.tldrBlock(note.text)
         else this.noteBlock(note.text)
       }
     }
@@ -800,7 +824,7 @@ export class ChatView {
     if (message.delivered === true) return
     if (message.role === 'user') {
       // The transcript index, which a checkpoint's marker names.
-      this.userBlock(message.text, message.images).dataset.index = String(index)
+      this.userBlock(message.text, message.images, message.said).dataset.index = String(index)
       return
     }
     if (message.thinking !== undefined && message.thinking !== '') this.thinkingBlock(message.thinking)
@@ -924,6 +948,9 @@ export class ChatView {
         break
       case 'session.summary':
         this.summaryBlock(event.text, event.prevented)
+        break
+      case 'session.tldr':
+        this.tldrBlock(event.text)
         break
       case 'session.started':
         this.ahead = null

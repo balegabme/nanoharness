@@ -27,7 +27,8 @@ The files are read when a session is built. That is at its first message, and
 again when a setting it was built from changes: the provider it talks to, the
 model, or the Run hooks switch. A file edited in the middle of a turn changes
 nothing until then, so a turn cannot start under one set of hooks and finish
-under another.
+under another. `/reload` in the composer builds the session again between
+turns, which reads the files again (`commands.md`).
 
 The Run hooks switch in Settings, under General, turns every hook off. It is on
 until someone turns it off.

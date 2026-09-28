@@ -3,6 +3,7 @@ import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { emptyUsage } from '../shared/usage.js'
+import { compose } from '../shared/compose.js'
 import { Session } from '../core/session.js'
 import { goalsFrom } from '../core/approval.js'
 import { Throughput } from '../renderer/metrics.js'
@@ -123,6 +124,24 @@ describe('a background job’s answer read back after a restart', () => {
     // The window leaves it out, where it would otherwise be a message the user sent.
     const shown = toTranscriptView(reopened).filter(m => m.role === 'user')
     expect(shown.map(m => m.delivered === true)).toEqual([false, true])
+  })
+})
+
+describe('a message sent with snippets read back after a restart', () => {
+  it('still tells the user’s own words from the snippets, for the judge and for Up in the composer', async () => {
+    const space = await addWorkspace(dir)
+    const view = await createSession(space.id)
+    const options = { sessionId: view.id, cwd: dir, model: 'test-model', systemPrompt: 'You are a test.', facts: { context: 100_000 } }
+    const session = new Session(options, new SlowProvider(), [])
+    const sent = compose('tidy the imports', ['Familiarize yourself with this project before we start.'])
+    await session.run(sent.text, [], sent.said)
+    await saveTranscript(view.id, session.transcript, session.notes)
+
+    const reopened = await loadTranscript(view.id)
+    expect(goalsFrom(reopened)).toEqual(['tidy the imports\n\nFamiliarize yourself with this project before we start.'])
+    const [shown] = toTranscriptView(reopened).filter(m => m.role === 'user')
+    expect(shown?.text).toBe(sent.text)
+    expect(shown?.said).toBe('tidy the imports')
   })
 })
 

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { compose } from '../shared/compose.js'
 import { emptyUsage } from '../shared/usage.js'
 import { CheckpointStore } from './checkpoints.js'
 import { SUMMARY_INSTRUCTION } from './compaction.js'
@@ -341,6 +342,17 @@ describe('rewinding the conversation alone', () => {
     expect(await contents(cwd, 'a.txt')).toBe('one\n')
     expect(await contents(cwd, 'b.txt')).toBeNull()
   })
+
+  it('lists a message sent with snippets by the user’s own words, and hands back only those', async () => {
+    const { session, store } = await open()
+    await session.run('make b')
+    const sent = compose('look at the tests', ['Familiarize yourself with this project before we start.'], ['Read-only: do not change any file.'])
+    await session.run(sent.text, [], sent.said)
+
+    expect(await prompts(store)).toEqual(['make b', 'look at the tests'])
+    const back = await session.rewind(await checkpointOf(store, 'look at the tests'), 'conversation')
+    expect(back.prompt).toBe('look at the tests')
+  })
 })
 
 describe('what the model may rewrite after a conversation rewind', () => {
@@ -405,6 +417,21 @@ describe('a rewind past a compaction', () => {
 
     expect(session.transcript.some(m => m.role === 'user' && m.content === 'task 4')).toBe(false)
     expect(await prompts(store)).toEqual(['task 1', 'task 2', 'task 3'])
+  })
+})
+
+describe('a held rewind and /tldr', () => {
+  it('is kept before the TL;DR, which shortens the last answer the user kept', async () => {
+    const plays = { 'task 1': [[{ kind: 'text', text: 'first answer' }]], 'task 2': [[{ kind: 'text', text: 'second answer' }]] } satisfies Record<string, ChatChunk[][]>
+    const { session, store } = await open(plays)
+    for (const task of ['task 1', 'task 2']) await session.run(task)
+
+    await session.rewind(await checkpointOf(store, 'task 2'), 'conversation')
+    expect((await session.tldr()).written).toBe(true)
+
+    expect(session.transcript.filter(m => m.role === 'assistant').map(m => m.content)).toEqual(['first answer'])
+    expect(await prompts(store)).toEqual(['task 1'])
+    expect(session.notes.some(note => note.kind === 'tldr')).toBe(true)
   })
 })
 

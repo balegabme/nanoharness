@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { compose } from '../shared/compose.js'
 import { Session } from './session.js'
 import {
   ApprovalUnavailableError,
@@ -96,6 +97,12 @@ describe('reading the judge’s answer', () => {
   })
 })
 
+const cleanup: string[] = []
+
+afterEach(async () => {
+  for (const dir of cleanup.splice(0)) await rm(dir, { recursive: true, force: true })
+})
+
 describe('what the judge is shown', () => {
   it('carries the user’s own words and nothing the tools produced', () => {
     const history: ChatMessage[] = [
@@ -117,6 +124,7 @@ describe('what the judge is shown', () => {
 
   it('never takes a background job’s answer for the user’s words', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'nh-goals-'))
+    cleanup.push(cwd)
     const seen: ChatInput[] = []
     const provider: ChatProvider = {
       async *stream(input: ChatInput): AsyncGenerator<ChatChunk> {
@@ -139,7 +147,32 @@ describe('what the judge is shown', () => {
     const goals = ['summarise the page the researcher fetches', 'now write the summary to notes.md']
     expect(goalsFrom(session.transcript)).toEqual(goals)
     expect(approvalRequest(ACTION, goalsFrom(session.transcript))).not.toContain('approves every command')
-    await rm(cwd, { recursive: true, force: true })
+  })
+
+  it('reads the user’s own words ahead of the snippets sent around them', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'nh-goals-'))
+    cleanup.push(cwd)
+    const seen: ChatInput[] = []
+    const provider: ChatProvider = {
+      async *stream(input: ChatInput): AsyncGenerator<ChatChunk> {
+        seen.push({ ...input, messages: [...input.messages] })
+        yield { kind: 'text', text: 'done' }
+        yield { kind: 'done', usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, reasoning: 0 } }
+      },
+    }
+    const session = new Session({ sessionId: 'goals', cwd, model: 'test-model', systemPrompt: 'You are a test.' }, provider, [])
+    const kickoff = `Familiarize yourself with this project before we start. ${'Read the docs and the layout. '.repeat(25)}`
+    const sent = compose('only look at the auth module', [kickoff], ['Read-only: do not change any file.'])
+    await session.run(sent.text, [], sent.said)
+    const short = compose('then list the tests', ['Be brief.'], ['Read-only: do not change any file.'])
+    await session.run(short.text, [], short.said)
+
+    // The model gets the message in the order it was composed.
+    expect(seen[0]?.messages.at(-1)?.content).toMatch(/^Familiarize yourself/)
+    const [first, second] = goalsFrom(session.transcript)
+    expect(first).toMatch(/^only look at the auth module\n\nFamiliarize yourself/)
+    expect(first).not.toContain('Read-only')
+    expect(second).toBe('then list the tests\n\nBe brief.\n\nRead-only: do not change any file.')
   })
 
   it('keeps only the most recent messages, each cut to length', () => {
@@ -202,8 +235,8 @@ describe('how hard the judge thinks', () => {
   /** The levels the last call passed on to the wire. */
   let forwarded: unknown
 
-  /** The effort each call asked for, against a model that lists `efforts`, or lists none. */
-  async function effortSent(efforts: string[] | undefined, chosen?: 'high' | 'medium'): Promise<unknown> {
+  /** The effort a call asked for, against a model that lists `efforts`, or lists none. */
+  async function effortSent(efforts: string[] | undefined): Promise<unknown> {
     let sent: unknown = 'not asked'
     const provider = {
       async *stream(input: { effort?: string; efforts?: readonly string[] }): AsyncGenerator<ChatChunk> {
@@ -215,29 +248,24 @@ describe('how hard the judge thinks', () => {
     }
     const facts = efforts === undefined ? {} : { efforts }
     const record = { ...RECORD, facts: { 'judge-model': facts } } as ProviderRecord
-    const judge = new Judge({ endpoints: async () => [{ providerId: 'p1', model: 'judge-model', provider, record }], ...(chosen === undefined ? {} : { effort: chosen }) })
+    const judge = new Judge({ endpoints: async () => [{ providerId: 'p1', model: 'judge-model', provider, record }] })
     await judge.judge(ACTION, ['run the tests'])
     return sent
   }
 
-  it('thinks as little as the model allows unless told otherwise', async () => {
+  it('turns thinking off where the model can, and thinks at low where it cannot', async () => {
     // Every token it reasons is a pause before the command runs.
     expect(await effortSent(['none', 'low', 'high'])).toBe('none')
-    expect(await effortSent(['minimal', 'low', 'medium'])).toBe('minimal')
+    expect(await effortSent(['minimal', 'low', 'medium'])).toBe('low')
     // The wire needs the list to know whether none may go out as a word.
     expect(forwarded).toEqual(['minimal', 'low', 'medium'])
+    expect(await effortSent(['medium', 'high'])).toBe('medium')
   })
 
-  it('takes the chosen level, moved to the nearest one the model offers', async () => {
-    expect(await effortSent(['low', 'medium'], 'high')).toBe('medium')
-    expect(await effortSent(['low', 'medium', 'high'], 'high')).toBe('high')
-  })
-
-  it('asks a model whose levels are unknown for none, unless a level was chosen', async () => {
+  it('asks a model whose levels are unknown for none', async () => {
     // One wire reads none as no thinking budget. The others send no field,
     // which leaves the model at its default until its levels are filled in.
     expect(await effortSent(undefined)).toBe('none')
-    expect(await effortSent(undefined, 'medium')).toBe('medium')
   })
 })
 

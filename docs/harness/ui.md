@@ -6,7 +6,7 @@ its own, which is why the window can be rebuilt without touching the core.
 
 Files:
 - src/main/window.ts: BrowserWindow, the `app://` scheme, navigation lockdown
-- src/main/preload.ts: the context bridge, with ping, send, compact, checkpoints, rewind, workspaces, sessions, rename, transcript paths, role, jobs, one subagent's stored conversation, agents, MCP status, secrets, config, permission answers, question answers, project trust answers, the usage report and clearing it, external links, onEvent
+- src/main/preload.ts: the context bridge, with ping, send, compact, TL;DR, reload, snippets, checkpoints, rewind, workspaces, sessions, rename, transcript paths, role, jobs, one subagent's stored conversation, agents, MCP status, secrets, config, permission answers, question answers, project trust answers, the usage report and clearing it, external links, onEvent
 - src/renderer/index.ts: the shell, which session is open, the agent, model and effort chips, and the diff and spend panes
 - src/renderer/composer.ts: the composer in its two seats, the height of the dock column the flow clears, and the pictures attached to the draft
 - src/renderer/images.ts: a pasted or dropped file read as a picture to send, shrunk first when the switch is on
@@ -22,6 +22,7 @@ Files:
 - src/renderer/permission.ts: the modal a tool waits on when it reaches outside its folder
 - src/renderer/plan.ts: the agent's plan pinned above the composer, folded to one line or open to every step
 - src/renderer/question.ts: the card an `ask_user` question is answered in, above the composer
+- src/renderer/recall.ts: Up and Down in an empty composer, walking back through the messages sent in the session on screen
 - src/renderer/confirm.ts: the app's own yes/no and one-line-of-text sheets, in place of the browser's `confirm()` and `prompt()`
 - src/renderer/turns.ts: the turns on screen and going back to one: each turn's Rewind button and menu, the card that asks before a rewind, the bar under a held one, and the turn index
 - src/renderer/menu.ts: the right-click menu, one at a time, placed near the pointer, closed by the next thing the user does
@@ -73,7 +74,18 @@ is nothing else it could sensibly do.
 A turn streams into the flow: user blocks, a thinking block that fills in live
 and folds itself away when the answer starts, tool rows that show the argument
 worth seeing beside the name and grow their output when they return, then the
-answer. Enter sends and Shift+Enter makes a newline.
+answer. Enter sends and Shift+Enter makes a newline. Up in an empty composer
+brings back the last message sent in the session on screen, and each further
+Up the one before it, the way a shell walks its history. Down walks forward,
+and past the newest message the composer is empty again. A message sent with
+snippets comes back as the words the user typed (`commands.md`). In a
+recalled message of several lines the keys move the caret until it reaches the
+first or last line, and typing ends the walk with the text left where it is.
+
+A `/` at the start of the draft or after a space opens the command menu, and
+so does the `/` button among the controls. It runs `/tldr`, `/compact` and
+`/reload` and adds prompt snippets, which sit above or below the draft until
+the message is sent (`commands.md`).
 
 A running turn is shown in the flow, at the end of it, where the next answer
 will appear: three dots and the elapsed time. Nothing is drawn when no turn is
@@ -106,23 +118,27 @@ last turn, on the same 0.4s floor. A subagent opened from the list shows none.
 `metrics.ts` has the arithmetic, away from the DOM so it is tested.
 
 The tokens button is the session's whole spend in one short count, such as
-`669k tokens`. Its panel holds the breakdown as a row of pills: in, out,
-cached, what it has spent and hit rate, plus reasoning and cache-written where
-there are any. The spend appears only once a model has a price, and it is the
-session's whole total put through the rate of the model selected now, so a
-session that switched models is an estimate, and the note under the pills says
-so. The exact figure for one turn is on that turn's own summary line, priced by
-the model that ran it. A turn that delegates gets one more pill, **by agents**,
-which is how much of the output was written by subagents this session started.
-A session can read fifty thousand out while having written a paragraph itself,
-and the single total cannot say which of those happened. The pill is quieter
-than the ones beside it, because it is an aside about `out` and not a measure
-of its own. Harness spend, the approval checks and compaction summaries, is
-counted the same way. Both are stored with the session's total, so a session
-re-opened a week later still shows the split. Each pill is a bright number and a
-dim name, so the row reads as numbers first and labels second, and everything
-the hit rate divides by is on the row so the percentage can be checked. A link
-at the bottom opens the spend view.
+`669k tokens`. Its panel holds the breakdown of the conversation as a row of
+pills: in, out, cached, what it has spent and hit rate, plus reasoning and
+cache-written where there are any. The spend appears only once a model has a
+price, and it is the conversation's tokens put through the rate of the model
+selected now, so a session that switched models is an estimate, and the note
+under the pills says so. The exact figure for one turn is on that turn's own
+summary line, priced by the model that ran it. A turn that delegates gets one
+more pill, **by agents**, which is how much of the output was written by
+subagents this session started. A session can read fifty thousand out while
+having written a paragraph itself, and the single total cannot say which of
+those happened. The pill is quieter than the ones beside it, because it is an
+aside about `out` and not a measure of its own. Harness spend (approval checks,
+compaction summaries and TL;DRs) is left out of the other pills and gets a
+**harness** pill of its own with its tokens and what they cost. Those calls ran
+on their own models at their own prices, so the conversation's spend reads $0
+on a free chat model even when a paid model checked its commands. Both splits
+are stored with the session's total, so a session re-opened a week later still
+shows them. Each pill is a bright number and a dim name, so the row reads as
+numbers first and labels second, and everything the hit rate divides by is on
+the row so the percentage can be checked. A link at the bottom opens the spend
+view.
 
 The context button is a ring and a percentage: the next request against the
 usable space, the window (or the user's limit, where that is smaller) less the

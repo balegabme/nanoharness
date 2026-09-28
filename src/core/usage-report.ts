@@ -198,7 +198,7 @@ function phaseRows(records: readonly UsageRecord[]): SpendRow[] {
     note(rows.harness, record.harness, record.harnessCostUsd, record)
   }
 
-  // A harness row can hold nothing but compactions, which are no turns.
+  // A harness row can hold nothing but compactions and TL;DRs, which are no turns.
   return [rows.conversation, rows.subagents, rows.harness].filter(row => row.turns > 0 || totalTokens(row.usage) > 0)
 }
 

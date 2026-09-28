@@ -17,8 +17,12 @@ import type {
   PingResponse,
   ProviderSaveRequest,
   SecretView,
+  SendDraft,
   SessionCheckpointsResponse,
   SessionCompactResponse,
+  SessionReloadResponse,
+  SessionTldrResponse,
+  SnippetView,
   SessionOpenResponse,
   SessionRewindRequest,
   SessionRewindResponse,
@@ -37,10 +41,13 @@ import type { UsageReport } from '../core/usage-report.js'
 // The renderer never sees ipcRenderer itself, only the calls on this bridge.
 const bridge: NanoBridge = {
   ping: () => ipcRenderer.invoke(IPC_CHANNELS.ping) as Promise<PingResponse>,
-  send: (sessionId: string, text: string, images: ImageUpload[]) =>
-    ipcRenderer.invoke(IPC_CHANNELS.sessionSend, { sessionId, text, images }) as Promise<SessionSendResponse>,
+  send: (sessionId: string, draft: SendDraft, images: ImageUpload[]) =>
+    ipcRenderer.invoke(IPC_CHANNELS.sessionSend, { sessionId, ...draft, images }) as Promise<SessionSendResponse>,
   stop: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.sessionStop, sessionId) as Promise<void>,
   compact: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.sessionCompact, sessionId) as Promise<SessionCompactResponse>,
+  tldr: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.sessionTldr, sessionId) as Promise<SessionTldrResponse>,
+  reload: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.sessionReload, sessionId) as Promise<SessionReloadResponse>,
+  snippets: (sessionId: string | null) => ipcRenderer.invoke(IPC_CHANNELS.snippetsList, sessionId) as Promise<SnippetView[]>,
   checkpoints: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.sessionCheckpoints, sessionId) as Promise<SessionCheckpointsResponse>,
   rewind: (request: SessionRewindRequest) => ipcRenderer.invoke(IPC_CHANNELS.sessionRewind, request) as Promise<SessionRewindResponse>,
   workspaces: () => ipcRenderer.invoke(IPC_CHANNELS.workspaceList) as Promise<WorkspaceStatus>,

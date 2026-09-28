@@ -1,6 +1,7 @@
 // doc: docs/harness/overview.md
 import type { JobView } from './jobs.js'
 import type { Question } from '../shared/questions.js'
+import type { SaidSpan } from '../shared/compose.js'
 
 
 export interface TurnUsage {
@@ -106,6 +107,8 @@ export interface ContextParts {
   system: number
   tools: number
   user: number
+  /** Messages sent in the user's place that the user did not write: a job's answer, a Stop hook's reply. */
+  delivered: number
   /** The model's own words and the arguments of its tool calls. */
   assistant: number
   /** Thinking that goes back on the wire. Thinking a wire drops is not counted. */
@@ -209,6 +212,8 @@ export type AppEvent =
   // What the turn that just ended came to: its tool calls, the files it left
   // different, and how long it ran. The window draws it under the answer.
   | { type: 'session.summary'; sessionId: string; turn: number; text: string; prevented?: PreventedCall[]; at: number }
+  // The last answer, shortened, because the user asked with `/tldr`.
+  | { type: 'session.tldr'; sessionId: string; turn: number; text: string; at: number }
   // `problem` is set when auto mode was on and the approval model could not
   // answer. The prompt is the fallback and says so on its face.
   | { type: 'permission.request'; sessionId: string; id: string; intent: 'read' | 'write' | 'run'; paths: string[]; command?: string; root: string; problem?: string; at: number }
@@ -271,7 +276,7 @@ export interface PreventedCall {
 }
 
 export interface SessionNote {
-  kind: 'error' | 'stopped' | 'note' | 'summary'
+  kind: 'error' | 'stopped' | 'note' | 'summary' | 'tldr'
   text: string
   turn: number
   after: number
@@ -317,6 +322,11 @@ export type ChatMessage =
       content: string
       /** On a user message: the pictures sent with it, in the order they were attached. */
       images?: ImagePart[]
+      /**
+       * On a user message sent with snippets: where the user's own words sit
+       * in `content`. The approval judge reads those first.
+       */
+      said?: SaidSpan
       toolCalls?: ToolCall[]
       thinking?: ThinkingBlock[]
       compacted?: CompactionMark
@@ -351,4 +361,4 @@ export type ChatChunk =
   // as one. A stream that breaks halfway is reported inside the stream, with
   // 200 already on the response, so without this the session cannot tell an
   // overloaded provider from a malformed request. See `isRetryable`.
-  | { kind: 'error'; message: string; status?: number }
+  | { kind: 'error'; message: string; status?: number }

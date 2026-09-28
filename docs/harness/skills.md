@@ -43,4 +43,6 @@ workspace with no skills injects nothing at all.
 
 Skills are read once, when the session is built, so adding one to the folder
 means the next session sees it. That is the cache again: the block sits inside
-the cached prefix, and changing it mid-session throws the prefix away.
+the cached prefix, and changing it mid-session throws the prefix away. `/reload`
+in the composer builds the session again when the user wants the new skill
+now and accepts paying for the prompt once more (`commands.md`).

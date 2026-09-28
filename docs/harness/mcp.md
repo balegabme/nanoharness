@@ -295,6 +295,11 @@ subprocesses and sockets, so a settings save that dropped sessions without
 closing hubs would be a process pile-up nobody sees until the machine slows
 down.
 
+`/reload` in the composer retires the session and builds it again at once, so
+its servers are closed and started afresh from the two files
+(`commands.md`). It waits for the session's background jobs, since a
+subagent's MCP calls go through the hub it would close.
+
 A distinct subagent reaches the same servers as the session that spawned it,
 the session's own connections, so nothing is spawned twice and nothing has to be
 torn down when the subagent finishes.

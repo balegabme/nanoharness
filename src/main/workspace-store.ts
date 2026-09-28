@@ -3,6 +3,7 @@ import { appendFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promis
 import { randomUUID } from 'node:crypto'
 import { basename, join } from 'node:path'
 import { emptyUsage } from '../shared/usage.js'
+import { ownWords } from '../shared/compose.js'
 import { isAgentRole } from '../core/agents.js'
 import { realResolve } from '../core/scope.js'
 import { userDataDir } from '../core/usage-log.js'
@@ -41,7 +42,7 @@ interface StoredSession {
   usage?: TurnUsage
   /** The subagents' share of `usage`, so a re-opened session keeps the split. */
   subagentUsage?: TurnUsage
-  /** The harness's own share of `usage`: approval checks and compaction summaries. */
+  /** The harness's own share of `usage`: approval checks, compaction summaries and TL;DRs. */
   harnessUsage?: TurnUsage
   /** What that share cost, summed at the prices of the models that ran it. */
   harnessCostUsd?: number
@@ -284,7 +285,7 @@ function isUsage(value: unknown): value is TurnUsage {
   return USAGE_KEYS.every(key => typeof raw[key] === 'number')
 }
 
-const PART_KEYS = ['system', 'tools', 'user', 'assistant', 'thinking', 'toolResults', 'summary'] as const
+const PART_KEYS = ['system', 'tools', 'user', 'delivered', 'assistant', 'thinking', 'toolResults', 'summary'] as const
 const REASONS: readonly unknown[] = ['auto', 'manual', 'overflow']
 
 function isCount(value: unknown): value is number {
@@ -564,7 +565,7 @@ async function readSession(id: string): Promise<{ messages: ChatMessage[]; notes
   }
 }
 
-const NOTE_KINDS: readonly string[] = ['error', 'stopped', 'note', 'summary']
+const NOTE_KINDS: readonly string[] = ['error', 'stopped', 'note', 'summary', 'tldr']
 
 /** A note from an older or a corrupt file is dropped and never rendered raw. */
 function isNote(value: unknown): value is SessionNote {
@@ -661,6 +662,7 @@ export function toTranscriptView(messages: ChatMessage[]): TranscriptMessage[] {
     if (message.summary === true) view.summary = true
     if (message.hook === true) view.hook = true
     if (message.delivered === true) view.delivered = true
+    if (message.said !== undefined) view.said = ownWords(message.content, message.said)
     if (message.images !== undefined) view.images = message.images.map(image => ({ src: dataUrl(image), width: image.width, height: image.height }))
     // Signed or not, the thinking is what explains the turn, so a re-opened
     // session shows it. Whether it goes back on the wire is the provider's

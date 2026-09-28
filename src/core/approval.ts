@@ -1,6 +1,7 @@
 // doc: docs/harness/approval.md
 import { emptyUsage } from '../shared/usage.js'
 import { clampEffort, costOf, resolveFacts } from '../shared/facts.js'
+import type { SaidSpan } from '../shared/compose.js'
 import { backoffFor, isRetryable, sleep } from './provider.js'
 import type { Effort, ProviderRecord } from './config.js'
 import type { ChatProvider } from './provider.js'
@@ -84,11 +85,6 @@ export interface ApprovalCandidate {
 export interface ApprovalConfig {
   /** Tried in order. Empty means auto mode cannot be turned on. */
   candidates: ApprovalCandidate[]
-  /**
-   * How hard the judge thinks, clamped to what the model takes. Left unset it
-   * thinks as little as the model allows; see `judgeEffort`.
-   */
-  effort?: Effort
   /** Rules the user added, on top of the built-in set. */
   rules?: ApprovalRules
 }
@@ -156,16 +152,29 @@ export const DEFAULT_RULES: Readonly<ApprovalRules> = Object.freeze({
  * out with it, and so is a Stop hook's reply, which is often a test run's
  * output passed on. A delivered message is left out too: a background job's
  * answer can carry a fetched page word for word.
+ *
+ * A message sent with snippets puts the words the user typed first and the
+ * snippets after them, since a snippet above the draft can run to hundreds of
+ * characters and would otherwise take up the whole cut.
  */
 export function goalsFrom(history: readonly ChatMessage[], limit = 6, chars = 600): string[] {
-  const said: string[] = []
+  const goals: string[] = []
   for (const message of history) {
     if (message.role !== 'user' || message.summary === true || message.hook === true || message.delivered === true) continue
-    const text = message.content.trim()
+    const text = ownFirst(message.content, message.said)
     if (text === '') continue
-    said.push(text.length > chars ? `${text.slice(0, chars)}…` : text)
+    goals.push(text.length > chars ? `${text.slice(0, chars)}…` : text)
   }
-  return said.slice(-limit)
+  return goals.slice(-limit)
+}
+
+function ownFirst(content: string, said: SaidSpan | undefined): string {
+  if (said === undefined) return content.trim()
+  const [start, end] = said
+  return [content.slice(start, end), content.slice(0, start), content.slice(end)]
+    .map(part => part.trim())
+    .filter(part => part !== '')
+    .join('\n\n')
 }
 
 /** The system prompt: the rules, and how to answer. Stable, so it caches. */
@@ -298,7 +307,6 @@ export interface JudgeOptions {
    */
   endpoints(): Promise<JudgeEndpoint[]>
   rules?: ApprovalRules
-  effort?: Effort
   /**
    * The judge's own conversation id, for endpoints that asked for one. It is
    * not the session's: the judge asks its own question off its own prompt, and
@@ -337,8 +345,13 @@ export class Judge {
     return this.pinned?.model
   }
 
-  /** `refused` is what this judge denied since the goals last moved, oldest first. */
-  async judge(action: ApprovalAction, goals: readonly string[], refused: readonly ApprovalAction[] = [], signal?: AbortSignal): Promise<ApprovalOutcome> {
+  /**
+   * `refused` is what this judge denied since the goals last moved, oldest
+   * first. It takes no stop signal: the gate hands one answer to every call
+   * that asks the same question, so one caller's stop is not the others', and
+   * the rung's own deadline bounds the wait.
+   */
+  async judge(action: ApprovalAction, goals: readonly string[], refused: readonly ApprovalAction[] = []): Promise<ApprovalOutcome> {
     const endpoints = await this.options.endpoints()
     if (endpoints.length === 0) {
       throw new ApprovalUnavailableError('no approval model is configured; auto mode has nothing to ask')
@@ -360,29 +373,25 @@ export class Judge {
       // dropped socket does not cost a rung.
       for (let attempt = 1; attempt <= JUDGE_ATTEMPTS; attempt += 1) {
         try {
-          const outcome = await this.ask(endpoint, system, request, signal)
+          const outcome = await this.ask(endpoint, system, request)
           this.pinned = { providerId: endpoint.providerId, model: endpoint.model }
           return outcome
         } catch (err) {
-          if (err instanceof Error && err.name === 'AbortError') throw err
           this.pinned = undefined
           if (attempt === JUDGE_ATTEMPTS || !isRetryable(err)) {
             failures.push(`${endpoint.model}: ${err instanceof Error ? err.message : String(err)}`)
             break
           }
-          // Stop during the wait needs no check of its own: `sleep` returns on
-          // the abort, and the next `ask` is handed the same aborted signal and
-          // throws out of the line above.
-          await sleep(backoffFor(err, attempt, JUDGE_BACKOFF_MS), signal)
+          await sleep(backoffFor(err, attempt, JUDGE_BACKOFF_MS))
         }
       }
     }
     throw new ApprovalUnavailableError(`no approval model could answer (${failures.join('; ')})`)
   }
 
-  private async ask(endpoint: JudgeEndpoint, system: string, request: string, signal?: AbortSignal): Promise<ApprovalOutcome> {
+  private async ask(endpoint: JudgeEndpoint, system: string, request: string): Promise<ApprovalOutcome> {
     const facts = resolveFacts(endpoint.record, endpoint.model)
-    const effort = judgeEffort(facts.efforts, this.options.effort)
+    const effort = judgeEffort(facts.efforts)
     const timeout = this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS
 
     const messages: ChatMessage[] = [
@@ -393,8 +402,6 @@ export class Judge {
     const started = Date.now()
     const deadline = new AbortController()
     const timer = setTimeout(() => deadline.abort(), timeout)
-    const stop = () => deadline.abort()
-    signal?.addEventListener('abort', stop)
 
     let usage = emptyUsage()
     let text = ''
@@ -416,16 +423,13 @@ export class Judge {
         else if (chunk.kind === 'error') throw new ApprovalUnavailableError(chunk.message)
       }
     } catch (err) {
-      // The caller's stop is the person pressing Stop and is passed through; our
-      // own deadline is a failure of this rung and reads as one.
-      if (signal?.aborted === true) throw err
+      // The only abort is the deadline, which is a failure of this rung.
       if (err instanceof Error && err.name === 'AbortError') {
         throw new ApprovalUnavailableError(`no answer within ${Math.round(timeout / 1000)}s`)
       }
       throw err
     } finally {
       clearTimeout(timer)
-      signal?.removeEventListener('abort', stop)
     }
 
     const { verdict, rule, reason } = parseVerdict(text)
@@ -435,17 +439,17 @@ export class Judge {
 
 /**
  * The effort the judge asks for. Its answer is one line of JSON weighed against
- * rules it is handed, and the turn is stopped while it reasons, so by default
- * it thinks as little as the model allows: the lowest level the endpoint
- * lists, or `none` for a model whose levels are unknown. On the
- * OpenAI-compatible wires that last case sends no field, and the model
- * reasons at its default until its levels are filled in by hand in settings.
- * A level chosen in settings is used, clamped to the model's list when there
- * is one.
+ * rules it is handed, and the turn is stopped while it reasons, so thinking is
+ * off wherever the model can turn it off and `low` where it cannot. A model
+ * whose levels are unknown is asked for `none`, which is no thinking budget on
+ * the Anthropic-compatible wire and no field on the OpenAI-compatible ones,
+ * where naming a level to a model that does not reason is a 400. That model
+ * reasons at its own default until its levels are filled in by hand in
+ * settings.
  */
-export function judgeEffort(offered: readonly Effort[] | undefined, chosen: Effort | undefined): Effort {
-  const wanted = chosen ?? 'none'
-  return offered === undefined || offered.length === 0 ? wanted : clampEffort(offered, wanted)
+export function judgeEffort(offered: readonly Effort[] | undefined): Effort {
+  if (offered === undefined || offered.length === 0 || offered.includes('none')) return 'none'
+  return clampEffort(offered, 'low')
 }
 
 /** Whether this rung is the one that answered last. */

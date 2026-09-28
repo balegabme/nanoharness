@@ -1,5 +1,6 @@
 // doc: docs/harness/context.md
-import { messageTokens, textTokens } from './context.js'
+import { textTokens } from '../shared/usage.js'
+import { messageTokens } from './context.js'
 import type { ChatMessage } from './types.js'
 
 /**

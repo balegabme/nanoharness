@@ -1,8 +1,10 @@
 // doc: docs/harness/ui.md
+import { compose, ownWords } from '../shared/compose.js'
 import { statText } from '../shared/diff.js'
 import { clampEffort, EFFORTS, factGaps, resolveFacts } from '../shared/facts.js'
 import { plural, toolsText } from '../shared/format.js'
 import { ChatView } from './chat.js'
+import { initCommands } from './commands.js'
 import { attachments, attachNote, autoGrow, clearAttachments, initComposer, seat, showDock } from './composer.js'
 import { ask } from './confirm.js'
 import { ContextMeter } from './context-meter.js'
@@ -27,6 +29,8 @@ import { enqueue, initPermission } from './permission.js'
 import { PlanView } from './plan.js'
 import { closePopover, Popover } from './popover.js'
 import { addQuestion, dropQuestions, initQuestions, viewQuestions } from './question.js'
+import { initRecall } from './recall.js'
+import { addSnippet, clearSnippets, snippetTexts } from './snippets.js'
 import { applyConfig, initSettings, latestConfig, openSettings, refreshConfig } from './settings.js'
 import { EFFORT_LABEL, WARN } from './facts.js'
 import { closePreview, holding, initTurns, keepHeld, loadTurns, noteCheckpoint, openTurnIndex, rewinding } from './turns.js'
@@ -41,7 +45,7 @@ import {
   startSession,
   workspaceOf,
 } from './sidebar.js'
-import type { AgentSummary, ConfigStatus, NanoBridge, PermissionModeView } from '../ipc/contract.js'
+import type { AgentSummary, ConfigStatus, NanoBridge, PermissionModeView, SendDraft } from '../ipc/contract.js'
 import type { ToolDiff } from '../shared/diff.js'
 import type { JobView } from '../core/jobs.js'
 import type { AppEvent, ContextLedger, McpServerStatus, ProjectFileKind, ToolStats } from '../core/types.js'
@@ -629,7 +633,7 @@ function renderShell(): void {
       ? 'Add a provider to get started'
       : workspace === undefined
         ? 'Add a folder to work in'
-        : 'Message the agent. Enter sends, Shift+Enter makes a newline.'
+        : 'Message the agent. Enter sends, Shift+Enter makes a newline, / opens commands.'
     sendButton.disabled = blocked
     titleLabel.textContent = 'No session'
     scopeChip.hidden = true
@@ -639,7 +643,7 @@ function renderShell(): void {
 
   composer.classList.remove('trigger')
   input.readOnly = false
-  input.placeholder = 'Message the agent. Enter sends, Shift+Enter makes a newline, Esc twice opens the turns.'
+  input.placeholder = 'Message the agent. Enter sends, / opens commands, Esc twice opens the turns.'
   sendButton.disabled = false
 
   const session = activeSessionId === null ? undefined : sessionById(activeSessionId)
@@ -806,6 +810,43 @@ async function compactNow(): Promise<void> {
   }
 }
 
+/**
+ * `/tldr`: the last answer, shortened. It holds the session the way a
+ * compaction does, and the shortened answer arrives as an event. A held rewind
+ * is kept first, so the transcript is drawn again when there was one.
+ */
+async function tldrNow(): Promise<void> {
+  const sessionId = activeSessionId
+  if (sessionId === null || busy || rewinding()) return
+  const kept = holding()
+  closePreview()
+  setBusy(true)
+  try {
+    await nh.tldr(sessionId)
+    setStatus(await nh.workspaces())
+    if (kept && activeSessionId === sessionId) await openSession(sessionId)
+  } catch (err) {
+    chat.errorBlock(message(err))
+  } finally {
+    setBusy(false)
+  }
+}
+
+/** `/reload`: build the session again, so it reads its skills, hooks and MCP servers afresh. */
+async function reloadNow(): Promise<void> {
+  const sessionId = activeSessionId
+  if (sessionId === null || busy || rewinding()) return
+  setBusy(true)
+  try {
+    await nh.reload(sessionId)
+    void refreshMcp(sessionId)
+  } catch (err) {
+    chat.errorBlock(message(err))
+  } finally {
+    setBusy(false)
+  }
+}
+
 /** One setting for every session. The live ones pick it up at once. */
 async function setAutoCompact(on: boolean): Promise<void> {
   try {
@@ -831,8 +872,9 @@ async function setContextLimit(limit: number | null): Promise<void> {
 async function send(): Promise<void> {
   // A picture pasted just before Send may still be being read.
   const pictures = await attachments()
-  const text = input.value.trim()
-  if ((text === '' && pictures.length === 0) || busy || rewinding()) return
+  const draft = input.value.trim()
+  const around = snippetTexts()
+  if ((compose(draft, around.before, around.after).text === '' && pictures.length === 0) || busy || rewinding()) return
   const status = latestConfig()
   if (status?.configured !== true) {
     openSettings('providers')
@@ -857,14 +899,24 @@ async function send(): Promise<void> {
   // A key pasted into the composer is taken out of the message here, before
   // the window draws it, which is what keeps it off the screen. The same swap
   // happens again in the main process, so nothing depends on this call for
-  // the secret to be caught.
-  const captured = await nh.captureSecrets(text).catch(() => ({ text, captured: [] }))
-  const safe = captured.text
+  // the secret to be caught. Each snippet is a part of its own, as it is sent.
+  const captured: string[] = []
+  const capture = async (text: string): Promise<string> => {
+    const result = await nh.captureSecrets(text).catch(() => ({ text, captured: [] }))
+    captured.push(...result.captured)
+    return result.text
+  }
+  const sent: SendDraft = {
+    text: await capture(draft),
+    before: await Promise.all(around.before.map(capture)),
+    after: await Promise.all(around.after.map(capture)),
+  }
 
   const kept = keepHeld()
-  const asked = chat.userBlock(safe, pictures.map(picture => picture.view))
-  if (captured.captured.length > 0) {
-    const names = captured.captured.map(name => `{{secret:${name}}}`).join(', ')
+  const shown = compose(sent.text, sent.before, sent.after)
+  const asked = chat.userBlock(shown.text, pictures.map(picture => picture.view), shown.said === undefined ? undefined : ownWords(shown.text, shown.said))
+  if (captured.length > 0) {
+    const names = captured.map(name => `{{secret:${name}}}`).join(', ')
     chat.noteBlock(`Kept out of the transcript: ${names}. Tools get the real value; the model never sees it.`)
   }
   // The note keeping the rewind comes before the turn starts, and belongs
@@ -872,13 +924,14 @@ async function send(): Promise<void> {
   if (kept) chat.aheadOf(asked)
   input.value = ''
   clearAttachments()
+  clearSnippets()
   autoGrow()
   chat.startTurn()
   plan.turnStarted()
   setBusy(true)
 
   try {
-    const result = await nh.send(sessionId, safe, pictures.map(picture => picture.upload))
+    const result = await nh.send(sessionId, sent, pictures.map(picture => picture.upload))
     // The first message names the session, so the sidebar has to be re-read.
     setStatus(await nh.workspaces())
     select(result.session.id)
@@ -979,6 +1032,19 @@ settingsButton.addEventListener('click', () => openSettings('providers'))
 heroSettings.addEventListener('click', () => openSettings('providers'))
 
 initComposer(() => latestConfig()?.downscaleImages ?? true)
+// A command needs a session between turns, and one the user is talking to.
+const idle = (): boolean => activeSessionId !== null && !busy && viewing === null && !rewinding()
+initCommands({
+  commands: [
+    { name: 'tldr', description: 'Shorten the last answer', available: idle, run: () => void tldrNow() },
+    { name: 'compact', description: 'Summarise the older part of the conversation now', available: idle, run: () => void compactNow() },
+    { name: 'reload', description: 'Read skills, hooks and MCP servers again', available: idle, run: () => void reloadNow() },
+  ],
+  snippets: () => nh.snippets(activeSessionId),
+  addSnippet,
+})
+// A subagent's conversation on screen was not written by the user.
+initRecall(input, () => (viewing === null ? chat.sentTexts() : []))
 initTurns({
   bridge: nh,
   stream,

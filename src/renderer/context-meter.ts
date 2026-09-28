@@ -27,6 +27,7 @@ const PARTS: readonly { key: keyof ContextParts; label: string }[] = [
   { key: 'tools', label: 'Tool definitions' },
   { key: 'summary', label: 'Summary' },
   { key: 'user', label: 'Your messages' },
+  { key: 'delivered', label: 'Job answers and hook replies' },
   { key: 'assistant', label: 'Answers and tool calls' },
   { key: 'thinking', label: 'Thinking sent back' },
   { key: 'toolResults', label: 'Tool results' },

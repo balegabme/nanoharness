@@ -33,7 +33,6 @@ const approvalModel = must<HTMLSelectElement>('approval-model')
 const approvalAdd = must<HTMLButtonElement>('approval-add')
 const approvalList = must<HTMLElement>('approval-list')
 const approvalEmpty = must<HTMLElement>('approval-empty')
-const approvalEffort = must<HTMLSelectElement>('approval-effort')
 const approvalNote = must<HTMLElement>('approval-note')
 const generalPane = must<HTMLElement>('general-pane')
 const switchHooks = must<HTMLInputElement>('switch-hooks')
@@ -169,17 +168,6 @@ function drawApproval(): void {
   approvalProvider.disabled = usable.length === 0
   drawApprovalModels()
 
-  // No stored level and `none` are the same to the judge: both move up to the
-  // lowest level the model lists.
-  approvalEffort.replaceChildren()
-  for (const effort of EFFORTS) {
-    const option = el('option')
-    option.value = effort
-    option.textContent = effort === 'none' ? 'none, or the least it takes' : effort
-    approvalEffort.append(option)
-  }
-  approvalEffort.value = status.approval?.effort ?? 'none'
-
   approvalList.replaceChildren()
   approvalEmpty.hidden = ladder.length > 0
   ladder.forEach((candidate, index) => {
@@ -238,8 +226,7 @@ function drawApprovalModels(): void {
 
 async function writeApproval(): Promise<void> {
   if (bridge === null) return
-  const effort = approvalEffort.value
-  const next: ApprovalConfig = { candidates: ladder, ...(isEffortValue(effort) ? { effort } : {}) }
+  const next: ApprovalConfig = { candidates: ladder }
   const rules = lastStatus?.approval?.rules
   if (rules !== undefined) next.rules = rules
   try {
@@ -250,10 +237,6 @@ async function writeApproval(): Promise<void> {
     // that will actually be asked.
     approvalNote.textContent = `${WARN} ${message(err)}`
   }
-}
-
-function isEffortValue(value: string): value is Effort {
-  return (EFFORTS as readonly string[]).includes(value)
 }
 
 /**
@@ -930,7 +913,6 @@ export function initSettings(handlers: SettingsHandlers): void {
   switchDownscale.addEventListener('change', () => void writeSwitch('downscaleImages', switchDownscale))
   navAbout.addEventListener('click', () => showPane('about'))
   approvalProvider.addEventListener('change', () => drawApprovalModels())
-  approvalEffort.addEventListener('change', () => void writeApproval())
   approvalAdd.addEventListener('click', () => {
     const providerId = approvalProvider.value
     const model = approvalModel.value

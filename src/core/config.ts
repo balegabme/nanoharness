@@ -470,7 +470,6 @@ export function parseApproval(value: unknown): ApprovalConfig | undefined {
     }
   }
   const config: ApprovalConfig = { candidates }
-  if (isEffort(record.effort)) config.effort = record.effort
   const rules = parseRules(record.rules)
   if (rules !== undefined) config.rules = rules
   return config

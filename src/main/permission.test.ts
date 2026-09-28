@@ -343,7 +343,7 @@ describe('auto mode', () => {
     await rm(root, { recursive: true, force: true })
   })
 
-  it('judges a repeated command once per message from the user, and again after the next one', async () => {
+  it('judges a repeated command once while the user’s words stay the same, and again once they change', async () => {
     const root = await mkdtemp(join(tmpdir(), 'nh-auto-'))
     const broker: PermissionBroker = new PermissionBroker(request => {
       broker.resolve(request.id, 'deny')
@@ -406,7 +406,7 @@ describe('auto mode', () => {
     await rm(root, { recursive: true, force: true })
   })
 
-  it('shows the judge what it refused since the user last wrote, and forgets it when they write again', async () => {
+  it('shows the judge what it refused under the user’s current words, and forgets it when they change', async () => {
     const root = await mkdtemp(join(tmpdir(), 'nh-auto-'))
     const broker: PermissionBroker = new PermissionBroker(request => {
       broker.resolve(request.id, 'deny')
