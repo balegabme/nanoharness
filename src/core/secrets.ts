@@ -141,6 +141,8 @@ export class SecretVault {
   private readonly byName = new Map<string, StoredSecret>()
   /** Value to name, so the same key pasted twice is one entry, not two. */
   private readonly byValue = new Map<string, string>()
+  /** Names of stored keys this process could not load. A new key never takes one. */
+  private readonly reserved = new Set<string>()
 
   constructor(
     /** Called whenever the set changes, so the store can persist it. */
@@ -164,12 +166,17 @@ export class SecretVault {
     }
   }
 
+  /** Hold names back from `put`, for keys that exist in storage but not in this vault. */
+  reserve(names: readonly string[]): void {
+    for (const name of names) this.reserved.add(name)
+  }
+
   /** Store a value and return the name it is now known by. Idempotent. */
   put(value: string, hint = 'secret'): string {
     const known = this.byValue.get(value)
     if (known !== undefined) return known
     let name = hint
-    for (let n = 2; this.byName.has(name); n += 1) name = `${hint}_${n}`
+    for (let n = 2; this.byName.has(name) || this.reserved.has(name); n += 1) name = `${hint}_${n}`
     this.byName.set(name, { name, value, hint, at: Date.now() })
     this.byValue.set(value, name)
     this.onChange(this.list())

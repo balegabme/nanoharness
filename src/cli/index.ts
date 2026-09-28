@@ -3,6 +3,7 @@
 import { createRequire } from 'node:module'
 import { docCheck } from './doc-check.js'
 import { runMcp } from './mcp.js'
+import { runRun } from './run.js'
 import { formatReport } from './usage.js'
 import { readUsage, usageLogPath } from '../core/usage-log.js'
 import { buildReport } from '../core/usage-report.js'
@@ -13,6 +14,7 @@ const pkg = require('../../package.json') as { version: string }
 
 const HELP = `nh ${pkg.version}
 
+  nh run [message..]   run one task with nobody at the keyboard (nh run --help)
   nh doc-check [dir]   verify the doc map: every source file linked, every doc backed
   nh usage [--days N] [--json]
                        what has been spent: per day, folder, session, model and agent
@@ -26,6 +28,8 @@ async function main(argv: string[]): Promise<number> {
   switch (command) {
     case 'doc-check':
       return runDocCheck(rest[0] ?? process.cwd())
+    case 'run':
+      return runRun(rest)
     case 'usage':
       return runUsage(rest)
     case 'mcp':
@@ -52,6 +56,7 @@ async function main(argv: string[]): Promise<number> {
 
 async function runHelp(topic: string | undefined): Promise<number> {
   if (topic === 'mcp') return runMcp(['--help'])
+  if (topic === 'run') return runRun(['--help'])
   process.stdout.write(HELP)
   return 0
 }

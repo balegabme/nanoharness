@@ -99,7 +99,7 @@ export type FactGap = 'efforts' | 'cost'
 
 /**
  * One configured endpoint. The key is absent by design: it lives in the
- * OS-encrypted store, keyed by `id`, so this record stays safe to read, copy or
+ * OS credential store, keyed by `id`, so this record stays safe to read, copy or
  * paste into an issue (plan §16).
  */
 export interface ProviderRecord {
@@ -200,7 +200,7 @@ export class ConfigError extends Error {
 
 export interface ConfigSources {
   stored?: StoredConfig | undefined
-  /** Keys by provider id, from the OS-encrypted store. Never read in plaintext. */
+  /** Keys by provider id, from the OS credential store. Never read from a file. */
   secrets?: Readonly<Record<string, string>> | undefined
 }
 
@@ -247,6 +247,11 @@ export function findProvider(stored: StoredConfig, id: string | undefined): Prov
   return stored.providers.find(p => p.id === id)
 }
 
+/** The provider a turn runs on: the selected one, or the first when the selection names none. */
+export function selectedProvider(stored: StoredConfig): ProviderRecord | undefined {
+  return findProvider(stored, stored.active?.providerId) ?? stored.providers[0]
+}
+
 /**
  * Read the saved settings and demand a usable result. The settings screen is
  * the only way in: a provider has to be configured before anything can run, so
@@ -255,7 +260,7 @@ export function findProvider(stored: StoredConfig, id: string | undefined): Prov
 export function resolveConfig(sources: ConfigSources = {}): ProviderConfig {
   const stored = sources.stored ?? { providers: [] }
   const secrets = sources.secrets ?? {}
-  const provider = findProvider(stored, stored.active?.providerId) ?? stored.providers[0]
+  const provider = selectedProvider(stored)
 
   const missing: ConfigField[] = []
   const reasons: string[] = []

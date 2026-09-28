@@ -669,7 +669,7 @@ function loadForm(provider: ProviderView | null): void {
   setupKind.value = provider?.kind ?? 'openai'
   setupBase.value = provider?.baseURL ?? ''
   setupKey.value = ''
-  setupKey.placeholder = provider?.hasKey === true ? 'stored - leave blank to keep it' : 'stored encrypted, never written in plain text'
+  setupKey.placeholder = provider?.hasKey === true ? 'stored - leave blank to keep it' : 'kept in the OS credential store, never in a file'
 
   // A fetch of this same provider is still on screen, so the form keeps what it
   // is showing: the whole offered list, the rows opened for editing, and the
@@ -699,7 +699,7 @@ export function applyConfig(status: ConfigStatus): void {
   setupTitle.textContent = status.configured ? 'Providers' : 'Set up a provider'
   setupHint.textContent = status.configured
     ? 'Pick a provider to edit, or add another. Test the endpoint, fetch what it offers, and tick the models this harness may run. Leave the key blank to keep the stored one.'
-    : 'NanoHarness ships with no endpoint and no model built in. Pick one below and paste a key, or set up any OpenAI-compatible or Anthropic API yourself. The key is encrypted by your OS and stored outside this repo; the rest lands in a plain settings file.'
+    : 'NanoHarness ships with no endpoint and no model built in. Pick one below and paste a key, or set up any OpenAI-compatible or Anthropic API yourself. The key goes to your OS credential store; the rest lands in a plain settings file.'
 
   // Keep editing whatever row the user was on; otherwise follow the active
   // provider, and fall back to a blank form when nothing is saved yet.

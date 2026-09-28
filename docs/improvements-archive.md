@@ -89,3 +89,7 @@ fixed. The ref in each entry names the files the fix landed in.
 ## 2026-09-23
 
 - [x] The `bash` tool's timeout killed bash and nothing under it. On Windows a process the script started kept the pipes open, and the call did not return until that process ended on its own. (fixed: the timeout and a stop both go through `killTree` in src/env/shell.ts, which uses a process group on POSIX and `taskkill /T` on Windows, and a pipe still held a second after bash exits returns the call with a note; src/tools/bash.ts, src/tools/bash.test.ts.)
+
+## 2026-09-28
+
+- [x] The key was encrypted with Electron `safeStorage`, not the OS credential store plan §11 asks for (Windows Credential Manager / Keychain / libsecret). The blob could only be read from inside the app, so the `nh` command had no way to reach the keys the user had already saved. (fixed: src/core/keyring.ts keeps each provider key and each captured secret as its own entry in the OS store; src/main/config-store.ts and src/main/secret-store.ts read and write through it and carry no Electron import; src/main/config-store.test.ts saves, rekeys and deletes a key against a stand-in store.)

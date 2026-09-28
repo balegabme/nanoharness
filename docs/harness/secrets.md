@@ -7,7 +7,7 @@ what the model reads. The value itself never leaves the main process.
 
 Files:
 - src/core/secrets.ts: detection, the vault, placeholder substitution, and the prompt block
-- src/main/secret-store.ts: the app-wide vault, encrypted at rest with `safeStorage`
+- src/main/secret-store.ts: the app-wide vault, kept at rest in the OS credential store
 
 ## The rule
 
@@ -136,13 +136,26 @@ with a blank one. The confirmation says so before the key goes.
 
 ## At rest
 
-`secret-store.ts` keeps one vault for the whole app and writes it to
-`secrets.bin` in the user data directory, encrypted with Electron's
-`safeStorage`: DPAPI on Windows, the Keychain on macOS, libsecret on Linux.
-Writes are serialised, so two captures in the same turn cannot interleave into
-a half-written file.
+`secret-store.ts` keeps one vault for the whole app. Each value goes to the
+OS credential store (`src/core/keyring.ts`, the same store the provider API
+keys use) under the account `secret:<name>`. The names, vendor hints and
+capture times go to `secrets.json` in the user data directory, and a launch
+reads that index to know which entries to ask the store for. Writes are
+serialised, so two captures in the same turn cannot interleave.
 
-When the platform has no encryption available, the vault still works and still
-holds the keys for the session. It just never writes them down. A key that
-would have to be stored in plain text is a key the harness would rather ask for
-again.
+A write touches only a name the store does not already hold under the same
+value, so a store that refuses one write never costs a key that was already
+safe. When the platform has no store, or the store refuses a value (Windows
+will not take more than 2560 bytes), the vault still holds the key for the
+session and leaves it out of the index. A key that would have to be stored in
+plain text is a key the harness would rather ask for again.
+
+The index is written before a forgotten key is deleted from the store. A
+delete that fails then leaves an entry nothing lists, where the other order
+would bring the forgotten key back at the next launch.
+
+A name in `secrets.json` whose value the store no longer has is dropped at
+the next write, and the user pastes the key again. A name the store could not
+be asked about at all, because it was locked at launch, is kept: it stays in
+the index and its name is reserved, so a key pasted in the meantime cannot
+take it, and it comes back on the next launch that can read it.

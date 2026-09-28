@@ -15,7 +15,8 @@ Files:
 - src/providers/factory.ts: the one place a provider kind becomes a client
 - src/core/provider.ts: interface
 - src/core/config.ts: the provider registry, its records, effort, resolution and validation
-- src/main/config-store.ts: settings on disk, keys encrypted by the OS
+- src/main/config-store.ts: settings on disk, keys in the OS credential store
+- src/core/keyring.ts: the OS credential store, with no Electron on the path
 - src/providers/headers.ts: the user agent, and the conversation id where an endpoint asked for one
 - src/providers/profiles.ts: the endpoints the harness has met before, and the one file allowed to name them
 - src/providers/catalogue.ts: what the public model catalogue says about the models at an address
@@ -352,7 +353,7 @@ the app is usable. `resolveConfig` (`src/core/config.ts`) reads what was saved:
 | file | holds |
 |---|---|
 | `<user-data>/config.json` | the provider records and the active selection |
-| `<user-data>/credentials.bin` | every API key, encrypted by the OS, indexed by provider id |
+| OS credential store, service `nanoharness` | each API key, under the account `provider:<id>` |
 
 A **provider record** is `{id, name, kind, baseURL, models}`, as many as the
 user wants, mixing kinds freely: a local server, a gateway and a vendor account
@@ -485,10 +486,20 @@ working without anything being retyped.
 
 The settings file is **secret-free by schema** (plan §16): `StoredConfig` has
 no `apiKey` field at all, so it can be read, copied or pasted into an issue
-without leaking anything. The key lives in its own file, encrypted through
-Electron `safeStorage` (DPAPI on Windows, Keychain on macOS, libsecret on
-Linux). Where the OS has no such store, the app refuses to save a key and never
-falls back to plaintext. Neither file is ever written to the repo.
+without leaking anything. The key goes to the OS credential store through
+`src/core/keyring.ts`: Credential Manager on Windows, the login keychain on
+macOS, the Secret Service (GNOME Keyring, KWallet) on Linux. It is a store and
+not a file only the app can decrypt, so a process without a window can read
+the key the window saved. The keychain on macOS grants an item to the program
+that wrote it, so any other program, or a rebuilt copy of the app, is asked
+for permission the first time it reads one. Only the keys a call needs are
+read, which keeps those prompts to one per provider in use.
+
+Each key is a separate entry, since Windows caps one credential at 2560 bytes.
+On Linux the store is pinned to the Secret Service: the kernel keyring the
+library would otherwise fall back to forgets every key at logout. Where no
+store answers, the app refuses to save a key and never falls back to
+plaintext. Nothing here is ever written to the repo.
 
 `facts` is what the last fetch reported for each model and `overrides` is what
 the user typed over it; both are keyed by model id and both are absent until

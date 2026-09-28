@@ -344,7 +344,7 @@ export interface ConfigStatus {
   providers: ProviderView[]
   /** Which provider, model and effort a turn will use. */
   active?: ActiveSelection
-  /** Whether the OS can encrypt a stored key at all. */
+  /** Whether the OS credential store answers, so a key can be saved at all. */
   keyStorage: 'os' | 'unavailable'
   /**
    * Endpoints the harness already knows the address and habits of, for the

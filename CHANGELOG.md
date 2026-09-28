@@ -312,6 +312,11 @@ development history is in the git log; none of the three is repeated here.
   agent and phase, with the throughput each of them ran at. It is the same
   report the window draws, built once in core, so the terminal and the window
   cannot disagree about a figure.
+- `nh run` runs one task with nobody at the keyboard: the same session the
+  window builds, stored beside the window's, with `--approve` answering what a
+  person would be asked, `--format json` for a script to read and exit codes
+  for done, failed and timed out. An endpoint can come from the environment
+  alone, for a container with no settings.
 - Repository scaffold: tooling, CI, OSS files.
 
 **Desktop app**
@@ -320,8 +325,8 @@ development history is in the git log; none of the three is repeated here.
   sidebar collapses to a rail.
 - Settings as a sheet with its own nav: providers, their keys and their model
   allowlists, plus a connection test that doubles as the model picker.
-- First run asks for a provider. The key is encrypted by the OS and the settings
-  file has no field to put one in.
+- First run asks for a provider. The key goes to the OS credential store, and the
+  settings file has no field to put one in.
 - Model and effort pickers in the header.
 - Tokens per second in the topbar. The rate counts the time the model spent
   generating, so a tool call in the middle of a turn does not drag it down. The

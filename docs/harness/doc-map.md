@@ -34,7 +34,7 @@ pnpm doc-check
 - `overview.md`: architecture, session loop, usage accounting, IPC
 - `providers.md`: provider layer, wire format, auth, provider settings
 - `tools.md`: tool specs, the arg-validation boundary, caps
-- `cli.md`: the `nh` command and its `doc-check`, `usage` and `mcp` subcommands
+- `cli.md`: the `nh` command and its `run`, `doc-check`, `usage` and `mcp` subcommands
 - `cost.md`: the usage report, and the spend view drawn from it
 - `ui.md`: the desktop window, the context bridge, the renderer
 - `sessions.md`: folders, sessions, transcripts, and the scope rule

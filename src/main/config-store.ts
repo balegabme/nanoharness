@@ -1,11 +1,11 @@
 // doc: docs/harness/providers.md
-import { safeStorage } from 'electron'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
-import { clampEffort, resolveFacts } from '../shared/facts.js'
-import { ConfigError, hostOf, isUsableBaseURL, newProviderId, normalizeBaseURL, parseApproval, parseFacts, parseStored, resolveConfig, parseHeaderName, SWITCH_NAMES } from '../core/config.js'
+import { join } from 'node:path'
+import { clampEffort, isProviderKind, resolveFacts } from '../shared/facts.js'
+import { ConfigError, selectedProvider, hostOf, isUsableBaseURL, newProviderId, normalizeBaseURL, parseApproval, parseFacts, parseStored, resolveConfig, parseHeaderName, SWITCH_NAMES } from '../core/config.js'
 import { approvalProblem } from '../core/approval.js'
 import { causeCode } from '../core/provider.js'
+import { deleteKey, keyStoreAvailable, readKey, writeKey } from '../core/keyring.js'
 import { createProvider, listModelsFor } from '../providers/factory.js'
 import { KNOWN_PROVIDERS } from '../providers/profiles.js'
 import { userDataDir } from '../core/usage-log.js'
@@ -16,16 +16,11 @@ import type { Effort, ModelFacts, ProviderConfig, ProviderRecord, StoredConfig, 
 /**
  * Settings live in the OS user-data dir, never the repo, and split in two:
  * `config.json` holds the non-secret half and stays readable and diffable,
- * while the API keys go to `credentials.bin` encrypted by the OS (DPAPI on
- * Windows, Keychain on macOS, libsecret on Linux) through Electron's
- * safeStorage. A plaintext key is never written anywhere.
+ * while each API key goes to the OS credential store under its provider's id
+ * (`src/core/keyring.ts`). A plaintext key is never written anywhere.
  */
 export function configPath(): string {
   return join(userDataDir(), 'config.json')
-}
-
-export function credentialsPath(): string {
-  return join(userDataDir(), 'credentials.bin')
 }
 
 export async function readStored(): Promise<StoredConfig> {
@@ -43,43 +38,35 @@ async function writeStored(stored: StoredConfig): Promise<void> {
   await writeFile(configPath(), `${JSON.stringify(stored, null, 2)}\n`, 'utf8')
 }
 
-/**
- * One encrypted blob holding every key, indexed by provider id. A file written
- * by the single-provider version decrypts to a bare key string in place of a
- * map, so that shape is read back under the id its record was migrated to.
- */
-export async function readSecrets(): Promise<Record<string, string>> {
-  if (!safeStorage.isEncryptionAvailable()) return {}
-  const blob = await readFile(credentialsPath()).catch(() => null)
-  if (blob === null) return {}
-  let plain: string
-  try {
-    plain = safeStorage.decryptString(blob)
-  } catch {
-    // A key encrypted for another OS user or machine cannot be read back.
-    // Treat it as absent so settings can replace it.
-    return {}
-  }
-  try {
-    const parsed: unknown = JSON.parse(plain)
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {}
-    const out: Record<string, string> = {}
-    for (const [id, key] of Object.entries(parsed as Record<string, unknown>)) {
-      if (typeof key === 'string' && key !== '') out[id] = key
-    }
-    return out
-  } catch {
-    return { legacy: plain }
-  }
+function keyAccount(providerId: string): string {
+  return `provider:${providerId}`
 }
 
-async function writeSecrets(secrets: Record<string, string>): Promise<void> {
-  if (!safeStorage.isEncryptionAvailable()) {
-    throw new Error('this OS has no secret store, so an API key cannot be saved safely; install a keyring (libsecret) and try again')
+/**
+ * The stored key of each provider asked for, indexed by provider id. Only the
+ * ones a caller needs are read, since on macOS each read by a new program can
+ * raise a keychain prompt. A provider with no key, or one the store cannot
+ * reach right now, is left out; `configStatus` says which of the two it is.
+ */
+async function readKeys(providerIds: readonly string[]): Promise<Record<string, string>> {
+  const keys: Record<string, string> = {}
+  await Promise.all(
+    providerIds.map(async id => {
+      const key = await readKey(keyAccount(id)).catch(() => undefined)
+      if (key !== undefined && key !== '') keys[id] = key
+    }),
+  )
+  return keys
+}
+
+async function saveKey(providerId: string, key: string): Promise<void> {
+  try {
+    await writeKey(keyAccount(providerId), key)
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err)
+    const hint = process.platform === 'linux' ? '; install a Secret Service keyring such as GNOME Keyring and try again' : ''
+    throw new Error(`the OS credential store would not take the API key (${reason})${hint}`)
   }
-  const path = credentialsPath()
-  await mkdir(dirname(path), { recursive: true })
-  await writeFile(path, safeStorage.encryptString(JSON.stringify(secrets)), { mode: 0o600 })
 }
 
 /**
@@ -137,11 +124,6 @@ export async function saveProvider(request: ProviderSaveRequest): Promise<boolea
 
   const key = request.apiKey?.trim()
   const rekeyed = key !== undefined && key !== ''
-  if (rekeyed) {
-    const secrets = await readSecrets()
-    secrets[id] = key
-    await writeSecrets(secrets)
-  }
 
   const active = stored.active
   const wanted = request.activeModel?.trim()
@@ -185,6 +167,9 @@ export async function saveProvider(request: ProviderSaveRequest): Promise<boolea
         previous?.kind !== request.kind ||
         !sameModels(previous?.models ?? [], models)))
 
+  // The key is written last before the settings, once nothing above can throw,
+  // so a refused save leaves no entry in the store that no record points at.
+  if (rekeyed) await saveKey(id, key)
   await writeStored(stored)
   return rebuild
 }
@@ -242,6 +227,11 @@ function applyOverrides(
 }
 
 export async function deleteProvider(id: string): Promise<void> {
+  // The key goes first. A store that refuses the delete leaves the provider in
+  // place for another try, where the other order would strand a key nothing
+  // points at. A store that does not answer at all is skipped, or a machine
+  // without one could never delete a provider.
+  if (await keyStoreAvailable()) await deleteKey(keyAccount(id))
   const stored = await readStored()
   stored.providers = stored.providers.filter(p => p.id !== id)
   if (stored.active?.providerId === id) {
@@ -251,12 +241,6 @@ export async function deleteProvider(id: string): Promise<void> {
     else delete stored.active
   }
   await writeStored(stored)
-
-  const secrets = await readSecrets()
-  if (id in secrets) {
-    delete secrets[id]
-    await writeSecrets(secrets)
-  }
 }
 
 /** Switch provider, model or effort. This is what the header chips call. */
@@ -280,19 +264,87 @@ export async function setActive(request: ActiveSetRequest): Promise<void> {
   await writeStored(stored)
 }
 
-/** The saved settings, decrypted key included. Throws ConfigError when incomplete. */
+/** The saved settings, key included. Throws ConfigError when incomplete. */
 export async function loadProviderConfig(): Promise<ProviderConfig> {
-  const [stored, secrets] = await Promise.all([readStored(), readSecrets()])
-  return resolveConfig({ stored, secrets })
+  const stored = await readStored()
+  const provider = selectedProvider(stored)
+  return resolveConfig({ stored, secrets: provider === undefined ? {} : await readKeys([provider.id]) })
+}
+
+/** What `nh run` was told to run on, over what the settings say. */
+export interface RunChoice {
+  /** `provider/model`, where the provider is a saved one's id or name, or a model id for the selected provider. */
+  model?: string
+  effort?: Effort
+}
+
+/**
+ * The settings `nh run` runs on. The saved ones by default, so a script meets
+ * the model the window would use. `NH_BASE_URL` replaces them with an endpoint
+ * described wholly by the environment (`NH_API_KIND`, `NH_API_KEY`, `NH_MODEL`),
+ * which is how a machine with no settings and no credential store, such as a
+ * container, runs at all. `NH_API_KEY` also stands in for a saved provider's
+ * key when the store holds none for it. Throws ConfigError when incomplete.
+ */
+export async function loadRunConfig(choice: RunChoice, env: NodeJS.ProcessEnv = process.env): Promise<ProviderConfig> {
+  const envKey = trimmed(env.NH_API_KEY)
+  const baseURL = trimmed(env.NH_BASE_URL)
+  let stored: StoredConfig
+  if (baseURL !== undefined) {
+    const kind = trimmed(env.NH_API_KIND) ?? 'openai'
+    if (!isProviderKind(kind)) throw new Error(`NH_API_KIND must be openai, anthropic or responses, not ${kind}`)
+    const provider: ProviderRecord = { id: 'environment', name: 'NH_BASE_URL', kind, baseURL, models: [] }
+    const model = trimmed(choice.model) ?? trimmed(env.NH_MODEL)
+    stored = { providers: [provider], ...(model === undefined ? {} : { active: { providerId: provider.id, model, effort: choice.effort ?? 'medium' } }) }
+    return checkEffort(resolveConfig({ stored, secrets: envKey === undefined ? {} : { [provider.id]: envKey } }), choice.effort)
+  }
+  stored = await readStored()
+  if (choice.model !== undefined) stored = choose(stored, choice.model)
+  const provider = selectedProvider(stored)
+  const keys = provider === undefined ? {} : await readKeys([provider.id])
+  if (provider !== undefined && keys[provider.id] === undefined && envKey !== undefined) keys[provider.id] = envKey
+  return checkEffort(resolveConfig({ stored, secrets: keys }), choice.effort)
+}
+
+function trimmed(value: string | undefined): string | undefined {
+  const text = value?.trim()
+  return text === undefined || text === '' ? undefined : text
+}
+
+/**
+ * The settings with `wanted` selected. A model id can hold a slash of its own,
+ * so the part before the first slash names a provider only when a saved one
+ * answers to it; otherwise the whole string is a model on the selected one.
+ */
+function choose(stored: StoredConfig, wanted: string): StoredConfig {
+  const slash = wanted.indexOf('/')
+  const named = slash < 0 ? undefined : wanted.slice(0, slash).toLowerCase()
+  const match = named === undefined ? undefined : stored.providers.find(p => p.id.toLowerCase() === named || p.name.toLowerCase() === named)
+  const provider = match ?? selectedProvider(stored)
+  if (provider === undefined) return stored
+  const model = match === undefined ? wanted : wanted.slice(slash + 1)
+  const effort = stored.active?.effort ?? 'medium'
+  return { ...stored, active: { providerId: provider.id, model, effort } }
+}
+
+/** The config at the effort asked for, refused when the model is known not to take it. */
+function checkEffort(config: ProviderConfig, effort: Effort | undefined): ProviderConfig {
+  if (effort === undefined) return config
+  const efforts = resolveFacts(config.provider, config.model).efforts
+  if (efforts !== undefined && !efforts.includes(effort)) {
+    throw new Error(`${config.model} does not take ${effort} effort; it takes ${efforts.join(', ')}`)
+  }
+  return { ...config, effort }
 }
 
 /** What the settings screen renders itself from. Never carries a key. */
 export async function configStatus(): Promise<ConfigStatus> {
-  const [stored, secrets] = await Promise.all([readStored(), readSecrets()])
+  const stored = await readStored()
+  const [secrets, canStore] = await Promise.all([readKeys(stored.providers.map(p => p.id)), keyStoreAvailable()])
   const status: ConfigStatus = {
     configured: false,
     providers: stored.providers.map(p => ({ ...p, hasKey: secrets[p.id] !== undefined })),
-    keyStorage: safeStorage.isEncryptionAvailable() ? 'os' : 'unavailable',
+    keyStorage: canStore ? 'os' : 'unavailable',
     knownProviders: KNOWN_PROVIDERS,
     autoCompact: autoCompactOf(stored),
     contextLimit: stored.context?.limit ?? null,
@@ -331,7 +383,7 @@ export async function probeProvider(request: ConfigProbeRequest): Promise<Config
   const typed = request.apiKey?.trim()
   let apiKey = typed !== undefined && typed !== '' ? typed : undefined
   if (apiKey === undefined && request.providerId !== undefined) {
-    apiKey = (await readSecrets())[request.providerId]
+    apiKey = await readKey(keyAccount(request.providerId)).catch(() => undefined)
   }
   if (apiKey === undefined || apiKey === '') return { ok: false, error: 'no API key to test with' }
 
@@ -454,9 +506,11 @@ function switchOf(stored: StoredConfig, name: SwitchName): boolean {
 
 /** The approval ladder as clients, newest settings each time it is asked for. */
 export async function approvalEndpoints(): Promise<JudgeEndpoint[]> {
-  const [stored, secrets] = await Promise.all([readStored(), readSecrets()])
+  const stored = await readStored()
+  const candidates = stored.approval?.candidates ?? []
+  const secrets = await readKeys([...new Set(candidates.map(c => c.providerId))])
   const endpoints: JudgeEndpoint[] = []
-  for (const candidate of stored.approval?.candidates ?? []) {
+  for (const candidate of candidates) {
     const record = stored.providers.find(p => p.id === candidate.providerId)
     if (record === undefined) continue
     const apiKey = secrets[record.id]

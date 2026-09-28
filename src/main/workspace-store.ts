@@ -1,5 +1,5 @@
 // doc: docs/harness/sessions.md
-import { appendFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { basename, join } from 'node:path'
 import { emptyUsage } from '../shared/usage.js'
@@ -337,9 +337,18 @@ async function readState(): Promise<WorkspaceState> {
   }
 }
 
+/**
+ * The window and `nh run` both write this file, from two processes. It goes in
+ * under a name of its own and is renamed into place, so a reader never meets it
+ * half written: a file that does not parse reads as an empty sidebar, and the
+ * next write would keep it that way. Two changes made at once still each start
+ * from the file as it was, so the one renamed in last wins.
+ */
 async function writeState(state: WorkspaceState): Promise<void> {
   await mkdir(userDataDir(), { recursive: true })
-  await writeFile(workspacesPath(), `${JSON.stringify(state, null, 2)}\n`, 'utf8')
+  const tmp = `${workspacesPath()}.${randomUUID()}.tmp`
+  await writeFile(tmp, `${JSON.stringify(state, null, 2)}\n`, 'utf8')
+  await rename(tmp, workspacesPath())
 }
 
 /** The whole sidebar, newest session first inside each workspace. */

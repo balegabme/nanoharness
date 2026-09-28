@@ -1,58 +1,40 @@
 // doc: docs/harness/overview.md
 import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent, type WebContents } from 'electron'
 import { randomUUID } from 'node:crypto'
-import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { plural, toolsText } from '../shared/format.js'
 import { emptyUsage, totalTokens } from '../shared/usage.js'
 import { resolveFacts } from '../shared/facts.js'
 import { compose } from '../shared/compose.js'
-import { createProvider } from '../providers/factory.js'
-import { BASH_TOOL, GUARDED_BASH_TOOL } from '../tools/bash.js'
 import { warmShell } from '../env/shell.js'
 import { hostFacts } from '../env/probe.js'
-import { Hooks, hooksBlock, stopHooks } from '../hooks/hooks.js'
-import { hookPaths, readHookFile } from '../hooks/config.js'
-import { READ_TOOL } from '../tools/read.js'
-import { GLOB_TOOL, GREP_TOOL } from '../tools/search.js'
-import { WRITE_TOOL } from '../tools/write.js'
-import { EDIT_TOOL } from '../tools/edit.js'
-import { LOG_IMPROVEMENT_TOOL } from '../tools/log-improvement.js'
-import { SPAWN_TOOL } from '../tools/spawn.js'
-import { JOB_UPDATE_TOOL } from '../tools/job-update.js'
-import { TODO_TOOL } from '../tools/todo.js'
-import { ASK_USER_TOOL } from '../tools/ask-user.js'
-import { TERMINAL_TOOL, Terminals, stopTerminals } from '../tools/terminal.js'
+import { stopHooks } from '../hooks/hooks.js'
+import { Terminals, stopTerminals } from '../tools/terminal.js'
 import { QuestionBroker } from './questions.js'
-import { AGENTS, AGENT_ROLES, HARNESS_HANDOFF, agentPrompt, isAgentRole, roleContext } from '../core/agents.js'
+import { AGENTS, AGENT_ROLES, isAgentRole } from '../core/agents.js'
 import { EventBus } from '../core/event-bus.js'
 import { ProjectTrust, projectTrustPath } from '../core/project-trust.js'
 import type { ProjectFile } from '../core/project-trust.js'
 import { JobRegistry } from '../core/jobs.js'
-import { cloneHistory, createSpawnHost } from '../core/spawn.js'
-import { McpHub, mcpBlock } from '../mcp/hub.js'
-import { loadSkills, skillsBlock } from '../core/skills.js'
+import { McpHub } from '../mcp/hub.js'
+import { loadSkills } from '../core/skills.js'
 import { SNIPPETS_DIR, loadSnippets } from '../core/snippets.js'
-import { loadServers, mcpPaths } from '../mcp/config.js'
-import { hasUnknownSecret, secretsBlock } from '../core/secrets.js'
+import { loadServers } from '../mcp/config.js'
+import { hasUnknownSecret } from '../core/secrets.js'
 import { flushSecrets, forgetSecret, secretList, secretVault } from './secret-store.js'
 import { Session } from '../core/session.js'
 import { CheckpointStore, REWIND_MODES, shownPath } from '../core/checkpoints.js'
 import { appendUsage, clearUsage, readUsage, userDataDir } from '../core/usage-log.js'
 import { buildReport } from '../core/usage-report.js'
 import type { UsageReport } from '../core/usage-report.js'
-import { Judge, approvalProblem, goalsFrom, mergeRules } from '../core/approval.js'
+import { Judge, approvalProblem } from '../core/approval.js'
 import type { ApprovalConfig, PermissionMode } from '../core/approval.js'
 import type { SwitchName } from '../core/config.js'
 import { IPC_CHANNELS } from '../ipc/contract.js'
 import {
-  approvalEndpoints,
-  autoCompact,
   configStatus,
-  contextLimit,
   defaultMode,
   deleteProvider,
   loadProviderConfig,
@@ -65,30 +47,23 @@ import {
   setContextLimit,
   setDefaultMode,
   setSwitch,
-  switchOn,
 } from './config-store.js'
-import { PermissionBroker, gateState, promptingGate } from './permission.js'
-import type { ApprovalRecord, GateState } from './permission.js'
+import { PermissionBroker, gateState } from './permission.js'
+import type { GateState } from './permission.js'
 import {
   acceptImages,
   addWorkspace,
-  appendApproval,
   checkpointDir,
   createSession,
   deleteSession,
   loadNotes,
   loadSubagent,
   loadTranscript,
-  noteTurn,
   removeWorkspace,
   renameSession,
-  saveSubagent,
   saveTranscript,
-  sessionContext,
   sessionIdentity,
-  sessionRole,
   sessionRoot,
-  sessionUsage,
   setSessionRole,
   setSessionState,
   toTranscriptView,
@@ -96,13 +71,11 @@ import {
   usageNames,
   workspaceStatus,
 } from './workspace-store.js'
-import type { SessionState } from './workspace-store.js'
 import { createWindow, serveRenderer } from './window.js'
-import type { AgentRole, HarnessFacts } from '../core/agents.js'
+import { assembleSession, buildJudge, recordTurn, stateOf } from './assemble.js'
+import type { AgentRole } from '../core/agents.js'
 import type { JobView } from '../core/jobs.js'
-import type { PromptEnvironment } from '../core/prompt.js'
-import type { SubagentSetup, SubagentSlot } from '../core/spawn.js'
-import type { CompactSpend, Tool } from '../core/session.js'
+import type { CompactSpend } from '../core/session.js'
 import type { AppEvent, McpServerStatus, ProjectFileKind } from '../core/types.js'
 import type {
   ActiveSetRequest,
@@ -132,54 +105,6 @@ import type {
 
 const require = createRequire(import.meta.url)
 const pkg = require('../../package.json') as { version: string }
-
-/**
- * Every event forwarded to the window, which is every event there is. A keyed
- * object and not a list, so leaving one out stops the build. Nothing goes
- * unforwarded in silence.
- */
-const FORWARDED: Record<AppEvent['type'], true> = {
-  'session.started': true,
-  'session.checkpoint': true,
-  text_delta: true,
-  thinking_delta: true,
-  tool_call: true,
-  tool_result: true,
-  usage: true,
-  'session.error': true,
-  'round.started': true,
-  'round.retry': true,
-  'session.finished': true,
-  'session.stopped': true,
-  'session.note': true,
-  'session.summary': true,
-  'session.tldr': true,
-  context: true,
-  'context.compacting': true,
-  'context.compacted': true,
-  'permission.request': true,
-  'question.request': true,
-  'project.trust': true,
-  'mcp.status': true,
-  'job.started': true,
-  'job.update': true,
-  'job.finished': true,
-}
-
-const EVENT_TYPES = Object.keys(FORWARDED) as AppEvent['type'][]
-
-/**
- * Where this build's own source is, when it is on disk to be read; a packaged
- * app without it says nothing, and points at no folder that is not there.
- * The harness editor is the one role told where it is.
- */
-function harnessFacts(): HarnessFacts | undefined {
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
-  if (!existsSync(join(root, 'docs', 'harness', 'doc-map.md'))) return undefined
-  return { root, cli: `node "${join(root, 'out', 'cli', 'index.js')}"` }
-}
-
-const HARNESS = harnessFacts()
 
 /** The snippets that ship with the app, copied next to the build by `scripts/copy-assets.mjs`. */
 const BUILT_IN_SNIPPETS = join(dirname(fileURLToPath(import.meta.url)), '..', 'snippets')
@@ -222,46 +147,11 @@ function checkpointsFor(sessionId: string): CheckpointStore {
 }
 
 /**
- * Which subagent ids belong to which window, so a child's own stream reaches
- * the window that asked for it and nowhere else. The id is the job id, which is
- * also the child session's id, and that is what lets the renderer tell a
- * subagent's events apart from the conversation's.
- */
-function subagentBus(sender: WebContents, parent: () => Session | undefined): (slot: SubagentSlot) => EventBus {
-  return slot => {
-    const bus = new EventBus()
-    for (const type of EVENT_TYPES) {
-      bus.on(type, event => {
-        if (!sender.isDestroyed()) sender.send(IPC_CHANNELS.sessionEvent, event)
-      })
-    }
-    // What the child has spent, as of the last usage event it emitted. A
-    // subagent's usage event carries its own running total, so what the parent
-    // is owed is the difference since the one before. Adding it round by round
-    // keeps the counter showing what is being spent right now, with no jump
-    // when the subagent finishes.
-    let counted = emptyUsage()
-    bus.on('usage', event => {
-      if (event.sessionId !== slot.id) return
-      const total = event.usage
-      parent()?.addSubagentUsage({
-        input: total.input - counted.input,
-        output: total.output - counted.output,
-        cacheRead: total.cacheRead - counted.cacheRead,
-        cacheWrite: total.cacheWrite - counted.cacheWrite,
-        reasoning: total.reasoning - counted.reasoning,
-      })
-      counted = { ...total }
-    })
-    return bus
-  }
-}
-
-/**
- * How many times a session has been retired. A build reads this when it starts
- * and again once its servers are up: a different number means the settings it
- * was built against are gone, so it closes what it opened. Without it, a save
- * landing mid-build leaves a set of subprocesses with nothing holding them.
+ * How many times a session has been retired. A build reads this when it starts,
+ * again once its servers are up and once more when it is whole: a different
+ * number means the settings it was built against are gone, so it closes what
+ * it opened. Without it, a save landing mid-build leaves a set of subprocesses
+ * with nothing holding them.
  */
 const epochs = new Map<string, number>()
 
@@ -448,51 +338,6 @@ function jobsFor(sender: WebContents): JobRegistry {
   return registry
 }
 
-const TOOLS: Record<string, Tool> = {
-  bash: BASH_TOOL,
-  read: READ_TOOL,
-  grep: GREP_TOOL,
-  glob: GLOB_TOOL,
-  write: WRITE_TOOL,
-  edit: EDIT_TOOL,
-  log_improvement: LOG_IMPROVEMENT_TOOL,
-  spawn: SPAWN_TOOL,
-  job_update: JOB_UPDATE_TOOL,
-  todo_write: TODO_TOOL,
-  ask_user: ASK_USER_TOOL,
-  terminal: TERMINAL_TOOL,
-}
-
-/** Tools only the session the user talks to may call. */
-const SESSION_ONLY = new Set(['spawn', 'ask_user', 'terminal'])
-
-/**
- * The role's tools, minus the ones that only make sense in one place: only a
- * background job may report progress, and a distinct subagent may not summon
- * another one, ask the user anything, or start a shell that outlives it. A
- * clone does not come through here; it takes the parent's list whole.
- */
-function toolsFor(role: AgentRole, options: { subagent: boolean; isJob: boolean }): Tool[] {
-  const definition = AGENTS[role]
-  const tools: Tool[] = []
-  for (const name of definition.tools) {
-    if (SESSION_ONLY.has(name) && options.subagent) continue
-    if (name === 'job_update' && !options.isJob) continue
-    if (name === 'bash') {
-      if (definition.bash === 'none') continue
-      tools.push(definition.bash === 'guarded' ? GUARDED_BASH_TOOL : BASH_TOOL)
-      continue
-    }
-    const tool = TOOLS[name]
-    if (tool !== undefined) tools.push(tool)
-  }
-  return tools
-}
-
-async function environment(root: string): Promise<PromptEnvironment> {
-  return { root, platform: process.platform, host: await hostFacts(), today: new Date().toISOString().slice(0, 10) }
-}
-
 // No endpoint and no model are baked in: both come from the settings the user
 // saved, and an incomplete configuration is an error the setup screen handles,
 // never a silent default (plan §11).
@@ -559,21 +404,6 @@ function judgeFor(sessionId: string): Promise<Judge> {
   return built
 }
 
-async function buildJudge(sessionId: string): Promise<Judge> {
-  const stored = await readStored()
-  const rules = mergeRules(stored.approval?.rules)
-  // The rules allow scratch files in the temp folder, and the judge cannot
-  // see which folder that is.
-  rules.environment.push(`The system temp folder is ${tmpdir()}.`)
-  return new Judge({
-    endpoints: approvalEndpoints,
-    rules,
-    // Derived from the session's and never equal to it: the judge shares the
-    // session's lifetime and nothing else, least of all its message history.
-    conversationId: `${sessionId}-approval`,
-  })
-}
-
 /** The project files the user has approved, and the ones refused this run. */
 const projectTrust = new ProjectTrust(projectTrustPath())
 
@@ -607,32 +437,6 @@ function askTrust(sender: WebContents, sessionId: string, kind: ProjectFileKind,
 }
 
 /**
- * The hooks a session runs, read once as it is built: the global file, then
- * the project's once the user has approved it. What went wrong comes back as
- * problems for the session to note.
- */
-async function loadHooks(sender: WebContents, sessionId: string, root: string): Promise<{ hooks: Hooks; problems: string[] }> {
-  if (!(await switchOn('hooks'))) return { hooks: new Hooks([], root), problems: [] }
-  const paths = hookPaths(root)
-  const global = await readHookFile(paths.global)
-  const specs = [...global.hooks]
-  const problems = [...global.problems]
-  // A workspace opened at the home folder finds one file in both places.
-  if (paths.project !== paths.global) {
-    const project = await readHookFile(paths.project)
-    if (project.hooks.length === 0) {
-      problems.push(...project.problems)
-    } else if (await projectTrusted(sender, sessionId, 'hooks', project)) {
-      specs.push(...project.hooks)
-      problems.push(...project.problems)
-    } else {
-      problems.push(`The hooks in ${project.path} are off because they were not approved. Change the file or restart the app to be asked again.`)
-    }
-  }
-  return { hooks: new Hooks(specs, root), problems }
-}
-
-/**
  * The hook notes each session was last given. A session is rebuilt after every
  * settings save, and a note it already carries is not written again.
  */
@@ -642,48 +446,6 @@ const hookNotes = new Map<string, string>()
 function snippetTexts(texts: unknown): string[] {
   if (!Array.isArray(texts) || !texts.every((text: unknown) => typeof text === 'string')) throw new Error('the snippets did not arrive as a list of texts')
   return texts
-}
-
-/** A session's running totals and its context, in the shape the store writes. */
-function stateOf(session: Session): SessionState {
-  return {
-    spend: { total: session.spent, subagents: session.spentBySubagents, harness: session.spentByHarness, harnessCostUsd: session.harnessCost },
-    context: session.context,
-  }
-}
-
-/**
- * What one automatic decision costs and where it is written down. The tokens go
- * on the session's counter as the harness's own; the line goes to the session's
- * approval log, so a decision the user never saw is still one they can read. A
- * log that cannot be written is a warning, never the end of the turn.
- */
-function recordApproval(sessionId: string, record: ApprovalRecord): void {
-  const session = sessions.get(sessionId)
-  if (session !== undefined && record.outcome !== undefined) {
-    session.addHarnessUsage(record.outcome.usage, record.outcome.costUsd)
-  }
-  void appendApproval({
-    at: record.at,
-    sessionId,
-    intent: record.action.intent,
-    ...(record.action.command === undefined ? {} : { command: record.action.command }),
-    ...(record.action.paths.length === 0 ? {} : { paths: [...record.action.paths] }),
-    ...(record.outcome === undefined
-      ? {}
-      : {
-          verdict: record.outcome.verdict,
-          rule: record.outcome.rule,
-          reason: record.outcome.reason,
-          model: record.outcome.model,
-          ms: record.outcome.ms,
-          usage: record.outcome.usage,
-          ...(record.outcome.costUsd === null ? {} : { costUsd: record.outcome.costUsd }),
-        }),
-    ...(record.problem === undefined ? {} : { problem: record.problem }),
-  }).catch((err: unknown) => {
-    process.stderr.write(`approval log: ${err instanceof Error ? err.message : String(err)}\n`)
-  })
 }
 
 /**
@@ -702,274 +464,37 @@ function modeView(mode: PermissionMode, problem: string | undefined): Permission
 
 async function buildSession(sender: WebContents, sessionId: string): Promise<Session> {
   const mine = epochOf(sessionId)
-  const root = await sessionRoot(sessionId)
-  if (root === null) throw new Error('that session is gone; start a new one from the sidebar')
-
-  const config = await loadProviderConfig()
-  const facts = resolveFacts(config.provider, config.model)
-  const provider = createProvider({
-    kind: config.provider.kind,
-    baseURL: config.provider.baseURL,
-    apiKey: config.apiKey,
-    ...(facts.wire === undefined ? {} : { wire: facts.wire }),
-    ...(config.provider.sessionHeader === undefined ? {} : { sessionHeader: config.provider.sessionHeader }),
-  })
-  const bus = new EventBus()
-  for (const type of EVENT_TYPES) {
-    bus.on(type, event => {
+  const built = await assembleSession(sessionId, {
+    config: await loadProviderConfig(),
+    forward: event => {
       if (!sender.isDestroyed()) sender.send(IPC_CHANNELS.sessionEvent, event)
-    })
-  }
-
-  const role = (await sessionRole(sessionId)) ?? 'builder'
-
-  // Both of these are decided before the first request and never again inside
-  // a session, and for the same reason: the skills list sits in the system
-  // prompt and the MCP tools sit in the tool definitions, which is to say both
-  // are part of the cached prefix. Discovering either mid-session would move
-  // bytes the provider has already cached and cost the whole prefix.
-  const skills = await loadSkills(root)
-  // Before anything is spawned, because the first time a project's hooks or
-  // servers are met, each of these waits on the user.
-  const { hooks, problems: hookProblems } = await loadHooks(sender, sessionId, root)
-  const servers = await loadServers(root, { trust: file => projectTrusted(sender, sessionId, 'mcp', file) })
-  const hub = await McpHub.connect(root, servers.servers, servers.problems)
+    },
+    trust: (kind, file) => projectTrusted(sender, sessionId, kind, file),
+    broker: brokerFor(sender),
+    permissions: await permissionsFor(sessionId),
+    judge: () => judgeFor(sessionId),
+    jobs: jobsFor(sender),
+    checkpoints: checkpointsFor(sessionId),
+    terminals: terminalsFor(sessionId),
+    ask: (questions, signal) => questionsFor(sender).ask(sessionId, questions, signal),
+    // An approval checked for a background job after a rebuild is billed to
+    // the session the user now sees.
+    live: () => sessions.get(sessionId),
+    current: () => epochOf(sessionId) === mine,
+  })
+  // A save can land in the last stretch of the build, after the servers were
+  // checked. The session it would keep is already out of date.
   if (epochOf(sessionId) !== mine) {
-    await hub.close()
+    await built.hub.close()
     throw new Error('the settings changed while this session was opening; send that again')
   }
-  // After the check, so a build that is about to be thrown away does not run
-  // the user's commands for nothing.
-  const started = await hooks.run('SessionStart', sessionId, {})
-  hubs.set(sessionId, hub)
-  for (const server of hub.status) {
-    if (!server.connected) console.warn(`mcp: ${server.name} is not connected: ${server.error ?? 'unknown reason'}`)
-  }
-  // The window asked what MCP this session has before it had any, because a
-  // session is only built on its first message and nothing is dialled for one
-  // the user merely clicked on. This is the answer arriving late.
-  bus.emit({ type: 'mcp.status', sessionId, servers: [...hub.status], live: true, at: Date.now() })
-
-  // What MCP the session actually has, told to the agent in its own words. A
-  // model with no such block answers "what tools do you have" from its
-  // training set.
-  const paths = mcpPaths(root)
-  const secrets = await secretVault()
-  const context = [
-    ...(await roleContext(role, root, HARNESS)),
-    ...skillsBlock(skills),
-    ...secretsBlock(secrets.names()),
-    ...mcpBlock(hub.status, paths, {
-      canConfigure: role === 'harness-editor',
-      canSpawn: AGENTS[role].tools.includes('spawn'),
-      root,
-      ...(HARNESS === undefined ? {} : { cli: HARNESS.cli }),
-    }),
-    // A session that can spawn carries the routing rule. A distinct subagent
-    // has no `spawn` tool, so its prompt does not name one.
-    ...(AGENTS[role].tools.includes('spawn') ? HARNESS_HANDOFF : []),
-    // What a hook printed can hold a key. The session scrubs what passes
-    // through it, and this goes straight into the prompt, so it is scrubbed here.
-    ...hooksBlock(hooks, started.context.map(text => secrets.redact(text))),
-  ]
-  const systemPrompt = agentPrompt(role, await environment(root), context)
-  const tools = [...toolsFor(role, { subagent: false, isJob: false }), ...hub.tools()]
-  // A subagent is held to the parent's boundary and the same broker: an "allow
-  // for this session" covers the work the user asked for, whoever does it. A
-  // clone is built from the parent's live transcript, which the gate also reads
-  // for the goals it judges against; the holder ties the two together.
-  const parent: { session?: Session } = {}
-
-  const access = promptingGate({
-    root,
-    sessionId,
-    broker: brokerFor(sender),
-    state: await permissionsFor(sessionId),
-    redact: text => secrets.redact(text),
-    judge: () => judgeFor(sessionId),
-    // The user's own messages, read off the live transcript at the moment the
-    // question is asked. Never the assistant's and never a tool result: tool
-    // output is the part an attacker can write into.
-    goals: () => goalsFrom(parent.session?.transcript ?? []),
-    onDecision: record => {
-      recordApproval(sessionId, record)
-    },
-    ...(HARNESS === undefined ? {} : { readable: [HARNESS.root] }),
-  })
-
-  const spent = await sessionUsage(sessionId)
-  const auto = await autoCompact()
-  const limit = await contextLimit()
-  const stored = await sessionContext(sessionId)
-
-  const setup = async (request: { role: AgentRole; mode: string }, slot: SubagentSlot): Promise<SubagentSetup> => {
-    // Only a background child gets `job_update`: a foreground one is being
-    // waited on, so its report is the answer it comes back with.
-    const isJob = slot.background
-    if (request.mode === 'clone') {
-      // A clone is the parent one message later: same prompt, same tool list,
-      // same history, so the provider's cache answers the whole prefix. The
-      // tool definitions sit in front of the messages, so dropping one would
-      // invalidate the bytes this exists to reuse. `spawn`, `ask_user` and
-      // `terminal` stay in the list and refuse at the call instead, since the
-      // clone's context has no spawn host, no one to ask and no terminals.
-      return {
-        systemPrompt,
-        tools,
-        history: cloneHistory(parent.session?.transcript ?? []),
-        effort: config.effort,
-      }
-    }
-    // Every agent thinks as hard as the user asked this session to think.
-    // There is no per-role default: the chip in the window is the whole
-    // answer.
-    return {
-      systemPrompt: agentPrompt(request.role, await environment(root), [
-        ...(await roleContext(request.role, root, HARNESS)),
-        ...skillsBlock(skills),
-        ...secretsBlock(secrets.names()),
-        // A subagent cannot spawn, so it cannot hand the work on again. The
-        // MCP configurer is the harness-editor, which gets the commands (the
-        // CLI names the harness root, which only that role may know); a builder
-        // or planner child gets the facts and nothing to relay. No child gets
-        // the routing rule, which would name a tool it does not have.
-        ...mcpBlock(hub.status, paths, {
-          canConfigure: request.role === 'harness-editor',
-          canSpawn: false,
-          root,
-          ...(request.role === 'harness-editor' && HARNESS !== undefined ? { cli: HARNESS.cli } : {}),
-        }),
-        ...hooksBlock(hooks.forSubagent(), []),
-      ]),
-      // A distinct subagent reaches the same servers the session does. They are
-      // the session's connections, so nothing is spawned twice and nothing has
-      // to be shut down when the subagent finishes.
-      tools: [...toolsFor(request.role, { subagent: true, isJob }), ...hub.tools()],
-      effort: config.effort,
-    }
-  }
-
-  // The session and every subagent it starts write through one store, so
-  // what a subagent writes goes back with whichever of the session's turns
-  // was the latest when it wrote.
-  const checkpoints = checkpointsFor(sessionId)
-  const session = new Session(
-    {
-      sessionId,
-      // The folder the session was started in is its cwd *and* the boundary
-      // every tool is held to, so a session can never wander into a sibling
-      // project without someone saying yes.
-      cwd: root,
-      model: config.model,
-      effort: config.effort,
-      facts,
-      systemPrompt,
-      access,
-      history: await loadTranscript(sessionId),
-      secrets,
-      hooks,
-      checkpoints,
-      ask: (questions, signal) => questionsFor(sender).ask(sessionId, questions, signal),
-      terminals: terminalsFor(sessionId),
-      saveHistory: async () => {
-        await saveTranscript(sessionId, session.transcript, session.notes)
-        await setSessionState(sessionId, stateOf(session))
-      },
-      autoCompact: auto,
-      ...(limit === undefined ? {} : { contextLimit: limit }),
-      ...(stored === null ? {} : { compactions: stored.compactions }),
-      ...(stored?.model === config.model ? { calibration: stored.calibration } : {}),
-      ...(spent === null ? {} : { usage: spent.total, subagentUsage: spent.subagents, harnessUsage: spent.harness, harnessCostUsd: spent.harnessCostUsd }),
-      spawn: createSpawnHost({
-        sessionId,
-        role,
-        cwd: root,
-        model: config.model,
-        facts,
-        autoCompact: auto,
-        ...(limit === undefined ? {} : { contextLimit: limit }),
-        provider,
-        access,
-        jobs: jobsFor(sender),
-        secrets,
-        hooks,
-        guard: checkpoints,
-        setup,
-        // A subagent's stream goes to the same window, under the job's id. That
-        // is the whole of what makes one watchable: the renderer already knows
-        // how to draw these events, and the id says which panel they belong in.
-        bus: subagentBus(sender, () => parent.session),
-        // The subagent's own conversation, stored beside the parent's and named
-        // by the id the tool result quotes. Reading back what another agent
-        // actually did is the difference between a debuggable harness and one
-        // that hands you a paragraph and asks you to trust it.
-        save: async (slot, record) => {
-          const job = jobsFor(sender).get(slot.id)
-          await saveSubagent({
-            id: slot.id,
-            sessionId,
-            role: record.request.role,
-            mode: record.request.mode,
-            task: record.request.task,
-            background: slot.background,
-            state: record.state,
-            note: record.note,
-            usage: record.usage,
-            tools: record.tools,
-            startedAt: job?.startedAt ?? Date.now(),
-            endedAt: Date.now(),
-            messages: record.messages,
-            notes: record.notes,
-            context: record.context,
-          })
-        },
-        // Sending a failed write to stderr would tell nobody, and by then the
-        // window has already drawn a card offering to open that conversation.
-        // So it is drawn as an error in the conversation itself and kept in the
-        // transcript beside the turn it belongs to.
-        problem: text => {
-          parent.session?.fault(text)
-        },
-        // A background job's answer, back into the conversation that started
-        // it. Without this the model is told a job finished and never told what
-        // it found: the answer lives in a file under the app's data directory,
-        // outside the workspace, which is exactly where the agent cannot read.
-        finished: (slot, outcome) => {
-          const live = parent.session
-          if (live === undefined) return
-          const head = `Background ${outcome.request.role} job ${slot.id} ${outcome.state}. It was asked: ${outcome.request.task}`
-          live.deliver(`${head}
-
-What it answered:
-${outcome.answer}`)
-          // A job usually outlives the turn that started it, so this is often
-          // the only moment the answer exists anywhere the model can reach.
-          // Between turns nothing else writes the transcript: the next message
-          // might never come, and saving settings retires the session. So it is
-          // written here.
-          if (!live.running) {
-            void saveTranscript(sessionId, live.transcript, live.notes).catch((err: unknown) => {
-              live.fault(`A background job's answer could not be stored: ${err instanceof Error ? err.message : String(err)}. It is in this conversation until the app closes.`)
-            })
-          }
-        },
-      }),
-    },
-    provider,
-    tools,
-    bus,
-  )
-  parent.session = session
-  session.restoreNotes(await loadNotes(sessionId))
-  const heard = [
-    ...hookProblems,
-    ...started.problems,
-    ...(started.block === null ? [] : [`A SessionStart hook exited 2, which stops nothing when a session opens, and the hooks after it did not run. It said: ${started.block}`]),
-  ]
-  if (heard.length > 0 && hookNotes.get(sessionId) !== heard.join('\n')) for (const problem of heard) session.note(problem)
-  hookNotes.set(sessionId, heard.join('\n'))
+  const { session, problems } = built
+  hubs.set(sessionId, built.hub)
+  const heard = problems.join('\n')
+  if (problems.length > 0 && hookNotes.get(sessionId) !== heard) for (const problem of problems) session.note(problem)
+  hookNotes.set(sessionId, heard)
   sessions.set(sessionId, session)
-  promptSecrets.set(sessionId, secrets.names())
+  promptSecrets.set(sessionId, built.secrets)
   return session
 }
 
@@ -1028,7 +553,7 @@ function quit(event: Electron.Event): void {
   // would outlive the app.
   stopHooks()
   stopTerminals()
-  // A key captured in the last turn is still queued for the encrypted file, and
+  // A key captured in the last turn is still queued for the credential store, and
   // a job still running has to be written down before the sessions go.
   void abandonJobs()
     .then(() => Promise.all([retire(), flushSecrets()]))
@@ -1405,37 +930,9 @@ app.whenReady().then(() => {
     const identity = await sessionIdentity(req.sessionId)
     if (identity === null) throw new Error('that session is gone; start a new one from the sidebar')
     const usage = await session.run(text, images, said)
-
-    // The transcript is written after the turn, not during it: a half-streamed
-    // answer is not a message, and a crash mid-turn should leave the session
-    // exactly as it was before the message was sent.
-    await saveTranscript(req.sessionId, session.transcript, session.notes)
-    const rate = session.lastRate
     // The title comes from the user's own words, and from the snippets only
     // when they sent nothing else.
-    const updated = await noteTurn(req.sessionId, own.trim() === '' ? text : own, { ...stateOf(session), ...(rate === undefined ? {} : { rate }) })
-
-    // One line per completed turn: what `nh usage` and the spend view are both
-    // built out of. A log that cannot be written is worth a warning and no more
-    // than that.
-    const turn = session.lastTurn
-    await appendUsage({
-      at: Date.now(),
-      sessionId: session.options.sessionId,
-      workspaceId: identity.workspaceId,
-      turn: session.turnNumber,
-      role: identity.role,
-      model: session.options.model,
-      usage: turn.usage,
-      subagent: turn.subagent,
-      harness: turn.harness,
-      costUsd: turn.costUsd,
-      subagentCostUsd: turn.subagentCostUsd,
-      harnessCostUsd: turn.harnessCostUsd,
-      streamMs: turn.streamMs,
-    }).catch((err: unknown) => {
-      process.stderr.write(`usage log: ${err instanceof Error ? err.message : String(err)}\n`)
-    })
+    const updated = await recordTurn(identity, session, own.trim() === '' ? text : own)
 
     const status = await workspaceStatus()
     const view = updated ?? status.sessions.find(s => s.id === req.sessionId)

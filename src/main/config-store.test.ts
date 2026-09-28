@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { autoCompact, contextLimit, readStored, saveProvider, setAutoCompact, setContextLimit } from './config-store.js'
+import { autoCompact, configPath, configStatus, contextLimit, deleteProvider, loadProviderConfig, readStored, saveProvider, setAutoCompact, setContextLimit } from './config-store.js'
 import type { ProviderSaveRequest } from '../ipc/contract.js'
 
 /**
@@ -12,17 +12,28 @@ import type { ProviderSaveRequest } from '../ipc/contract.js'
  * somewhere else (docs/harness/providers.md, "Model facts").
  *
  * These run against a real config file in a scratch directory. The only thing
- * stood in for is the OS keyring, which this machine cannot provide in a test;
- * none of the cases here stores a key.
+ * stood in for is the OS credential store, which a test must not write the
+ * user's real keys into; a map plays its part.
  */
 
-vi.mock('electron', () => ({
-  safeStorage: {
-    isEncryptionAvailable: () => false,
-    decryptString: () => {
-      throw new Error('no secret store')
-    },
-    encryptString: () => Buffer.alloc(0),
+const keyring = vi.hoisted(() => new Map<string, Uint8Array>())
+
+vi.mock('@napi-rs/keyring', () => ({
+  AsyncEntry: class {
+    private readonly id: string
+    constructor(service: string, account: string) {
+      this.id = `${service}/${account}`
+    }
+    getSecret(): Promise<Uint8Array | null> {
+      return Promise.resolve(keyring.get(this.id) ?? null)
+    }
+    setSecret(secret: Uint8Array): Promise<void> {
+      keyring.set(this.id, secret)
+      return Promise.resolve()
+    }
+    deleteCredential(): Promise<boolean> {
+      return Promise.resolve(keyring.delete(this.id))
+    }
   },
 }))
 
@@ -30,6 +41,7 @@ const originals = { APPDATA: process.env.APPDATA, XDG_DATA_HOME: process.env.XDG
 let dir = ''
 
 beforeEach(async () => {
+  keyring.clear()
   dir = await mkdtemp(join(tmpdir(), 'nh-config-'))
   process.env.APPDATA = dir
   process.env.XDG_DATA_HOME = dir
@@ -138,6 +150,28 @@ describe('a settings write against the live sessions', () => {
     const a = await idOf('A')
     expect(await saveProvider(provider('A', { id: a, models: ['m1'], facts: {} }))).toBe(false)
     expect((await readStored()).providers.find(p => p.id === a)?.facts).toBeUndefined()
+  })
+})
+
+describe('the API key', () => {
+  it('is read back from the credential store, never lands in the settings file, and goes with its provider', async () => {
+    expect(await saveProvider(provider('A', { models: ['m1'], apiKey: ' sk-first ' }))).toBe(true)
+    const a = await idOf('A')
+    expect((await loadProviderConfig()).apiKey).toBe('sk-first')
+    expect(await readFile(configPath(), 'utf8')).not.toContain('sk-first')
+
+    // A new key on the provider a session is running on retires that session;
+    // a blank key field keeps the one stored.
+    expect(await saveProvider(provider('A', { id: a, models: ['m1'], apiKey: 'sk-second' }))).toBe(true)
+    expect(await saveProvider(provider('A', { id: a, models: ['m1'], apiKey: '' }))).toBe(false)
+    const status = await configStatus()
+    expect(status.configured).toBe(true)
+    expect(status.keyStorage).toBe('os')
+    expect(status.providers.find(p => p.id === a)?.hasKey).toBe(true)
+    expect((await loadProviderConfig()).apiKey).toBe('sk-second')
+
+    await deleteProvider(a)
+    expect(keyring.size).toBe(0)
   })
 })
 

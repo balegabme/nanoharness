@@ -59,7 +59,7 @@ flowchart LR
   CORE --> PROV[providers: openai-compat · anthropic-compat · probe]
   CORE --> HOOKS[hooks runner]
   CORE --> STORE[sessions · checkpoints · transcripts · assets · jobs]
-  MAIN --> SEC[security: keyring · safeStorage]
+  MAIN --> SEC[security: OS keyring]
 ```
 
 **Modularity backbone = the event bus.** Everything the core does is emitted as a typed
